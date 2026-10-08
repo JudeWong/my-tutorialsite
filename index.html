@@ -268,6 +268,7 @@
                 </div>
                 <div class="code-display"><strong id="verification-code">------</strong><button id="copy-code" aria-label="复制验证码">复制</button></div>
                 <div class="code-expiry"><span>自动更换倒数</span><strong id="code-countdown">--:--</strong></div>
+                <button class="password-link ai-settings-link" id="open-ai-settings"><span>Gemini AI 设置</span><small id="ai-config-status">尚未连接</small></button>
                 <button class="password-link" id="open-password">修改 Superadmin 密码 →</button>
               </section>
               <section class="panel class-manager">
@@ -447,7 +448,7 @@
           <button value="cancel" id="close-upload" aria-label="关闭">×</button>
         </div>
         <p class="modal-intro">可上传历届试卷、讲义或笔记。系统会读取内容、整理重点，并自动建立互动题目。</p>
-        <p class="generation-mode-note">自动生成统考风格选择题，不会产生填充题。</p>
+        <p class="generation-mode-note">由 Gemini AI 阅读并理解资料后生成统考风格选择题，不使用本机拼接题目。</p>
         <label class="dropzone" id="dropzone">
           <input id="file-input" type="file" accept=".pdf,.png,.jpg,.jpeg,.webp,.txt,.md,.csv,.json,.html,.xml,.js,.py,.java,.c,.cpp,.sql,.docx,.pptx,.xlsx" />
           <span class="upload-icon">↑</span>
@@ -468,7 +469,7 @@
         </section>
         <div class="form-row">
           <label>资料年份<select id="upload-year"></select></label>
-          <label>主要分类<select id="upload-topic"><option>综合试卷</option><option>程序设计</option><option>数据库</option><option>电脑网络</option><option>硬件</option></select></label>
+          <label>主要分类<select id="upload-topic"><option value="综合试卷">综合试卷</option><option value="程序设计">程序设计</option><option value="数据库">数据库</option><option value="电脑网络">电脑网络</option><option value="硬件">硬件</option></select></label>
         </div>
         <div class="modal-actions">
           <button class="secondary-button" value="cancel" id="cancel-upload">取消</button>
@@ -479,16 +480,18 @@
 
     <dialog id="question-dialog" class="modal question-modal">
       <form id="question-form">
+        <input id="editing-question-id" type="hidden" />
+        <input id="question-return-paper-id" type="hidden" />
         <div class="modal-head">
-          <div><p class="section-kicker">QUESTION BUILDER</p><h2>建立互动题目</h2></div>
+          <div><p class="section-kicker">QUESTION BUILDER</p><h2 id="question-dialog-title">建立互动题目</h2></div>
           <button type="button" id="close-question-dialog" aria-label="关闭">×</button>
         </div>
-        <p class="modal-intro">自行建立选择题或填充题。储存后会立即加入学生练习。</p>
+        <p class="modal-intro" id="question-dialog-intro">自行建立选择题或填充题。储存后会立即加入学生练习。</p>
         <div class="question-builder-grid">
           <label>题型<select id="question-type"><option value="mcq">选择题</option><option value="fill">填充题</option></select></label>
           <label>加入学习资料（可选）<select id="question-material"><option value="">独立出题</option></select></label>
-          <label>题目分类<select id="manual-question-topic"><option>综合试卷</option><option>程序设计</option><option>数据库</option><option>电脑网络</option><option>硬件</option></select></label>
-          <label>难度<select id="manual-question-level"><option>基础</option><option selected>中等</option><option>进阶</option></select></label>
+          <label>题目分类<select id="manual-question-topic"><option value="综合试卷">综合试卷</option><option value="程序设计">程序设计</option><option value="数据库">数据库</option><option value="电脑网络">电脑网络</option><option value="硬件">硬件</option></select></label>
+          <label>难度<select id="manual-question-level"><option value="基础">基础</option><option value="中等" selected>中等</option><option value="进阶">进阶</option></select></label>
           <label class="full-field">题目<textarea id="manual-question-title" rows="3" maxlength="600" placeholder="请输入完整题目" required></textarea></label>
           <label class="full-field">程序代码（可选）<textarea id="manual-question-code" rows="4" spellcheck="false"></textarea></label>
         </div>
@@ -512,7 +515,7 @@
         <p class="form-error" id="question-form-error"></p>
         <div class="modal-actions">
           <button class="secondary-button" type="button" id="cancel-question-dialog">取消</button>
-          <button class="primary-button" type="submit">储存并发布</button>
+          <button class="primary-button" id="save-question-button" type="submit">储存并发布</button>
         </div>
       </form>
     </dialog>
@@ -528,14 +531,49 @@
         <div class="paper-edit-fields">
           <label>资料名称<input id="edit-paper-title" type="text" maxlength="120" required /></label>
           <label>资料年份<select id="edit-paper-year"></select></label>
-          <label>主要分类<select id="edit-paper-topic"><option>综合试卷</option><option>程序设计</option><option>数据库</option><option>电脑网络</option><option>硬件</option></select></label>
-          <label>整理状态<select id="edit-paper-status"><option>待校对</option><option>已整理</option></select></label>
+          <label>主要分类<select id="edit-paper-topic"><option value="综合试卷">综合试卷</option><option value="程序设计">程序设计</option><option value="数据库">数据库</option><option value="电脑网络">电脑网络</option><option value="硬件">硬件</option></select></label>
+          <label>整理状态<select id="edit-paper-status"><option value="待校对">待校对</option><option value="已整理">已整理</option></select></label>
         </div>
         <p class="paper-source" id="edit-paper-file"></p>
         <p class="form-error" id="edit-paper-error"></p>
         <div class="modal-actions">
           <button class="secondary-button" type="button" id="cancel-edit-paper">取消</button>
+          <button class="secondary-button" type="button" id="manage-paper-questions">查看与编辑题目</button>
           <button class="primary-button" type="submit">储存修改</button>
+        </div>
+      </form>
+    </dialog>
+
+    <dialog id="question-list-dialog" class="modal question-list-modal">
+      <div class="question-list-shell">
+        <input id="question-list-paper-id" type="hidden" />
+        <div class="modal-head">
+          <div><p class="section-kicker">QUESTION REVIEW</p><h2 id="question-list-title">编辑已生成题目</h2></div>
+          <button type="button" id="close-question-list" aria-label="关闭">×</button>
+        </div>
+        <p class="modal-intro">选择一题修改题干、选项、正确答案、解析或常见错误。</p>
+        <div class="material-question-list" id="material-question-list"></div>
+        <div class="modal-actions"><button class="secondary-button" type="button" id="back-to-paper">返回资料</button></div>
+      </div>
+    </dialog>
+
+    <dialog id="ai-settings-dialog" class="modal password-modal">
+      <form id="ai-settings-form">
+        <div class="modal-head">
+          <div><p class="section-kicker">AI CONNECTION</p><h2>AI 题目生成设置</h2></div>
+          <button type="button" id="close-ai-settings" aria-label="关闭">×</button>
+        </div>
+        <p class="modal-intro">GitHub Pages 没有 AI 后端。请输入自己的 Gemini API Key，让浏览器直接调用 Gemini；密钥只储存在这台装置的浏览器，不会写入网站代码库。</p>
+        <div class="password-fields">
+          <label>Gemini API Key<input id="gemini-api-key" type="password" autocomplete="off" placeholder="输入 Google AI Studio API Key" /></label>
+          <label>Gemini 模型<input id="gemini-model" type="text" value="gemini-2.5-flash" required /></label>
+        </div>
+        <a class="ai-key-link" href="https://aistudio.google.com/app/apikey" target="_blank" rel="noreferrer">取得 Gemini API Key →</a>
+        <p class="form-error" id="ai-settings-error"></p>
+        <div class="modal-actions">
+          <button class="secondary-button" type="button" id="clear-ai-key">清除密钥</button>
+          <button class="secondary-button" type="button" id="cancel-ai-settings">取消</button>
+          <button class="primary-button" type="submit">储存 AI 设置</button>
         </div>
       </form>
     </dialog>

@@ -16,11 +16,11 @@ Cloudflare Pages 和 Gemini 的免费额度均有限，学校大量使用前应�
 
 ## GitHub Pages（纯静态免费版）
 
-项目已包含 `.github/workflows/deploy-pages.yml`。把代码推送到 `main` 后，在 GitHub 仓库的 **Settings → Pages** 将 Source 设为 **GitHub Actions**。此版本可使用所有本地功能和离线 AI 示范，但 GitHub Pages 不能运行 Gemini serverless 接口。
+项目已包含 `.github/workflows/deploy-pages.yml`。把代码推送到 `main` 后，在 GitHub 仓库的 **Settings → Pages** 将 Source 设为 **GitHub Actions**。GitHub Pages 不能运行 Gemini serverless 接口，因此老师必须在老师端点击 **Gemini AI 设置**，填入自己的 Google AI Studio API Key。密钥只保存在该装置的浏览器 `localStorage`，不会写入 GitHub 仓库。未连接 Gemini 时，系统不会以本机规则冒充 AI 生成题目。
 
 ## 让 APK 连接线上 AI
 
-取得 Cloudflare Pages 地址后，把 [config.js](config.js) 中的 `aiEndpoint` 改成完整地址，例如：
+推荐取得 Cloudflare Pages 地址后，把 [config.js](config.js) 中的 `aiEndpoint` 改成完整地址，例如：
 
 ```js
 window.PERSONAL_AI_CONFIG = Object.freeze({
@@ -29,7 +29,7 @@ window.PERSONAL_AI_CONFIG = Object.freeze({
 });
 ```
 
-然后重新运行 `pnpm run android:build`，并把新的 `android/app/build/outputs/apk/debug/app-debug.apk` 分发给学生。不要把 Gemini API key 放进这个文件。
+然后重新运行 `pnpm run android:build`，并把新的 `android/app/build/outputs/apk/debug/app-debug.apk` 分发给学生。不要把 Gemini API key 放进这个文件。若没有 Cloudflare 后端，也可以在 APK 的老师端 **Gemini AI 设置** 中输入密钥。
 
 ## APK 类型
 

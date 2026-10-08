@@ -24,14 +24,24 @@ const TOPIC_EN = Object.freeze({
   "电脑网络": "Computer Networks",
   "硬件": "Hardware"
 });
+const TOPIC_ZH = Object.freeze({
+  "General Paper": "综合试卷",
+  "Programming": "程序设计",
+  "Database": "数据库",
+  "Computer Networks": "电脑网络",
+  "Computer Networking": "电脑网络",
+  "Networking": "电脑网络",
+  "Hardware": "硬件"
+});
+const LEVEL_ZH = Object.freeze({ Basic: "基础", Intermediate: "中等", Advanced: "进阶" });
 
 papers = papers.map((paper, index) => ({
   id: paper.id || `paper-${paper.createdAt || Date.now()}-${index}`,
   title: paper.title || paper.fileName || "Untitled Paper",
   titleEn: paper.titleEn || paper.title || paper.fileName || "Untitled Paper",
   year: String(paper.year || new Date().getFullYear()),
-  topic: paper.topic || "综合试卷",
-  topicEn: paper.topicEn || TOPIC_EN[paper.topic] || "General Paper",
+  topic: TOPIC_ZH[paper.topic] || paper.topic || "综合试卷",
+  topicEn: paper.topicEn || TOPIC_EN[TOPIC_ZH[paper.topic] || paper.topic] || "General Paper",
   count: Number(paper.count) || 0,
   status: paper.status || "待校对",
   statusEn: paper.statusEn || "Needs review",
@@ -56,6 +66,8 @@ questionBank = questionBank.filter((question) => {
     type,
     id: question.id || `question-${Date.now()}-${index}`,
     paperId: question.paperId || "",
+    topic: TOPIC_ZH[question.topic] || question.topic || "综合试卷",
+    level: LEVEL_ZH[question.level] || question.level || "中等",
     titleEn: question.titleEn || question.title,
     options,
     optionsEn: type === "mcq" && Array.isArray(question.optionsEn) ? question.optionsEn : options,
@@ -83,6 +95,8 @@ const PASSWORD_KEY = "tixi_superadmin_password";
 const STUDENTS_KEY = "tixi_students";
 const CLASSES_KEY = "tixi_classes";
 const LANGUAGE_KEY = "tixi_language_v2";
+const GEMINI_KEY = "tixi_gemini_api_key";
+const GEMINI_MODEL_KEY = "tixi_gemini_model";
 const LEVEL_TARGETS = [2, 5, 8];
 let currentLanguage = "en";
 let lastAIQuestion = "";
@@ -91,6 +105,7 @@ let aiConversation = [];
 let activeWorkspaceView = null;
 let activePaperFilter = "全部";
 let isGeneratingQuestions = false;
+let resumeUploadAfterAISetup = false;
 const loadedScripts = new Map();
 const originalTextNodes = new WeakMap();
 const UI_EN = Object.freeze({
@@ -387,6 +402,28 @@ const UI_EN = Object.freeze({
   ,"请输入答案": "Enter Your Answer"
   ,"输入答案后提交；英文答案不区分大小写。": "Enter your answer and submit. English answers are not case-sensitive."
   ,"自动生成统考风格选择题，不会产生填充题。": "Generates UEC-style multiple-choice questions only; no fill-in questions are created automatically."
+  ,"Gemini AI 设置": "Gemini AI Settings"
+  ,"尚未连接": "Not Connected"
+  ,"已连接": "Connected"
+  ,"由 Gemini AI 阅读并理解资料后生成统考风格选择题，不使用本机拼接题目。": "Gemini AI reads and understands the material before creating UEC-style MCQs. Rule-based local questions are not used."
+  ,"查看与编辑题目": "View and Edit Questions"
+  ,"编辑已生成题目": "Edit Generated Questions"
+  ,"选择一题修改题干、选项、正确答案、解析或常见错误。": "Choose a question to edit its stem, options, correct answer, explanation, or common mistake."
+  ,"返回资料": "Back to Material"
+  ,"编辑题目": "Edit Question"
+  ,"编辑互动题目": "Edit Interactive Question"
+  ,"修改后会立即更新学生练习中的这道题目。": "Changes immediately update this question in student practice."
+  ,"储存题目修改": "Save Question Changes"
+  ,"AI 题目生成设置": "AI Question Generation Settings"
+  ,"GitHub Pages 没有 AI 后端。请输入自己的 Gemini API Key，让浏览器直接调用 Gemini；密钥只储存在这台装置的浏览器，不会写入网站代码库。": "GitHub Pages has no AI backend. Enter your Gemini API key so this browser can call Gemini directly. The key is stored only in this browser on this device and is never committed to the website repository."
+  ,"Gemini API Key": "Gemini API Key"
+  ,"输入 Google AI Studio API Key": "Enter your Google AI Studio API key"
+  ,"Gemini 模型": "Gemini Model"
+  ,"取得 Gemini API Key": "Get a Gemini API Key"
+  ,"取得 Gemini API Key →": "Get a Gemini API Key →"
+  ,"储存 AI 设置": "Save AI Settings"
+  ,"清除密钥": "Clear Key"
+  ,"AI 已设置，上传资料时会由 Gemini 理解内容并生成题目。": "AI is configured. Gemini will understand uploaded content and generate the questions."
 });
 
 function applyLanguage(language = "zh", { persist = true } = {}) {
@@ -1035,6 +1072,7 @@ function resetGenerationUI() {
   $$('[data-generation-step]').forEach((step) => step.classList.remove("active", "done"));
   const button = $("#process-upload");
   button.dataset.complete = "";
+  button.dataset.setupAi = "";
   button.textContent = localized("Generate Questions", "开始生成题目");
   button.disabled = !pendingUploadFile;
   $("#close-upload").disabled = false;
@@ -1173,15 +1211,16 @@ function normalizeGeneratedQuestion(item, index, paperId, topic) {
   correct = Math.max(0, Math.min(Number.isInteger(correct) ? correct : 0, options.length - 1));
   const explanation = String(item.explanation || localized("Review the source material for the supporting detail.", "请对照原始资料中的重点内容。"));
   const mistake = String(item.mistake || localized("A common mistake is choosing a related term without checking the exact wording.", "常见错误：只凭相似词作答，没有核对资料中的准确叙述。"));
+  const levelMap = { Basic: "基础", Intermediate: "中等", Advanced: "进阶", "基础": "基础", "中等": "中等", "进阶": "进阶" };
   return {
     id: `question-${Date.now()}-${index}-${Math.random().toString(36).slice(2, 6)}`,
     type: "mcq",
     paperId,
     topic,
-    level: "中等",
+    level: levelMap[item.level] || "中等",
     title,
     titleEn: title,
-    code: "",
+    code: String(item.code || "").trim(),
     options,
     optionsEn: options,
     correct,
@@ -1192,83 +1231,127 @@ function normalizeGeneratedQuestion(item, index, paperId, topic) {
   };
 }
 
-function buildLocalQuestions(text, paperId, topic) {
-  const compact = normalizeMaterialText(text);
-  const sentences = compact
-    .split(/(?:\r?\n|(?<=[。！？.!?])\s*)/u)
-    .map((sentence) => sentence.replace(/^[-•\d.)、\s]+/, "").trim())
-    .filter((sentence) => sentence.length >= 22 && sentence.length <= 260);
-  const stopWords = new Set(["this", "that", "these", "those", "which", "there", "their", "about", "using", "with", "from", "have", "will", "可以", "一个", "以及", "进行", "使用", "这个", "这些", "其中", "因此", "通过"]);
-  const keywords = [...new Set((compact.match(/[A-Za-z][A-Za-z0-9_-]{4,}|[\u3400-\u9fff]{2,8}/gu) || [])
-    .map((word) => word.trim())
-    .filter((word) => !stopWords.has(word.toLowerCase())))].slice(0, 80);
-  const candidates = sentences.length ? sentences : compact.match(/.{22,180}/gu) || [];
-  return candidates.slice(0, 8).map((sentence, index) => {
-    const usesChinese = /[\u3400-\u9fff]/u.test(sentence);
-    const chineseLead = usesChinese
-      ? sentence.split(/负责|用于|能够|根据|可以|主要|包含|包括|执行|储存|保存|提供|必须|表示|让|是/u)[0].replace(/[，。；：、\s]/gu, "").slice(0, 12)
-      : "";
-    const concept = (usesChinese && chineseLead.length >= 2 ? chineseLead : "")
-      || keywords.find((word) => sentence.includes(word) && word.length < sentence.length * 0.45)
-      || (sentence.match(/[A-Za-z][A-Za-z0-9_-]{3,}|[\u3400-\u9fff]{2,8}/u)?.[0])
-      || localized("this concept", "这个概念");
-    const correct = index % 4;
-    const wrongOptions = usesChinese
-      ? [
-        `资料表示「${concept}」与上述电脑功能完全没有关系。`,
-        `在所有情况下，「${concept}」不需要任何资料或指令便能完成任务。`,
-        `只要使用「${concept}」，其他电脑组件、程序与网络都可以完全省略。`
-      ]
-      : [
-        `The material states that “${concept}” has no relationship to the computer function described.`,
-        `In every situation, “${concept}” can complete its task without any data or instructions.`,
-        `Using “${concept}” makes every other computer component, program, and network unnecessary.`
-      ];
-    const options = [...wrongOptions];
-    options.splice(correct, 0, sentence);
-    const stemsZh = [
-      `关于「${concept}」，根据资料，下列哪一项叙述正确？`,
-      `一名学生正在复习「${topic}」。下列哪一项笔记与资料内容相符？`,
-      `老师要求学生判断有关「${concept}」的说明。下列哪一项最准确？`
-    ];
-    const stemsEn = [
-      `According to the material, which statement about “${concept}” is correct?`,
-      `A student is revising ${TOPIC_EN[topic] || topic}. Which note agrees with the material?`,
-      `A teacher asks the class to evaluate the descriptions of “${concept}”. Which is the most accurate?`
-    ];
-    return normalizeGeneratedQuestion({
-      question: usesChinese ? stemsZh[index % stemsZh.length] : stemsEn[index % stemsEn.length],
-      options,
-      correct,
-      explanation: usesChinese ? `正确选项完整表达了资料中的重点：“${sentence}”` : `The correct option accurately reflects this key point from the material: “${sentence}”`,
-      mistake: usesChinese ? "常见错误：被含有相关术语但使用绝对化说法的选项误导，没有核对概念的实际功能。" : "A common mistake is choosing an option that uses a related term but makes an absolute claim not supported by the material."
-    }, index, paperId, topic);
-  }).filter(Boolean).slice(0, 6);
+function getGeminiApiKey() {
+  return localStorage.getItem(GEMINI_KEY)?.trim() || "";
+}
+
+function getGeminiModel() {
+  return localStorage.getItem(GEMINI_MODEL_KEY)?.trim() || "gemini-2.5-flash";
+}
+
+function createAISetupError(message) {
+  const error = new Error(message || localized(
+    "Connect Gemini AI in the teacher portal before generating questions.",
+    "请先在老师端连接 Gemini AI，再生成题目。"
+  ));
+  error.code = "AI_NOT_CONFIGURED";
+  return error;
+}
+
+function buildQuestionGenerationPrompt(text, fileName, topic) {
+  return `You are an experienced Malaysian Independent Chinese Secondary School computer science teacher and UEC examination setter. Read and understand the supplied learning material before writing any question.
+
+Create exactly 6 single-best-answer multiple-choice questions in the same level and reasoning style as Malaysian UEC senior middle computer science questions.
+
+Strict quality rules:
+1. Every correct answer must be directly supported by the supplied material. Do not invent facts, definitions, numbers, program output, or technical requirements.
+2. Each question must be logically complete and answerable without seeing this instruction. Use a clear scenario, program fragment, table, network situation, database situation, or concept comparison when the material supports it.
+3. Provide exactly four concise and plausible options. There must be one and only one correct answer. Distractors must reflect realistic student misconceptions, not absurd claims or generic statements.
+4. Never create cloze, missing-word, fill-in-the-blank, underscore, or simple sentence-copy questions.
+5. Avoid repeatedly asking “according to the material”. Test understanding, application, output tracing, comparison, or reasoning instead.
+6. The explanation must state why the correct option is correct. The common mistake must identify a realistic misunderstanding.
+7. Use the main language of the material. Keep standard English computing terms where appropriate.
+8. Return only a JSON array with this exact schema:
+[{"question":"...","code":"optional code or empty string","options":["A text","B text","C text","D text"],"correct":0,"level":"Basic|Intermediate|Advanced","explanation":"...","mistake":"..."}]
+The correct value is a zero-based integer from 0 to 3.
+
+Category: ${TOPIC_EN[topic] || topic}
+Source file: ${fileName}
+
+LEARNING MATERIAL:
+${text.slice(0, 14000)}`;
+}
+
+function parseAIQuestionResponse(raw, paperId, topic) {
+  if (typeof raw !== "string") throw new Error("Question generation response was empty");
+  const start = raw.indexOf("[");
+  const end = raw.lastIndexOf("]");
+  if (start < 0 || end <= start) throw new Error("Question generation response did not contain JSON");
+  const parsed = JSON.parse(raw.slice(start, end + 1));
+  if (!Array.isArray(parsed)) throw new Error("Question generation response was not an array");
+  return parsed.map((item, index) => normalizeGeneratedQuestion(item, index, paperId, topic)).filter(Boolean).slice(0, 8);
+}
+
+async function requestQuestionsFromProxy(endpoint, prompt, paperId, topic, signal) {
+  const response = await fetch(endpoint, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    signal,
+    body: JSON.stringify({ message: prompt, messages: [{ role: "user", content: prompt }], mode: "study", task: "question-generation", language: currentLanguage })
+  });
+  if (!response.ok) throw new Error(`Question generation endpoint returned ${response.status}`);
+  const data = await response.json();
+  const raw = Array.isArray(data.questions) ? JSON.stringify(data.questions) : data.reply;
+  return parseAIQuestionResponse(raw, paperId, topic);
+}
+
+async function requestQuestionsFromGemini(apiKey, model, prompt, paperId, topic, signal) {
+  const endpoint = `https://generativelanguage.googleapis.com/v1beta/models/${encodeURIComponent(model)}:generateContent`;
+  const response = await fetch(endpoint, {
+    method: "POST",
+    headers: { "Content-Type": "application/json", "x-goog-api-key": apiKey },
+    signal,
+    body: JSON.stringify({
+      systemInstruction: { parts: [{ text: "Produce accurate, source-grounded UEC computer science assessment questions. Return JSON only." }] },
+      contents: [{ role: "user", parts: [{ text: prompt }] }],
+      generationConfig: {
+        temperature: 0.2,
+        maxOutputTokens: 6000,
+        responseMimeType: "application/json",
+        responseSchema: {
+          type: "ARRAY",
+          minItems: 6,
+          maxItems: 6,
+          items: {
+            type: "OBJECT",
+            required: ["question", "code", "options", "correct", "level", "explanation", "mistake"],
+            properties: {
+              question: { type: "STRING" },
+              code: { type: "STRING" },
+              options: { type: "ARRAY", minItems: 4, maxItems: 4, items: { type: "STRING" } },
+              correct: { type: "INTEGER", minimum: 0, maximum: 3 },
+              level: { type: "STRING", enum: ["Basic", "Intermediate", "Advanced"] },
+              explanation: { type: "STRING" },
+              mistake: { type: "STRING" }
+            }
+          }
+        }
+      }
+    })
+  });
+  const data = await response.json().catch(() => ({}));
+  if (!response.ok) throw new Error(data?.error?.message || `Gemini returned ${response.status}`);
+  const raw = data?.candidates?.[0]?.content?.parts?.map((part) => part.text || "").join("\n").trim();
+  return parseAIQuestionResponse(raw, paperId, topic);
 }
 
 async function requestAIQuestions(text, fileName, paperId, topic) {
   const configuredEndpoint = globalThis.PERSONAL_AI_CONFIG?.generationEndpoint?.trim()
-    || globalThis.PERSONAL_AI_CONFIG?.aiEndpoint?.trim()
-    || "./api/chat";
-  const prompt = `Create 6 single-best-answer multiple-choice questions in the style of Malaysian UEC (Unified Examination Certificate) senior middle computer science examinations. Return ONLY a JSON array. Each item must use this schema: {"question":"...","options":["...","...","...","..."],"correct":0,"explanation":"...","mistake":"..."}. The correct field is a zero-based option index. Use the learning material's main language. Use formal exam wording and, where the source permits, scenarios involving programs, data, databases, networks, hardware, algorithms, or logical reasoning. Every question must have exactly four plausible options and one unambiguously correct answer. Never create fill-in-the-blank or cloze questions, never use underscores or a missing-word sentence, and never ask which word completes a blank. Cover important concepts rather than document formatting. File: ${fileName}\n\nMATERIAL:\n${text.slice(0, 5000)}`;
+    || globalThis.PERSONAL_AI_CONFIG?.aiEndpoint?.trim();
+  const apiKey = getGeminiApiKey();
+  const prompt = buildQuestionGenerationPrompt(text, fileName, topic);
   const controller = new AbortController();
-  const timeout = setTimeout(() => controller.abort(), 30000);
+  const timeout = setTimeout(() => controller.abort(), 60000);
   try {
-    const response = await fetch(configuredEndpoint, {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      signal: controller.signal,
-      body: JSON.stringify({ message: prompt, messages: [{ role: "user", content: prompt }], mode: "study", task: "question-generation", language: currentLanguage })
-    });
-    if (!response.ok) throw new Error(`Question generation endpoint returned ${response.status}`);
-    const data = await response.json();
-    const raw = Array.isArray(data.questions) ? JSON.stringify(data.questions) : data.reply;
-    if (typeof raw !== "string") throw new Error("Question generation response was empty");
-    const start = raw.indexOf("[");
-    const end = raw.lastIndexOf("]");
-    if (start < 0 || end <= start) throw new Error("Question generation response did not contain JSON");
-    const parsed = JSON.parse(raw.slice(start, end + 1));
-    return parsed.map((item, index) => normalizeGeneratedQuestion(item, index, paperId, topic)).filter(Boolean).slice(0, 8);
+    if (configuredEndpoint) return await requestQuestionsFromProxy(configuredEndpoint, prompt, paperId, topic, controller.signal);
+    if (apiKey) return await requestQuestionsFromGemini(apiKey, getGeminiModel(), prompt, paperId, topic, controller.signal);
+    if (location.hostname.endsWith("github.io") || globalThis.Capacitor?.isNativePlatform?.()) throw createAISetupError();
+    try {
+      return await requestQuestionsFromProxy("./api/chat", prompt, paperId, topic, controller.signal);
+    } catch (error) {
+      if (error?.name === "AbortError") throw error;
+      throw createAISetupError();
+    }
   } finally {
     clearTimeout(timeout);
   }
@@ -1280,16 +1363,15 @@ async function generateQuestionsFromFile(file, paperId, topic) {
     throw new Error(localized("Not enough readable text was found. Try a clearer scan or a text-based document.", "无法辨识足够文字，请尝试更清晰的扫描或含文字的文件。"));
   }
   setGenerationProgress(66, localized("Organizing key concepts…", "正在整理重点内容……"), "generate");
-  try {
-    const aiQuestions = await requestAIQuestions(extractedText, file.name, paperId, topic);
-    if (aiQuestions.length >= 2) return { questions: aiQuestions, mode: "ai" };
-  } catch (error) {
-    console.info("Online AI question generation unavailable; using local generator", error);
+  setGenerationProgress(76, localized("Gemini is understanding the material and writing questions…", "Gemini 正在理解资料并编写题目……"), "generate");
+  const aiQuestions = await requestAIQuestions(extractedText, file.name, paperId, topic);
+  if (aiQuestions.length < 4) {
+    throw new Error(localized(
+      "AI did not return enough valid questions. Please try again.",
+      "AI 没有返回足够的有效题目，请重新尝试。"
+    ));
   }
-  setGenerationProgress(78, localized("Generating questions on this device…", "正在本机生成题目……"), "generate");
-  const localQuestions = buildLocalQuestions(extractedText, paperId, topic);
-  if (!localQuestions.length) throw new Error(localized("The material could not be converted into questions.", "这份资料暂时无法转换成题目。"));
-  return { questions: localQuestions, mode: "local" };
+  return { questions: aiQuestions, mode: "ai" };
 }
 
 function populateQuestionMaterialOptions() {
@@ -1307,11 +1389,69 @@ function toggleQuestionTypeFields() {
   $("#manual-correct-answer").required = isFill;
 }
 
-function openQuestionDialog() {
+function updateAIConfigStatus() {
+  const configuredEndpoint = globalThis.PERSONAL_AI_CONFIG?.generationEndpoint?.trim()
+    || globalThis.PERSONAL_AI_CONFIG?.aiEndpoint?.trim();
+  const hasBrowserKey = Boolean(getGeminiApiKey());
+  const hasSameOriginBackend = !location.hostname.endsWith("github.io")
+    && !globalThis.Capacitor?.isNativePlatform?.()
+    && !["127.0.0.1", "localhost"].includes(location.hostname);
+  const configured = Boolean(configuredEndpoint || hasBrowserKey || hasSameOriginBackend);
+  $("#ai-config-status").textContent = configured ? localized("Connected", "已连接") : localized("Not Connected", "尚未连接");
+  $("#open-ai-settings").classList.toggle("configured", configured);
+}
+
+function openAISettings({ resumeUpload = false } = {}) {
+  resumeUploadAfterAISetup = resumeUpload;
+  $("#gemini-api-key").value = getGeminiApiKey();
+  $("#gemini-model").value = getGeminiModel();
+  $("#ai-settings-error").textContent = "";
+  $("#ai-settings-dialog").showModal();
+  $("#gemini-api-key").focus();
+}
+
+function openQuestionDialog({ questionId = "", paperId = "" } = {}) {
   const form = $("#question-form");
   form.reset();
+  $("#editing-question-id").value = "";
+  $("#question-return-paper-id").value = paperId;
   $("#question-form-error").textContent = "";
   populateQuestionMaterialOptions();
+  $("#question-material").disabled = false;
+  const question = questionId ? questionBank.find((item) => item.id === questionId) : null;
+  if (question) {
+    $("#editing-question-id").value = question.id;
+    $("#question-return-paper-id").value = paperId || question.paperId;
+    $("#question-dialog-title").textContent = localized("Edit Interactive Question", "编辑互动题目");
+    $("#question-dialog-intro").textContent = localized(
+      "Changes immediately update this question in student practice.",
+      "修改后会立即更新学生练习中的这道题目。"
+    );
+    $("#save-question-button").textContent = localized("Save Question Changes", "储存题目修改");
+    $("#question-type").value = question.type === "fill" ? "fill" : "mcq";
+    $("#question-material").value = question.paperId || "";
+    $("#question-material").disabled = true;
+    $("#manual-question-topic").value = question.topic || "综合试卷";
+    $("#manual-question-level").value = question.level || "中等";
+    $("#manual-question-title").value = question.title || "";
+    $("#manual-question-code").value = question.code || "";
+    for (let index = 0; index < 4; index += 1) $("#manual-option-" + index).value = question.options?.[index] || "";
+    $("#manual-correct-option").value = String(question.correct || 0);
+    $("#manual-correct-answer").value = question.correctAnswer || "";
+    $("#manual-accepted-answers").value = (question.acceptedAnswers || [])
+      .filter((answer) => normalizeAnswer(answer) !== normalizeAnswer(question.correctAnswer))
+      .join(", ");
+    $("#manual-explanation").value = question.explanation || "";
+    $("#manual-mistake").value = question.mistake || "";
+  } else {
+    $("#question-dialog-title").textContent = localized("Create an Interactive Question", "建立互动题目");
+    $("#question-dialog-intro").textContent = localized(
+      "Create an MCQ or fill-in question. It will be added to student practice immediately.",
+      "自行建立选择题或填充题。储存后会立即加入学生练习。"
+    );
+    $("#save-question-button").textContent = localized("Save and Publish", "储存并发布");
+    if (paperId) $("#question-material").value = paperId;
+  }
   toggleQuestionTypeFields();
   $("#question-dialog").showModal();
   $("#manual-question-title").focus();
@@ -1346,6 +1486,8 @@ function addQuestionToAssignment(question, paper) {
 
 function saveManualQuestion(event) {
   event.preventDefault();
+  const editingId = $("#editing-question-id").value;
+  const existingQuestion = editingId ? questionBank.find((item) => item.id === editingId) : null;
   const type = $("#question-type").value === "fill" ? "fill" : "mcq";
   const title = $("#manual-question-title").value.trim();
   const explanation = $("#manual-explanation").value.trim();
@@ -1353,7 +1495,7 @@ function saveManualQuestion(event) {
     "A common mistake is answering before checking every condition in the question.",
     "常见错误：还没有检查题目中的所有条件就作答。"
   );
-  const materialId = $("#question-material").value;
+  const materialId = existingQuestion?.paperId || $("#question-material").value;
   const paper = papers.find((item) => item.id === materialId);
   const options = type === "mcq" ? Array.from({ length: 4 }, (_, index) => $("#manual-option-" + index).value.trim()) : [];
   const correctAnswer = type === "fill" ? $("#manual-correct-answer").value.trim() : "";
@@ -1376,9 +1518,9 @@ function saveManualQuestion(event) {
     ? [...new Set([correctAnswer, ...$("#manual-accepted-answers").value.split(/[,，;；\n]/u)].map((answer) => answer.trim()).filter(Boolean))]
     : [];
   const question = {
-    id: `manual-question-${Date.now()}-${Math.random().toString(36).slice(2, 7)}`,
+    id: existingQuestion?.id || `manual-question-${Date.now()}-${Math.random().toString(36).slice(2, 7)}`,
     type,
-    paperId: paper?.id || "manual",
+    paperId: existingQuestion?.paperId || paper?.id || "manual",
     topic: $("#manual-question-topic").value,
     level: $("#manual-question-level").value,
     title,
@@ -1393,11 +1535,13 @@ function saveManualQuestion(event) {
     explanationEn: explanation,
     mistake,
     mistakeEn: mistake,
-    createdAt: new Date().toISOString()
+    createdAt: existingQuestion?.createdAt || new Date().toISOString(),
+    updatedAt: new Date().toISOString()
   };
-  questionBank.push(question);
+  if (existingQuestion) questionBank[questionBank.indexOf(existingQuestion)] = { ...existingQuestion, ...question };
+  else questionBank.push(question);
   if (paper) paper.count = questionBank.filter((item) => item.paperId === paper.id).length;
-  addQuestionToAssignment(question, paper);
+  if (!existingQuestion) addQuestionToAssignment(question, paper);
   saveQuestions();
   savePapers();
   saveAssignments();
@@ -1405,10 +1549,31 @@ function saveManualQuestion(event) {
   renderAssignments();
   if (activeWorkspaceView) renderWorkspaceView(activeWorkspaceView);
   $("#question-dialog").close();
+  const returnPaperId = $("#question-return-paper-id").value;
   showToast(localized(
-    `${type === "fill" ? "Fill-in" : "Multiple-choice"} question published to student practice.`,
-    `${type === "fill" ? "填充" : "选择"}题已发布到学生练习。`
+    existingQuestion ? "Question changes saved." : `${type === "fill" ? "Fill-in" : "Multiple-choice"} question published to student practice.`,
+    existingQuestion ? "题目修改已储存。" : `${type === "fill" ? "填充" : "选择"}题已发布到学生练习。`
   ));
+  if (existingQuestion && returnPaperId) openQuestionManager(returnPaperId);
+}
+
+function openQuestionManager(paperId) {
+  const paper = papers.find((item) => item.id === paperId);
+  if (!paper) return;
+  const materialQuestions = questionBank.filter((question) => question.paperId === paper.id);
+  $("#question-list-paper-id").value = paper.id;
+  $("#question-list-title").textContent = `${currentLanguage === "en" ? paper.titleEn : paper.title} · ${localized("Edit Questions", "编辑题目")}`;
+  $("#material-question-list").innerHTML = materialQuestions.length ? materialQuestions.map((question, index) => {
+    const answer = question.type === "fill"
+      ? question.correctAnswer
+      : `${String.fromCharCode(65 + question.correct)}. ${question.options?.[question.correct] || ""}`;
+    return `<article class="material-question-item">
+      <span class="material-question-number">${index + 1}</span>
+      <div class="material-question-copy"><strong>${escapeHTML(question.title)}</strong><small>${localized(question.type === "fill" ? "Fill in the Answer" : "Multiple Choice", question.type === "fill" ? "填充题" : "选择题")} · ${localized("Answer", "答案")}: ${escapeHTML(answer)}</small></div>
+      <button type="button" data-edit-question="${escapeHTML(question.id)}">${localized("Edit Question", "编辑题目")}</button>
+    </article>`;
+  }).join("") : `<div class="data-empty"><strong>${localized("No questions in this material", "这份资料还没有题目")}</strong></div>`;
+  $("#question-list-dialog").showModal();
 }
 
 function openPaperEditor(paperId) {
@@ -1425,6 +1590,12 @@ function openPaperEditor(paperId) {
   $("#edit-paper-file").textContent = paper.fileName
     ? `${paper.fileName} · ${(paper.fileSize / 1024 / 1024).toFixed(1)} MB`
     : localized("No source filename recorded", "没有记录来源文件名");
+  const materialQuestionCount = questionBank.filter((question) => question.paperId === paper.id).length;
+  $("#manage-paper-questions").textContent = localized(
+    `View and Edit Questions (${materialQuestionCount})`,
+    `查看与编辑题目（${materialQuestionCount}）`
+  );
+  $("#manage-paper-questions").disabled = materialQuestionCount === 0;
   $("#edit-paper-dialog").showModal();
 }
 
@@ -1561,6 +1732,7 @@ applyLanguage(localStorage.getItem(LANGUAGE_KEY) || "en", { persist: false });
 renderTeacherMetrics();
 renderClassPerformance();
 updateStudentProgress();
+updateAIConfigStatus();
 
 $$(".language-select").forEach((select) => select.addEventListener("change", (event) => {
   applyLanguage(event.target.value);
@@ -1572,6 +1744,7 @@ $$(".language-select").forEach((select) => select.addEventListener("change", (ev
   updateAccountUI();
   updateNavigationLabels();
   updateStudentProgress();
+  updateAIConfigStatus();
   if ($("#quiz-view").classList.contains("active")) renderQuestion();
   if ($("#student-view").classList.contains("active") && !lastAIQuestion) resetAIChat();
   if (activeWorkspaceView) renderWorkspaceView(activeWorkspaceView);
@@ -1809,7 +1982,8 @@ $$('[data-view]').forEach((button) => button.addEventListener("click", () => sho
 $$('[data-view-link]').forEach((button) => button.addEventListener("click", () => showView(button.dataset.viewLink)));
 $("#back-dashboard").addEventListener("click", () => showView("dashboard"));
 $("#open-upload").addEventListener("click", openUpload);
-$("#open-question").addEventListener("click", openQuestionDialog);
+$("#open-question").addEventListener("click", () => openQuestionDialog());
+$("#open-ai-settings").addEventListener("click", () => openAISettings());
 $("#quick-upload").addEventListener("click", openUpload);
 $("#mobile-add").addEventListener("click", () => role === "teacher" ? openUpload() : startQuiz());
 $("#file-input").addEventListener("change", (event) => loadFiles(event.target.files));
@@ -1820,6 +1994,12 @@ $("#dropzone").addEventListener("drop", (event) => { event.preventDefault(); eve
 $("#process-upload").addEventListener("click", async (event) => {
   event.preventDefault();
   const actionButton = $("#process-upload");
+  if (actionButton.dataset.setupAi === "true") {
+    actionButton.dataset.setupAi = "";
+    $("#upload-dialog").close();
+    openAISettings({ resumeUpload: true });
+    return;
+  }
   if (actionButton.dataset.complete === "true") {
     $("#upload-dialog").close();
     pendingUploadFile = null;
@@ -1886,10 +2066,9 @@ $("#process-upload").addEventListener("click", async (event) => {
     renderPapers();
     renderAssignments();
     if (activeWorkspaceView === "library") renderWorkspaceView("library");
-    const modeLabel = generated.mode === "ai" ? localized("AI", "AI") : localized("on-device", "本机");
     const result = localized(
-      `${generated.questions.length} questions generated with ${modeLabel} processing. The practice is ready for students.`,
-      `已透过${modeLabel}整理生成 ${generated.questions.length} 道题目，学生端现在可以开始练习。`
+      `${generated.questions.length} questions generated after Gemini understood the material. The practice is ready for students.`,
+      `Gemini 理解资料后已生成 ${generated.questions.length} 道题目，学生端现在可以开始练习。`
     );
     setGenerationProgress(100, localized("Question generation complete", "题目生成完成"), "save", result);
     $("#generation-progress").classList.add("success");
@@ -1903,7 +2082,10 @@ $("#process-upload").addEventListener("click", async (event) => {
     $("#generation-progress").classList.add("error");
     $("#generation-status").textContent = localized("Generation could not be completed", "题目生成未完成");
     $("#generation-result").textContent = error?.message || localized("Try another file or a clearer scan.", "请尝试其他文件或更清晰的扫描。 ");
-    actionButton.textContent = localized("Try Again", "重新尝试");
+    actionButton.dataset.setupAi = error?.code === "AI_NOT_CONFIGURED" ? "true" : "";
+    actionButton.textContent = error?.code === "AI_NOT_CONFIGURED"
+      ? localized("Set Up AI", "设置 AI")
+      : localized("Try Again", "重新尝试");
     actionButton.disabled = false;
   } finally {
     isGeneratingQuestions = false;
@@ -1915,6 +2097,11 @@ $("#process-upload").addEventListener("click", async (event) => {
 
 $("#close-edit-paper").addEventListener("click", () => $("#edit-paper-dialog").close());
 $("#cancel-edit-paper").addEventListener("click", () => $("#edit-paper-dialog").close());
+$("#manage-paper-questions").addEventListener("click", () => {
+  const paperId = $("#edit-paper-id").value;
+  $("#edit-paper-dialog").close();
+  openQuestionManager(paperId);
+});
 $("#edit-paper-form").addEventListener("submit", (event) => {
   event.preventDefault();
   const paper = papers.find((item) => item.id === $("#edit-paper-id").value);
@@ -1959,15 +2146,71 @@ $("#paper-list").addEventListener("click", (event) => {
   const button = event.target.closest("[data-paper-id]");
   if (button) openPaperEditor(button.dataset.paperId);
 });
-$("#create-set").addEventListener("click", openQuestionDialog);
-$("#close-question-dialog").addEventListener("click", () => $("#question-dialog").close());
-$("#cancel-question-dialog").addEventListener("click", () => $("#question-dialog").close());
+$("#create-set").addEventListener("click", () => openQuestionDialog());
+function closeQuestionEditor() {
+  const returnPaperId = $("#question-return-paper-id").value;
+  const wasEditing = Boolean($("#editing-question-id").value);
+  $("#question-dialog").close();
+  if (wasEditing && returnPaperId) openQuestionManager(returnPaperId);
+}
+$("#close-question-dialog").addEventListener("click", closeQuestionEditor);
+$("#cancel-question-dialog").addEventListener("click", closeQuestionEditor);
 $("#question-type").addEventListener("change", toggleQuestionTypeFields);
 $("#question-material").addEventListener("change", (event) => {
   const paper = papers.find((item) => item.id === event.target.value);
   if (paper) $("#manual-question-topic").value = paper.topic;
 });
 $("#question-form").addEventListener("submit", saveManualQuestion);
+$("#close-question-list").addEventListener("click", () => $("#question-list-dialog").close());
+$("#back-to-paper").addEventListener("click", () => {
+  const paperId = $("#question-list-paper-id").value;
+  $("#question-list-dialog").close();
+  openPaperEditor(paperId);
+});
+$("#material-question-list").addEventListener("click", (event) => {
+  const button = event.target.closest("[data-edit-question]");
+  if (!button) return;
+  const paperId = $("#question-list-paper-id").value;
+  $("#question-list-dialog").close();
+  openQuestionDialog({ questionId: button.dataset.editQuestion, paperId });
+});
+function closeAISettings() {
+  resumeUploadAfterAISetup = false;
+  $("#ai-settings-dialog").close();
+}
+$("#close-ai-settings").addEventListener("click", closeAISettings);
+$("#cancel-ai-settings").addEventListener("click", closeAISettings);
+$("#clear-ai-key").addEventListener("click", () => {
+  localStorage.removeItem(GEMINI_KEY);
+  $("#gemini-api-key").value = "";
+  updateAIConfigStatus();
+  showToast(localized("Gemini API key cleared.", "Gemini API Key 已清除。"));
+});
+$("#ai-settings-form").addEventListener("submit", (event) => {
+  event.preventDefault();
+  const apiKey = $("#gemini-api-key").value.trim();
+  const model = $("#gemini-model").value.trim();
+  if (!apiKey || !model) {
+    $("#ai-settings-error").textContent = localized("Enter the Gemini API key and model.", "请输入 Gemini API Key 与模型名称。");
+    return;
+  }
+  localStorage.setItem(GEMINI_KEY, apiKey);
+  localStorage.setItem(GEMINI_MODEL_KEY, model);
+  $("#ai-settings-error").textContent = "";
+  $("#ai-settings-dialog").close();
+  updateAIConfigStatus();
+  showToast(localized(
+    "AI is configured. Gemini will understand uploaded content and generate the questions.",
+    "AI 已设置，上传资料时会由 Gemini 理解内容并生成题目。"
+  ));
+  if (resumeUploadAfterAISetup && pendingUploadFile) {
+    resumeUploadAfterAISetup = false;
+    const actionButton = $("#process-upload");
+    actionButton.dataset.setupAi = "";
+    actionButton.textContent = localized("Try Again", "重新尝试");
+    $("#upload-dialog").showModal();
+  }
+});
 $("#invite-students").addEventListener("click", () => {
   const code = getHourlyCode();
   navigator.clipboard?.writeText(code).catch(() => {});

@@ -4,6 +4,24 @@ const JSON_HEADERS = {
   "Access-Control-Allow-Headers": "Content-Type",
   "Access-Control-Allow-Methods": "GET, POST, OPTIONS"
 };
+const QUESTION_RESPONSE_SCHEMA = {
+  type: "ARRAY",
+  minItems: 6,
+  maxItems: 6,
+  items: {
+    type: "OBJECT",
+    required: ["question", "code", "options", "correct", "level", "explanation", "mistake"],
+    properties: {
+      question: { type: "STRING" },
+      code: { type: "STRING" },
+      options: { type: "ARRAY", minItems: 4, maxItems: 4, items: { type: "STRING" } },
+      correct: { type: "INTEGER", minimum: 0, maximum: 3 },
+      level: { type: "STRING", enum: ["Basic", "Intermediate", "Advanced"] },
+      explanation: { type: "STRING" },
+      mistake: { type: "STRING" }
+    }
+  }
+};
 
 function json(data, status = 200) {
   return new Response(JSON.stringify(data), { status, headers: JSON_HEADERS });
@@ -31,14 +49,15 @@ export async function onRequestPost({ request, env }) {
   }
 
   const message = typeof body.message === "string" ? body.message.trim() : "";
-  if (!message || message.length > 6000) {
-    return json({ error: "Message must contain between 1 and 6000 characters." }, 400);
+  const messageLimit = body.task === "question-generation" ? 18000 : 6000;
+  if (!message || message.length > messageLimit) {
+    return json({ error: `Message must contain between 1 and ${messageLimit} characters.` }, 400);
   }
 
   const history = Array.isArray(body.messages) ? body.messages.slice(-12) : [];
   const contents = history
     .filter((item) => item && typeof item.content === "string" && ["user", "assistant"].includes(item.role))
-    .map((item) => ({ role: item.role === "assistant" ? "model" : "user", parts: [{ text: item.content.slice(0, 6000) }] }));
+    .map((item) => ({ role: item.role === "assistant" ? "model" : "user", parts: [{ text: item.content.slice(0, messageLimit) }] }));
   if (!contents.length || contents.at(-1)?.role !== "user") {
     contents.push({ role: "user", parts: [{ text: message }] });
   }
@@ -53,7 +72,11 @@ export async function onRequestPost({ request, env }) {
       contents,
       generationConfig: {
         temperature: body.task === "question-generation" ? 0.3 : body.mode === "creative" ? 0.9 : 0.55,
-        maxOutputTokens: body.task === "question-generation" ? 3200 : 1200
+        maxOutputTokens: body.task === "question-generation" ? 6000 : 1200,
+        ...(body.task === "question-generation" ? {
+          responseMimeType: "application/json",
+          responseSchema: QUESTION_RESPONSE_SCHEMA
+        } : {})
       }
     })
   });
