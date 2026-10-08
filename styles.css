@@ -727,6 +727,7 @@ html[lang="en"] .landing-section-label, html[lang="en"] .section-kicker { font-f
 .ai-settings-link { display: flex; justify-content: space-between; align-items: center; gap: 12px; }
 .ai-settings-link small { padding: 4px 8px; border-radius: 20px; color: #7b3811; background: rgba(255,255,255,.45); font-size: 11px; }
 .ai-settings-link.configured small { color: #fff; background: #171719; }
+.ai-settings-link.attention small { color: #8c251d; background: #ffe2dc; }
 .page-head-actions { display: flex; align-items: center; gap: 10px; }
 .page-head-actions .secondary-button { border: 1px solid #d6d2cb; }
 

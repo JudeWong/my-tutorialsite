@@ -97,6 +97,7 @@ const CLASSES_KEY = "tixi_classes";
 const LANGUAGE_KEY = "tixi_language_v2";
 const GEMINI_KEY = "tixi_gemini_api_key";
 const GEMINI_MODEL_KEY = "tixi_gemini_model";
+const GEMINI_KEY_STATUS_KEY = "tixi_gemini_key_status";
 const LEVEL_TARGETS = [2, 5, 8];
 let currentLanguage = "en";
 let lastAIQuestion = "";
@@ -405,6 +406,8 @@ const UI_EN = Object.freeze({
   ,"Gemini AI 设置": "Gemini AI Settings"
   ,"尚未连接": "Not Connected"
   ,"已连接": "Connected"
+  ,"等待验证": "Ready to Test"
+  ,"需要更新": "Needs Update"
   ,"由 Gemini AI 阅读并理解资料后生成统考风格选择题，不使用本机拼接题目。": "Gemini AI reads and understands the material before creating UEC-style MCQs. Rule-based local questions are not used."
   ,"查看与编辑题目": "View and Edit Questions"
   ,"编辑已生成题目": "Edit Generated Questions"
@@ -422,7 +425,9 @@ const UI_EN = Object.freeze({
   ,"取得 Gemini API Key": "Get a Gemini API Key"
   ,"取得 Gemini API Key →": "Get a Gemini API Key →"
   ,"储存 AI 设置": "Save AI Settings"
+  ,"储存并更换 API Key": "Save and Replace API Key"
   ,"清除密钥": "Clear Key"
+  ,"更换 API Key": "Change API Key"
   ,"AI 已设置，上传资料时会由 Gemini 理解内容并生成题目。": "AI is configured. Gemini will understand uploaded content and generate the questions."
 });
 
@@ -1330,9 +1335,31 @@ async function requestQuestionsFromGemini(apiKey, model, prompt, paperId, topic,
     })
   });
   const data = await response.json().catch(() => ({}));
-  if (!response.ok) throw new Error(data?.error?.message || `Gemini returned ${response.status}`);
+  if (!response.ok) {
+    const messages = {
+      400: localized("The API key or Gemini model was rejected. Replace the key or check the model name.", "API Key 或 Gemini 模型被拒绝，请更换 Key 或检查模型名称。"),
+      401: localized("The Gemini API key is invalid. Please replace it with a new key.", "Gemini API Key 无效，请更换新的 Key。"),
+      403: localized("This Gemini API key is not authorized. Please replace it with another key.", "这个 Gemini API Key 没有使用权限，请更换其他 Key。"),
+      429: localized("This Gemini API key has reached its quota. Replace it or try again later.", "这个 Gemini API Key 已达到使用额度，请更换 Key 或稍后再试。")
+    };
+    const error = new Error(messages[response.status] || data?.error?.message || `Gemini returned ${response.status}`);
+    error.code = "GEMINI_DIRECT_FAILED";
+    error.source = "gemini-direct";
+    error.httpStatus = response.status;
+    localStorage.setItem(GEMINI_KEY_STATUS_KEY, "error");
+    updateAIConfigStatus();
+    throw error;
+  }
+  localStorage.setItem(GEMINI_KEY_STATUS_KEY, "valid");
+  updateAIConfigStatus();
   const raw = data?.candidates?.[0]?.content?.parts?.map((part) => part.text || "").join("\n").trim();
-  return parseAIQuestionResponse(raw, paperId, topic);
+  try {
+    return parseAIQuestionResponse(raw, paperId, topic);
+  } catch (error) {
+    error.code = "GEMINI_RESPONSE_INVALID";
+    error.source = "gemini-response";
+    throw error;
+  }
 }
 
 async function requestAIQuestions(text, fileName, paperId, topic) {
@@ -1344,7 +1371,18 @@ async function requestAIQuestions(text, fileName, paperId, topic) {
   const timeout = setTimeout(() => controller.abort(), 60000);
   try {
     if (configuredEndpoint) return await requestQuestionsFromProxy(configuredEndpoint, prompt, paperId, topic, controller.signal);
-    if (apiKey) return await requestQuestionsFromGemini(apiKey, getGeminiModel(), prompt, paperId, topic, controller.signal);
+    if (apiKey) {
+      try {
+        return await requestQuestionsFromGemini(apiKey, getGeminiModel(), prompt, paperId, topic, controller.signal);
+      } catch (error) {
+        if (error?.name === "AbortError" || error?.source) throw error;
+        error.code = "GEMINI_DIRECT_FAILED";
+        error.source = "gemini-direct";
+        localStorage.setItem(GEMINI_KEY_STATUS_KEY, "error");
+        updateAIConfigStatus();
+        throw error;
+      }
+    }
     if (location.hostname.endsWith("github.io") || globalThis.Capacitor?.isNativePlatform?.()) throw createAISetupError();
     try {
       return await requestQuestionsFromProxy("./api/chat", prompt, paperId, topic, controller.signal);
@@ -1393,21 +1431,40 @@ function updateAIConfigStatus() {
   const configuredEndpoint = globalThis.PERSONAL_AI_CONFIG?.generationEndpoint?.trim()
     || globalThis.PERSONAL_AI_CONFIG?.aiEndpoint?.trim();
   const hasBrowserKey = Boolean(getGeminiApiKey());
+  const browserKeyStatus = localStorage.getItem(GEMINI_KEY_STATUS_KEY) || "untested";
   const hasSameOriginBackend = !location.hostname.endsWith("github.io")
     && !globalThis.Capacitor?.isNativePlatform?.()
     && !["127.0.0.1", "localhost"].includes(location.hostname);
-  const configured = Boolean(configuredEndpoint || hasBrowserKey || hasSameOriginBackend);
-  $("#ai-config-status").textContent = configured ? localized("Connected", "已连接") : localized("Not Connected", "尚未连接");
+  const configured = Boolean(configuredEndpoint || hasSameOriginBackend || (hasBrowserKey && browserKeyStatus === "valid"));
+  const needsUpdate = hasBrowserKey && browserKeyStatus === "error" && !configuredEndpoint;
+  const readyToTest = hasBrowserKey && browserKeyStatus === "untested" && !configuredEndpoint;
+  $("#ai-config-status").textContent = needsUpdate
+    ? localized("Needs Update", "需要更新")
+    : readyToTest
+      ? localized("Ready to Test", "等待验证")
+      : configured
+        ? localized("Connected", "已连接")
+        : localized("Not Connected", "尚未连接");
   $("#open-ai-settings").classList.toggle("configured", configured);
+  $("#open-ai-settings").classList.toggle("attention", needsUpdate);
 }
 
-function openAISettings({ resumeUpload = false } = {}) {
+function openAISettings({ resumeUpload = false, replaceKey = false } = {}) {
   resumeUploadAfterAISetup = resumeUpload;
-  $("#gemini-api-key").value = getGeminiApiKey();
+  const keyInput = $("#gemini-api-key");
+  keyInput.value = getGeminiApiKey();
   $("#gemini-model").value = getGeminiModel();
-  $("#ai-settings-error").textContent = "";
+  $("#ai-settings-error").textContent = replaceKey
+    ? localized("Enter a new API key below. Saving will immediately replace the previous key on this device.", "请在下方输入新的 API Key；储存后会立即取代这台装置里的旧 Key。")
+    : "";
   $("#ai-settings-dialog").showModal();
-  $("#gemini-api-key").focus();
+  keyInput.focus();
+  if (replaceKey && keyInput.value) keyInput.select();
+}
+
+function openAISettingsFromUpload() {
+  if ($("#upload-dialog").open) $("#upload-dialog").close();
+  openAISettings({ resumeUpload: true, replaceKey: true });
 }
 
 function openQuestionDialog({ questionId = "", paperId = "" } = {}) {
@@ -1996,8 +2053,7 @@ $("#process-upload").addEventListener("click", async (event) => {
   const actionButton = $("#process-upload");
   if (actionButton.dataset.setupAi === "true") {
     actionButton.dataset.setupAi = "";
-    $("#upload-dialog").close();
-    openAISettings({ resumeUpload: true });
+    openAISettingsFromUpload();
     return;
   }
   if (actionButton.dataset.complete === "true") {
@@ -2015,6 +2071,7 @@ $("#process-upload").addEventListener("click", async (event) => {
   if (isGeneratingQuestions) return;
   isGeneratingQuestions = true;
   actionButton.disabled = true;
+  $("#change-gemini-key").disabled = true;
   $("#close-upload").disabled = true;
   $("#cancel-upload").disabled = true;
   $("#file-input").disabled = true;
@@ -2082,18 +2139,23 @@ $("#process-upload").addEventListener("click", async (event) => {
     $("#generation-progress").classList.add("error");
     $("#generation-status").textContent = localized("Generation could not be completed", "题目生成未完成");
     $("#generation-result").textContent = error?.message || localized("Try another file or a clearer scan.", "请尝试其他文件或更清晰的扫描。 ");
-    actionButton.dataset.setupAi = error?.code === "AI_NOT_CONFIGURED" ? "true" : "";
+    const shouldOpenAISettings = error?.code === "AI_NOT_CONFIGURED" || error?.source === "gemini-direct";
+    actionButton.dataset.setupAi = shouldOpenAISettings ? "true" : "";
     actionButton.textContent = error?.code === "AI_NOT_CONFIGURED"
       ? localized("Set Up AI", "设置 AI")
-      : localized("Try Again", "重新尝试");
+      : error?.source === "gemini-direct"
+        ? localized("Change API Key", "更换 API Key")
+        : localized("Try Again", "重新尝试");
     actionButton.disabled = false;
   } finally {
     isGeneratingQuestions = false;
     $("#close-upload").disabled = false;
     $("#cancel-upload").disabled = false;
     $("#file-input").disabled = false;
+    $("#change-gemini-key").disabled = false;
   }
 });
+$("#change-gemini-key").addEventListener("click", openAISettingsFromUpload);
 
 $("#close-edit-paper").addEventListener("click", () => $("#edit-paper-dialog").close());
 $("#cancel-edit-paper").addEventListener("click", () => $("#edit-paper-dialog").close());
@@ -2182,6 +2244,7 @@ $("#close-ai-settings").addEventListener("click", closeAISettings);
 $("#cancel-ai-settings").addEventListener("click", closeAISettings);
 $("#clear-ai-key").addEventListener("click", () => {
   localStorage.removeItem(GEMINI_KEY);
+  localStorage.removeItem(GEMINI_KEY_STATUS_KEY);
   $("#gemini-api-key").value = "";
   updateAIConfigStatus();
   showToast(localized("Gemini API key cleared.", "Gemini API Key 已清除。"));
@@ -2196,12 +2259,13 @@ $("#ai-settings-form").addEventListener("submit", (event) => {
   }
   localStorage.setItem(GEMINI_KEY, apiKey);
   localStorage.setItem(GEMINI_MODEL_KEY, model);
+  localStorage.setItem(GEMINI_KEY_STATUS_KEY, "untested");
   $("#ai-settings-error").textContent = "";
   $("#ai-settings-dialog").close();
   updateAIConfigStatus();
   showToast(localized(
-    "AI is configured. Gemini will understand uploaded content and generate the questions.",
-    "AI 已设置，上传资料时会由 Gemini 理解内容并生成题目。"
+    "The new API key has replaced the previous key. Try generation again to verify it.",
+    "新的 API Key 已取代旧 Key，请重新生成题目以完成验证。"
   ));
   if (resumeUploadAfterAISetup && pendingUploadFile) {
     resumeUploadAfterAISetup = false;
