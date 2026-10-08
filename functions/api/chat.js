@@ -51,7 +51,10 @@ export async function onRequestPost({ request, env }) {
     body: JSON.stringify({
       systemInstruction: { parts: [{ text: systemPrompt(body.mode, body.language) }] },
       contents,
-      generationConfig: { temperature: body.mode === "creative" ? 0.9 : 0.55, maxOutputTokens: 1200 }
+      generationConfig: {
+        temperature: body.task === "question-generation" ? 0.3 : body.mode === "creative" ? 0.9 : 0.55,
+        maxOutputTokens: body.task === "question-generation" ? 3200 : 1200
+      }
     })
   });
 

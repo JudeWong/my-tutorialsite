@@ -24,7 +24,7 @@
         <div class="hero-copy">
           <p class="landing-eyebrow">PERSONAL AI LEARNING SYSTEM</p>
           <h1>你的私人<br /><span>AI 助理</span></h1>
-          <p class="landing-lead">为独中电脑科打造的智能学习伙伴。<br />整理历届考题、即时解释答案，并陪伴每一位学生持续进步。</p>
+          <p class="landing-lead">为独中电脑科打造的智能学习伙伴。<br />整理试卷、讲义与笔记，自动生成题目并即时解释答案。</p>
           <div class="hero-actions">
             <button class="start-learning" id="start-learning">开始学习 <span>→</span></button>
             <a class="download-apk" href="downloads/Personal-AI-Assistant.apk" download>下载 Android APK <span>↓</span></a>
@@ -64,7 +64,7 @@
         </header>
         <div class="service-row">
           <div class="service-number">01</div>
-          <div class="service-copy"><h3>历届考题智能整理</h3><p>老师上传 PDF 或试卷图片后，系统协助整理年份、题型、知识点与答案解析，让旧试卷成为可重复使用的互动学习资源。</p><span>FOR TEACHERS</span></div>
+          <div class="service-copy"><h3>学习资料智能整理</h3><p>老师上传试卷、讲义、笔记或图片后，系统会读取内容、整理重点并生成互动题目，让任何教学资料都能成为练习。</p><span>FOR TEACHERS</span></div>
           <div class="service-visual visual-bank" aria-hidden="true"><div class="paper-stack"><i></i><i></i><i></i><strong>AI</strong><small>READY TO IMPORT</small></div></div>
         </div>
         <div class="service-row reverse">
@@ -98,7 +98,7 @@
       </section>
 
       <section class="advantage-strip" id="feature-summary">
-        <article><span>01</span><div><strong>AI 智能整理</strong><p>从试卷自动辨识题目、选项与知识点。</p></div></article>
+        <article><span>01</span><div><strong>AI 智能整理</strong><p>从试卷与讲义辨识重点并自动生成题目。</p></div></article>
         <article><span>02</span><div><strong>即时讲解</strong><p>作答后立即显示解析和常见错误。</p></div></article>
         <article><span>03</span><div><strong>个人化学习</strong><p>依照每位学生的弱项推荐练习。</p></div></article>
         <article><span>04</span><div><strong>跨设备使用</strong><p>电脑、平板和手机都能流畅学习。</p></div></article>
@@ -170,7 +170,7 @@
             <span class="nav-icon" aria-hidden="true">⌂</span><span>总览</span>
           </button>
           <button class="nav-item" data-view="library">
-            <span class="nav-icon" aria-hidden="true">▤</span><span>历届题库</span>
+            <span class="nav-icon" aria-hidden="true">▤</span><span>学习资料</span>
           </button>
           <button class="nav-item" data-view="classes">
             <span class="nav-icon" aria-hidden="true">◎</span><span>班级进度</span>
@@ -217,15 +217,15 @@
               <h1>早上好，Teacher Jude</h1>
               <p>今天也一起把复杂的知识，变成学生看得懂的答案。</p>
             </div>
-            <button class="primary-button" id="open-upload">
-              <span aria-hidden="true">＋</span> 上传历届考题
+              <button class="primary-button" id="open-upload">
+              <span aria-hidden="true">＋</span> 上传学习资料
             </button>
           </div>
 
           <div class="metric-grid">
             <article class="metric-card featured">
               <div class="metric-icon">▤</div>
-              <div><span>题库总题数</span><strong id="teacher-question-count">0</strong><small id="teacher-paper-count">0 份试卷已上传</small></div>
+              <div><span>题库总题数</span><strong id="teacher-question-count">0</strong><small id="teacher-paper-count">0 份资料已上传</small></div>
               <div class="spark-bars" aria-hidden="true"><i></i><i></i><i></i><i></i><i></i><i></i></div>
             </article>
             <article class="metric-card">
@@ -245,7 +245,7 @@
           <div class="teacher-layout">
             <section class="panel question-panel">
               <div class="panel-heading">
-                <div><p class="section-kicker">QUESTION BANK</p><h2>最近整理的考题</h2></div>
+                <div><p class="section-kicker">QUESTION BANK</p><h2>最近整理的学习资料</h2></div>
                 <button class="text-button" data-view-link="library">查看全部 <span>→</span></button>
               </div>
               <div class="filters" aria-label="题库筛选">
@@ -295,7 +295,7 @@
               <section class="panel quick-panel">
                 <div class="panel-heading compact"><div><p class="section-kicker">QUICK ACTIONS</p><h2>快捷操作</h2></div></div>
                 <div class="quick-actions">
-                  <button id="quick-upload"><span>↑</span><b>上传试卷</b><small>PDF / 图片</small></button>
+                  <button id="quick-upload"><span>↑</span><b>上传学习资料</b><small>PDF / Word / 图片</small></button>
                   <button id="create-set"><span>＋</span><b>建立练习</b><small>从题库选题</small></button>
                   <button id="invite-students"><span>♙</span><b>邀请学生</b><small>分享班级码</small></button>
                   <button id="export-report"><span>↗</span><b>导出报告</b><small>学习数据</small></button>
@@ -390,7 +390,7 @@
         <section id="placeholder-view" class="view workspace-view">
           <button class="back-button" id="back-dashboard">← 返回总览</button>
           <div class="workspace-head">
-            <div><p class="section-kicker" id="workspace-kicker">WORKSPACE</p><h1 id="placeholder-title">历届题库</h1><p id="workspace-description"></p></div>
+          <div><p class="section-kicker" id="workspace-kicker">WORKSPACE</p><h1 id="placeholder-title">学习资料题库</h1><p id="workspace-description"></p></div>
             <button class="primary-button" id="workspace-primary-action" type="button"></button>
           </div>
           <div id="workspace-content" class="workspace-content"></div>
@@ -428,7 +428,7 @@
       <nav class="mobile-nav" aria-label="移动端导航">
         <button class="active" data-view="dashboard"><span>⌂</span>总览</button>
         <button data-view="library"><span>▤</span>题库</button>
-        <button id="mobile-add" class="mobile-add" aria-label="上传试卷">＋</button>
+        <button id="mobile-add" class="mobile-add" aria-label="上传学习资料">＋</button>
         <button data-view="classes"><span>◎</span>班级</button>
         <button data-view="insights"><span>↗</span>分析</button>
       </nav>
@@ -437,24 +437,35 @@
     <dialog id="upload-dialog" class="modal">
       <form method="dialog">
         <div class="modal-head">
-          <div><p class="section-kicker">SMART IMPORT</p><h2>上传历届考题</h2></div>
-          <button value="cancel" aria-label="关闭">×</button>
+          <div><p class="section-kicker">SMART IMPORT</p><h2>上传学习资料并生成题目</h2></div>
+          <button value="cancel" id="close-upload" aria-label="关闭">×</button>
         </div>
-        <p class="modal-intro">系统会自动辨识题目、选项与年份，上传后仍可人工校对。</p>
+        <p class="modal-intro">可上传历届试卷、讲义或笔记。系统会读取内容、整理重点，并自动建立互动题目。</p>
         <label class="dropzone" id="dropzone">
-          <input id="file-input" type="file" accept=".pdf,.png,.jpg,.jpeg" multiple />
+          <input id="file-input" type="file" accept=".pdf,.png,.jpg,.jpeg,.webp,.txt,.md,.csv,.json,.html,.xml,.js,.py,.java,.c,.cpp,.sql,.docx,.pptx,.xlsx" />
           <span class="upload-icon">↑</span>
-          <strong>拖放试卷到这里，或点击选择文件</strong>
-          <small>支持 PDF、JPG、PNG；每个文件不超过 25MB</small>
+          <strong>拖放试卷或讲义到这里，或点击选择文件</strong>
+          <small>支持 PDF、Word、PowerPoint、图片与文字档；文件不超过 25MB</small>
         </label>
         <div class="file-preview" id="file-preview"></div>
+        <section class="generation-progress" id="generation-progress" hidden aria-live="polite">
+          <div class="generation-progress-head"><strong id="generation-status">准备读取资料</strong><span id="generation-percent">0%</span></div>
+          <div class="generation-progress-bar"><i id="generation-progress-bar"></i></div>
+          <div class="generation-steps">
+            <span data-generation-step="read">1. 读取文件</span>
+            <span data-generation-step="extract">2. 辨识内容</span>
+            <span data-generation-step="generate">3. 生成题目</span>
+            <span data-generation-step="save">4. 储存练习</span>
+          </div>
+          <p id="generation-result"></p>
+        </section>
         <div class="form-row">
-          <label>考试年份<select id="upload-year"></select></label>
+          <label>资料年份<select id="upload-year"></select></label>
           <label>主要分类<select id="upload-topic"><option>综合试卷</option><option>程序设计</option><option>数据库</option><option>电脑网络</option><option>硬件</option></select></label>
         </div>
         <div class="modal-actions">
-          <button class="secondary-button" value="cancel">取消</button>
-          <button class="primary-button" value="default" id="process-upload" disabled>开始整理</button>
+          <button class="secondary-button" value="cancel" id="cancel-upload">取消</button>
+          <button class="primary-button" value="default" id="process-upload" disabled>开始生成题目</button>
         </div>
       </form>
     </dialog>
@@ -462,14 +473,14 @@
     <dialog id="edit-paper-dialog" class="modal password-modal">
       <form id="edit-paper-form">
         <div class="modal-head">
-          <div><p class="section-kicker">PAPER DETAILS</p><h2>编辑试卷</h2></div>
+          <div><p class="section-kicker">MATERIAL DETAILS</p><h2>编辑学习资料</h2></div>
           <button type="button" id="close-edit-paper" aria-label="关闭">×</button>
         </div>
-        <p class="modal-intro">修改试卷名称、年份、分类与整理状态，储存后会立即更新题库。</p>
+        <p class="modal-intro">修改资料名称、年份、分类与整理状态，储存后会立即更新题库。</p>
         <input id="edit-paper-id" type="hidden" />
         <div class="paper-edit-fields">
-          <label>试卷名称<input id="edit-paper-title" type="text" maxlength="120" required /></label>
-          <label>考试年份<select id="edit-paper-year"></select></label>
+          <label>资料名称<input id="edit-paper-title" type="text" maxlength="120" required /></label>
+          <label>资料年份<select id="edit-paper-year"></select></label>
           <label>主要分类<select id="edit-paper-topic"><option>综合试卷</option><option>程序设计</option><option>数据库</option><option>电脑网络</option><option>硬件</option></select></label>
           <label>整理状态<select id="edit-paper-status"><option>待校对</option><option>已整理</option></select></label>
         </div>

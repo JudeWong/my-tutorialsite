@@ -24,7 +24,8 @@ Cloudflare Pages 和 Gemini 的免费额度均有限，学校大量使用前应�
 
 ```js
 window.PERSONAL_AI_CONFIG = Object.freeze({
-  aiEndpoint: "https://your-project.pages.dev/api/chat"
+  aiEndpoint: "https://your-project.pages.dev/api/chat",
+  generationEndpoint: "https://your-project.pages.dev/api/chat"
 });
 ```
 

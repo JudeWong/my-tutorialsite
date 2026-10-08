@@ -708,10 +708,26 @@ html[lang="en"] .landing-section-label, html[lang="en"] .section-kicker { font-f
 .paper-edit-fields input,
 .paper-edit-fields select { width: 100%; padding: 11px 12px; border: 1px solid #d4d4d0; border-radius: 7px; color: #171719; background: #fff; font: 400 15px Arial, Helvetica, sans-serif; }
 .paper-source { margin: 14px 0 0; color: #777; font-size: 13px; overflow-wrap: anywhere; }
+.generation-progress { margin-top: 16px; padding: 17px; border: 1px solid #d7d7d3; border-radius: 12px; background: #f7f7f4; }
+.generation-progress[hidden] { display: none; }
+.generation-progress-head { display: flex; justify-content: space-between; gap: 14px; color: #171719; font-size: 14px; }
+.generation-progress-head span { color: #9c5319; font: 700 14px Arial, Helvetica, sans-serif; }
+.generation-progress-bar { height: 8px; margin: 12px 0 14px; overflow: hidden; border-radius: 99px; background: #dfdfdb; }
+.generation-progress-bar i { display: block; width: 0; height: 100%; border-radius: inherit; background: linear-gradient(90deg,#f28a2f,#171719); transition: width .3s ease; }
+.generation-steps { display: grid; grid-template-columns: repeat(4,1fr); gap: 7px; }
+.generation-steps span { padding: 7px 8px; border-radius: 7px; color: #858580; background: #ebebe7; font-size: 12px; text-align: center; }
+.generation-steps span.active { color: #7a3c0e; background: #fff0e2; box-shadow: inset 0 0 0 1px #f28a2f; }
+.generation-steps span.done { color: #236a52; background: #e6f5ee; }
+.generation-progress > p { margin: 12px 0 0; color: #666; font-size: 13px; line-height: 1.55; }
+.generation-progress.success { border-color: #9ed5bf; background: #f1faf6; }
+.generation-progress.error { border-color: #e7aaa0; background: #fff4f2; }
+.generation-progress.error .generation-progress-head strong,
+.generation-progress.error > p { color: #9c3024; }
 
 @media (max-width: 560px) {
   .paper-edit-fields { grid-template-columns: 1fr; }
   .paper-edit-fields label:first-child { grid-column: auto; }
+  .generation-steps { grid-template-columns: 1fr 1fr; }
 }
 
 .ai-online.offline {

@@ -7,7 +7,9 @@
 - 英文预设、中英即时切换、Arial 英文字体与楷体中文字体
 - Superadmin 老师登入、修改密码、班级管理、每小时注册验证码
 - 学生以中文姓名、老师建立的班级、年份及验证码注册／登入
-- 历届试卷上传流程、题库筛选、练习建立、班级进度与 CSV 报告
+- 上传试卷、讲义、图片、Word、PowerPoint 或文字档，显示整理进度并自动建立互动题目
+- 老师与学生登入状态保留，刷新页面不会自动登出
+- 学习资料筛选、练习建立、班级进度与 CSV 报告
 - 互动题目、即时批改、解释与常见错误
 - 类 ChatGPT／Gemini 的连续 AI 对话；线上使用 Gemini serverless API，未配置时自动进入离线示范
 - 可安装 PWA、桌面／平板／手机响应式界面
@@ -39,7 +41,7 @@ pnpm run android:build
 
 ## 免费上线
 
-完整 AI 版建议使用 Cloudflare Pages；纯静态展示版可使用已配置的 GitHub Pages workflow。详细步骤请看 [ONLINE_SETUP.md](ONLINE_SETUP.md)。
+完整 Gemini AI 版建议使用 Cloudflare Pages；GitHub Pages 版仍可在浏览器读取资料、显示进度并使用本机生成器出题。详细步骤请看 [ONLINE_SETUP.md](ONLINE_SETUP.md)。
 
 ## 上线前须知
 

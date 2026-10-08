@@ -1,5 +1,7 @@
 const PAPERS_KEY = "tixi_papers_v1";
 const ASSIGNMENTS_KEY = "tixi_assignments_v1";
+const QUESTIONS_KEY = "tixi_questions_v1";
+const SESSION_KEY = "tixi_session_v1";
 
 function readStoredArray(key) {
   try {
@@ -12,6 +14,7 @@ function readStoredArray(key) {
 
 let papers = readStoredArray(PAPERS_KEY);
 let assignments = readStoredArray(ASSIGNMENTS_KEY);
+let questionBank = readStoredArray(QUESTIONS_KEY);
 let questions = [];
 
 const TOPIC_EN = Object.freeze({
@@ -37,12 +40,25 @@ papers = papers.map((paper, index) => ({
   createdAt: paper.createdAt || new Date().toISOString()
 }));
 
+questionBank = questionBank.filter((question) => (
+  question && typeof question.title === "string" && Array.isArray(question.options) && question.options.length >= 2
+)).map((question, index) => ({
+  ...question,
+  id: question.id || `question-${Date.now()}-${index}`,
+  paperId: question.paperId || "",
+  titleEn: question.titleEn || question.title,
+  optionsEn: Array.isArray(question.optionsEn) ? question.optionsEn : question.options,
+  explanationEn: question.explanationEn || question.explanation || "",
+  mistakeEn: question.mistakeEn || question.mistake || "",
+  correct: Math.max(0, Math.min(Number(question.correct) || 0, question.options.length - 1))
+}));
+
 const $ = (selector, root = document) => root.querySelector(selector);
 const $$ = (selector, root = document) => [...root.querySelectorAll(selector)];
 let role = "teacher";
 let currentQuestion = 0;
 let activeAssignmentIndex = 0;
-const answers = Array(questions.length).fill(null);
+let answers = [];
 let selectedOption = null;
 let pendingUploadFile = null;
 let toastTimer;
@@ -60,6 +76,8 @@ let aiReplyTimer;
 let aiConversation = [];
 let activeWorkspaceView = null;
 let activePaperFilter = "全部";
+let isGeneratingQuestions = false;
+const loadedScripts = new Map();
 const originalTextNodes = new WeakMap();
 const UI_EN = Object.freeze({
   "语言": "Language",
@@ -109,6 +127,7 @@ const UI_EN = Object.freeze({
   "随时随地学习": "Learn anytime, anywhere",
   "AI 智能整理": "AI Organization",
   "从试卷自动辨识题目、选项与知识点。": "Recognize questions, choices, and topics from papers.",
+  "从试卷与讲义辨识重点并自动生成题目。": "Identify key points in papers and handouts, then generate questions automatically.",
   "即时讲解": "Instant Explanations",
   "作答后立即显示解析和常见错误。": "Show explanations and common mistakes after every answer.",
   "个人化学习": "Personalized Learning",
@@ -277,6 +296,28 @@ const UI_EN = Object.freeze({
   ,"待校对": "Needs Review"
   ,"已整理": "Organized"
   ,"储存修改": "Save Changes"
+  ,"整理试卷、讲义与笔记，自动生成题目并即时解释答案。": "Organize papers, handouts, and notes, generate questions automatically, and explain answers instantly."
+  ,"学习资料智能整理": "Intelligent Learning-Material Organization"
+  ,"老师上传试卷、讲义、笔记或图片后，系统会读取内容、整理重点并生成互动题目，让任何教学资料都能成为练习。": "Upload papers, handouts, notes, or images. The system reads the content, organizes key points, and generates interactive questions."
+  ,"学习资料": "Learning Materials"
+  ,"上传学习资料": "Upload Learning Material"
+  ,"最近整理的学习资料": "Recently Organized Materials"
+  ,"PDF / Word / 图片": "PDF / Word / Image"
+  ,"学习资料题库": "Learning Materials"
+  ,"上传学习资料并生成题目": "Upload Material and Generate Questions"
+  ,"可上传历届试卷、讲义或笔记。系统会读取内容、整理重点，并自动建立互动题目。": "Upload past papers, handouts, or notes. The system reads the content, organizes key points, and creates interactive questions."
+  ,"拖放试卷或讲义到这里，或点击选择文件": "Drop a paper or handout here, or click to choose a file"
+  ,"支持 PDF、Word、PowerPoint、图片与文字档；文件不超过 25MB": "Supports PDF, Word, PowerPoint, images, and text files up to 25MB"
+  ,"准备读取资料": "Ready to read material"
+  ,"1. 读取文件": "1. Read File"
+  ,"2. 辨识内容": "2. Extract Content"
+  ,"3. 生成题目": "3. Generate Questions"
+  ,"4. 储存练习": "4. Save Practice"
+  ,"开始生成题目": "Generate Questions"
+  ,"编辑学习资料": "Edit Learning Material"
+  ,"修改资料名称、年份、分类与整理状态，储存后会立即更新题库。": "Update the material title, year, category, and status. Changes are saved immediately."
+  ,"资料名称": "Material Title"
+  ,"资料年份": "Material Year"
   ,"解析": "Explanations"
   ,"进度": "Progress"
   ,"问答": "Q&A"
@@ -368,6 +409,42 @@ function saveAssignments() {
   localStorage.setItem(ASSIGNMENTS_KEY, JSON.stringify(assignments));
 }
 
+function saveQuestions() {
+  localStorage.setItem(QUESTIONS_KEY, JSON.stringify(questionBank));
+}
+
+function saveSession() {
+  localStorage.setItem(SESSION_KEY, JSON.stringify({
+    role,
+    student: role === "student" ? activeStudent : null
+  }));
+}
+
+function restoreSession() {
+  try {
+    const session = JSON.parse(localStorage.getItem(SESSION_KEY) || "null");
+    if (session?.role === "teacher") {
+      enterApp("teacher");
+      return true;
+    }
+    if (session?.role === "student" && session.student?.name) {
+      const registeredStudent = getStudents().find((student) => (
+        student.name === session.student.name
+        && student.className === session.student.className
+        && student.year === session.student.year
+      ));
+      if (registeredStudent) {
+        enterApp("student", registeredStudent);
+        return true;
+      }
+    }
+  } catch {
+    // Invalid session data is cleared below.
+  }
+  localStorage.removeItem(SESSION_KEY);
+  return false;
+}
+
 function saveClasses(classes) {
   localStorage.setItem(CLASSES_KEY, JSON.stringify(classes));
   renderClassOptions();
@@ -417,13 +494,13 @@ function renderTeacherClasses() {
 }
 
 function renderTeacherMetrics() {
-  const questionCount = papers.reduce((total, paper) => total + (Number(paper.count) || 0), 0);
+  const questionCount = questionBank.length;
   const completedAssignments = assignments.filter((assignment) => assignment.done).length;
   const completionRate = assignments.length ? Math.round((completedAssignments / assignments.length) * 100) : 0;
   const students = getStudents();
   const classes = getClasses();
   $("#teacher-question-count").textContent = questionCount.toLocaleString();
-  $("#teacher-paper-count").textContent = localized(`${papers.length} papers uploaded`, `${papers.length} 份试卷已上传`);
+  $("#teacher-paper-count").textContent = localized(`${papers.length} materials uploaded`, `${papers.length} 份资料已上传`);
   $("#teacher-completion-rate").innerHTML = `${completionRate}<sup>%</sup>`;
   $("#teacher-completion-note").textContent = localized(`${completedAssignments} of ${assignments.length} assignments completed`, `${completedAssignments} / ${assignments.length} 份练习已完成`);
   $("#teacher-accuracy").textContent = "—";
@@ -474,6 +551,7 @@ function updateAccountUI() {
 function enterApp(nextRole, student = null) {
   role = nextRole;
   activeStudent = student;
+  saveSession();
   $("#landing-page").classList.add("screen-hidden");
   $("#auth-screen").classList.add("screen-hidden");
   $("#learning-app").classList.remove("screen-hidden");
@@ -510,8 +588,8 @@ function renderPapers(filter = "全部") {
     <article class="paper-row">
       <div class="paper-year">${paper.year}</div>
       <div class="paper-info"><strong>${escapeHTML(currentLanguage === "en" ? paper.titleEn : paper.title)}</strong><small>${paper.count} ${localized("questions", "道题目")} · ${escapeHTML(currentLanguage === "en" ? paper.statusEn : paper.status)}</small></div>
-      <div class="paper-meta"><span>${escapeHTML(currentLanguage === "en" ? paper.topicEn : paper.topic)}</span><button data-paper-id="${escapeHTML(paper.id)}">${localized("Edit Paper →", "编辑试卷 →")}</button></div>
-    </article>`).join("") || `<div class="data-empty"><strong>${localized("No papers uploaded", "尚未上传试卷")}</strong><p>${localized("Upload a PDF or image to create your first paper record.", "上传 PDF 或图片即可建立第一份试卷记录。")}</p><button type="button" data-empty-upload>${localized("Upload Past Paper", "上传历届试卷")}</button></div>`;
+      <div class="paper-meta"><span>${escapeHTML(currentLanguage === "en" ? paper.topicEn : paper.topic)}</span><button data-paper-id="${escapeHTML(paper.id)}">${localized("Edit Material →", "编辑资料 →")}</button></div>
+    </article>`).join("") || `<div class="data-empty"><strong>${localized("No learning materials uploaded", "尚未上传学习资料")}</strong><p>${localized("Upload a paper, handout, image, or document to generate interactive questions.", "上传试卷、讲义、图片或文件即可生成互动题目。")}</p><button type="button" data-empty-upload>${localized("Upload Learning Material", "上传学习资料")}</button></div>`;
   renderTeacherMetrics();
   refreshLanguage();
 }
@@ -543,14 +621,17 @@ function updateStudentProgress() {
   $("#student-accuracy").textContent = "—";
   $("#student-progress-accuracy").textContent = "—";
   $("#student-streak").textContent = localized("0 days", "0 天");
-  $("#student-question-count").textContent = "0";
+  const completedQuestionCount = assignments.filter((assignment) => assignment.done).reduce((total, assignment) => total + (Number(assignment.questionCount) || 0), 0);
+  $("#student-question-count").textContent = completedQuestionCount;
   $("#student-rank").textContent = "—";
   $("#student-weekly-count").textContent = completed;
   $("#student-weekly-total").textContent = `/ ${assignments.length}`;
   $("#student-hero-summary").textContent = assignments.length
     ? localized(`${completed} of ${assignments.length} assignments completed.`, `已完成 ${completed} / ${assignments.length} 份练习。`)
     : localized("No assignments have been assigned yet.", "老师尚未布置练习。 ");
-  $("#continue-quiz").disabled = !assignments.length || !questions.length;
+  $("#continue-quiz").disabled = !assignments.some((assignment) => (
+    Array.isArray(assignment.questionIds) && assignment.questionIds.some((id) => questionBank.some((question) => question.id === id))
+  ));
   $("#student-achievements").innerHTML = `<span>✓ ${localized("Account registered", "已完成账号注册")}</span>${completed ? `<span>✓ ${localized(`${completed} assignments completed`, `已完成 ${completed} 份练习`)}</span>` : ""}<span>→ ${localized("More achievements will appear as you learn", "学习后将解锁更多成就")}</span>`;
   $("#weekly-goal-note").textContent = assignments.length
     ? localized("Complete the assigned practice to build your progress.", "完成老师布置的练习以累积进度。")
@@ -771,17 +852,17 @@ function renderWorkspaceView(name) {
   action.dataset.action = "";
 
   if (name === "library") {
-    title.textContent = localized("Past Paper Library", "历届题库");
+    title.textContent = localized("Learning Materials", "学习资料题库");
     description.textContent = role === "teacher"
-      ? localized("Review imported papers, edit their metadata, or add a new paper.", "查看已导入试卷、编辑资料，或继续上传新试卷。")
+      ? localized("Review uploaded materials, edit their details, or generate more question sets.", "查看已上传资料、编辑内容，或继续生成更多题目。")
       : localized("Choose a practice set and start an interactive exercise.", "选择练习套题并开始互动式作答。 ");
-    action.textContent = role === "teacher" ? localized("＋ Upload Paper", "＋ 上传试卷") : localized("Start Practice →", "开始练习 →");
+    action.textContent = role === "teacher" ? localized("＋ Upload Material", "＋ 上传资料") : localized("Start Practice →", "开始练习 →");
     action.dataset.action = role === "teacher" ? "upload" : "start-practice";
     content.innerHTML = role === "teacher" ? `
       <section class="panel workspace-panel">
-        <div class="workspace-summary"><strong>${papers.length}</strong><span>${localized("papers uploaded", "份试卷已上传")}</span></div>
+        <div class="workspace-summary"><strong>${papers.length}</strong><span>${localized("materials uploaded", "份资料已上传")}</span></div>
         <div class="workspace-table" role="table">
-          ${papers.length ? papers.map((paper) => `<article role="row"><span class="workspace-year">${escapeHTML(paper.year)}</span><div><strong>${escapeHTML(currentLanguage === "en" ? paper.titleEn : paper.title)}</strong><small>${escapeHTML(currentLanguage === "en" ? paper.topicEn : paper.topic)} · ${paper.count} ${localized("questions", "题")}</small></div><span class="status-pill">${escapeHTML(currentLanguage === "en" ? paper.statusEn : paper.status)}</span><button type="button" data-workspace-paper-id="${escapeHTML(paper.id)}">${localized("Edit Paper", "编辑试卷")}</button></article>`).join("") : `<div class="data-empty"><strong>${localized("No papers uploaded", "尚未上传试卷")}</strong><p>${localized("Use Upload Paper to add your first past-year paper.", "点击上传试卷以新增第一份历届考题。")}</p></div>`}
+          ${papers.length ? papers.map((paper) => `<article role="row"><span class="workspace-year">${escapeHTML(paper.year)}</span><div><strong>${escapeHTML(currentLanguage === "en" ? paper.titleEn : paper.title)}</strong><small>${escapeHTML(currentLanguage === "en" ? paper.topicEn : paper.topic)} · ${paper.count} ${localized("questions", "题")}</small></div><span class="status-pill">${escapeHTML(currentLanguage === "en" ? paper.statusEn : paper.status)}</span><button type="button" data-workspace-paper-id="${escapeHTML(paper.id)}">${localized("Edit Material", "编辑资料")}</button></article>`).join("") : `<div class="data-empty"><strong>${localized("No learning materials uploaded", "尚未上传学习资料")}</strong><p>${localized("Upload your first paper, handout, or document to generate questions.", "上传第一份试卷、讲义或文件以生成题目。")}</p></div>`}
         </div>
       </section>` : `
       <div class="practice-grid">
@@ -821,7 +902,7 @@ function renderWorkspaceView(name) {
 
 function downloadReport() {
   const rows = [
-    ["Metric", "Value"], ["Questions in library", papers.reduce((sum, paper) => sum + paper.count, 0)],
+    ["Metric", "Value"], ["Questions in library", questionBank.length],
     ["Registered students", getStudents().length], ["Classes", getClasses().length], ["Average accuracy", "N/A"]
   ];
   const csv = `\uFEFF${rows.map((row) => row.map((value) => `"${String(value).replace(/"/g, '""')}"`).join(",")).join("\n")}`;
@@ -860,8 +941,8 @@ function updateNavigationLabels() {
       ? ["Learning Home", "Practice Library", "My Progress", "Learning Report"][index]
       : ["学习首页", "练习题库", "我的进度", "学习报告"][index];
     else span.textContent = currentLanguage === "en"
-      ? ["Overview", "Past Paper Library", "Class Progress", "Learning Analytics"][index]
-      : ["总览", "历届题库", "班级进度", "学习分析"][index];
+      ? ["Overview", "Learning Materials", "Class Progress", "Learning Analytics"][index]
+      : ["总览", "学习资料", "班级进度", "学习分析"][index];
   });
 }
 
@@ -869,17 +950,18 @@ function openUpload() {
   pendingUploadFile = null;
   $("#file-input").value = "";
   $("#file-preview").innerHTML = "";
-  $("#process-upload").disabled = true;
+  resetGenerationUI();
   $("#upload-dialog").showModal();
 }
 
 function loadFiles(files) {
+  if (isGeneratingQuestions) return;
   if (!files.length) return;
   const file = files[0];
-  const accepted = /\.(pdf|png|jpe?g)$/i.test(file.name);
+  const accepted = /\.(pdf|png|jpe?g|webp|txt|md|csv|json|html?|xml|js|py|java|c|cpp|sql|docx|pptx|xlsx)$/i.test(file.name);
   if (!accepted) {
     pendingUploadFile = null;
-    $("#file-preview").innerHTML = `<p class="form-error">${localized("Choose a PDF, JPG, or PNG file.", "请选择 PDF、JPG 或 PNG 文件。")}</p>`;
+    $("#file-preview").innerHTML = `<p class="form-error">${localized("Choose a supported document, image, or text file.", "请选择支持的文件、图片或文字档。")}</p>`;
     $("#process-upload").disabled = true;
     return;
   }
@@ -891,13 +973,259 @@ function loadFiles(files) {
   }
   pendingUploadFile = file;
   $("#file-preview").innerHTML = `<div class="file-pill"><span>▤ ${escapeHTML(file.name)}</span><span>${(file.size / 1024 / 1024).toFixed(1)} MB</span></div>`;
+  resetGenerationUI();
   $("#process-upload").disabled = false;
+}
+
+function resetGenerationUI() {
+  isGeneratingQuestions = false;
+  $("#generation-progress").classList.remove("success", "error");
+  $("#generation-progress").hidden = true;
+  $("#generation-status").textContent = localized("Ready to read material", "准备读取资料");
+  $("#generation-percent").textContent = "0%";
+  $("#generation-progress-bar").style.width = "0%";
+  $("#generation-result").textContent = "";
+  $$('[data-generation-step]').forEach((step) => step.classList.remove("active", "done"));
+  const button = $("#process-upload");
+  button.dataset.complete = "";
+  button.textContent = localized("Generate Questions", "开始生成题目");
+  button.disabled = !pendingUploadFile;
+  $("#close-upload").disabled = false;
+  $("#cancel-upload").disabled = false;
+  $("#file-input").disabled = false;
+}
+
+function setGenerationProgress(percent, status, stage, result = "") {
+  const safePercent = Math.max(0, Math.min(100, Math.round(percent)));
+  $("#generation-progress").hidden = false;
+  $("#generation-status").textContent = status;
+  $("#generation-percent").textContent = `${safePercent}%`;
+  $("#generation-progress-bar").style.width = `${safePercent}%`;
+  const stages = ["read", "extract", "generate", "save"];
+  const currentIndex = stages.indexOf(stage);
+  $$('[data-generation-step]').forEach((step) => {
+    const stepIndex = stages.indexOf(step.dataset.generationStep);
+    step.classList.toggle("done", currentIndex >= 0 && (stepIndex < currentIndex || (safePercent === 100 && stepIndex === currentIndex)));
+    step.classList.toggle("active", safePercent < 100 && step.dataset.generationStep === stage);
+  });
+  if (result) $("#generation-result").textContent = result;
+}
+
+function loadExternalScript(url, globalName) {
+  if (globalThis[globalName]) return Promise.resolve(globalThis[globalName]);
+  if (loadedScripts.has(url)) return loadedScripts.get(url);
+  const promise = new Promise((resolve, reject) => {
+    const script = document.createElement("script");
+    script.src = url;
+    script.async = true;
+    script.onload = () => globalThis[globalName] ? resolve(globalThis[globalName]) : reject(new Error(`${globalName} was not loaded`));
+    script.onerror = () => reject(new Error(`Unable to load ${globalName}`));
+    document.head.appendChild(script);
+  });
+  loadedScripts.set(url, promise);
+  return promise;
+}
+
+async function recognizeImageText(source, startPercent = 22, span = 34) {
+  setGenerationProgress(startPercent, localized("Loading image recognition…", "正在载入图片文字辨识……"), "extract");
+  const Tesseract = await loadExternalScript("https://cdn.jsdelivr.net/npm/tesseract.js@5.1.1/dist/tesseract.min.js", "Tesseract");
+  const result = await Tesseract.recognize(source, "eng+chi_sim", {
+    logger(message) {
+      if (message.status === "recognizing text") {
+        const percent = startPercent + (Number(message.progress) || 0) * span;
+        setGenerationProgress(percent, localized(`Recognizing text… ${Math.round((message.progress || 0) * 100)}%`, `正在辨识文字……${Math.round((message.progress || 0) * 100)}%`), "extract");
+      }
+    }
+  });
+  return result?.data?.text || "";
+}
+
+async function extractPdfText(file) {
+  const pdfjsLib = await loadExternalScript("https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.min.js", "pdfjsLib");
+  pdfjsLib.GlobalWorkerOptions.workerSrc = "https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.worker.min.js";
+  const pdf = await pdfjsLib.getDocument({ data: new Uint8Array(await file.arrayBuffer()) }).promise;
+  const pageLimit = Math.min(pdf.numPages, 40);
+  const chunks = [];
+  for (let pageNumber = 1; pageNumber <= pageLimit; pageNumber += 1) {
+    const page = await pdf.getPage(pageNumber);
+    const content = await page.getTextContent();
+    chunks.push(content.items.map((item) => item.str).join(" "));
+    setGenerationProgress(18 + (pageNumber / pageLimit) * 35, localized(`Reading PDF page ${pageNumber} of ${pageLimit}`, `正在读取 PDF 第 ${pageNumber} / ${pageLimit} 页`), "extract");
+  }
+  let text = chunks.join("\n").trim();
+  if (text.replace(/\s/g, "").length < 100) {
+    const ocrChunks = [];
+    const ocrLimit = Math.min(pdf.numPages, 3);
+    for (let pageNumber = 1; pageNumber <= ocrLimit; pageNumber += 1) {
+      const page = await pdf.getPage(pageNumber);
+      const viewport = page.getViewport({ scale: 1.45 });
+      const canvas = document.createElement("canvas");
+      canvas.width = viewport.width;
+      canvas.height = viewport.height;
+      await page.render({ canvasContext: canvas.getContext("2d"), viewport }).promise;
+      ocrChunks.push(await recognizeImageText(canvas, 22 + ((pageNumber - 1) / ocrLimit) * 30, 30 / ocrLimit));
+    }
+    text = ocrChunks.join("\n").trim();
+  }
+  return text;
+}
+
+async function extractOfficeText(file, extension) {
+  const JSZip = await loadExternalScript("https://cdn.jsdelivr.net/npm/jszip@3.10.1/dist/jszip.min.js", "JSZip");
+  const zip = await JSZip.loadAsync(file);
+  const patterns = extension === "docx"
+    ? [/^word\/document\.xml$/]
+    : extension === "pptx"
+      ? [/^ppt\/slides\/slide\d+\.xml$/]
+      : [/^xl\/sharedStrings\.xml$/, /^xl\/worksheets\/sheet\d+\.xml$/];
+  const names = Object.keys(zip.files).filter((name) => patterns.some((pattern) => pattern.test(name))).sort();
+  const chunks = [];
+  for (let index = 0; index < names.length; index += 1) {
+    const xml = await zip.files[names[index]].async("string");
+    const documentNode = new DOMParser().parseFromString(xml, "application/xml");
+    const textParts = [...documentNode.getElementsByTagName("*")]
+      .filter((element) => ["t", "v"].includes(element.localName))
+      .map((element) => element.textContent?.trim())
+      .filter(Boolean);
+    chunks.push(textParts.length ? textParts.join(" ") : documentNode.documentElement?.textContent || "");
+    setGenerationProgress(20 + ((index + 1) / Math.max(1, names.length)) * 35, localized("Extracting document content…", "正在抽取文件内容……"), "extract");
+  }
+  return chunks.join("\n");
+}
+
+async function extractMaterialText(file) {
+  const extension = file.name.split(".").pop()?.toLowerCase() || "";
+  setGenerationProgress(8, localized("Reading the uploaded file…", "正在读取上传文件……"), "read");
+  if (extension === "pdf") return extractPdfText(file);
+  if (/^(png|jpe?g|webp)$/.test(extension)) return recognizeImageText(file);
+  if (/^(docx|pptx|xlsx)$/.test(extension)) return extractOfficeText(file, extension);
+  const raw = await file.text();
+  if (/^(html?|xml)$/.test(extension)) {
+    const parsed = new DOMParser().parseFromString(raw, extension === "xml" ? "application/xml" : "text/html");
+    return parsed.documentElement?.textContent || raw;
+  }
+  setGenerationProgress(52, localized("Text content extracted", "文字内容读取完成"), "extract");
+  return raw;
+}
+
+function normalizeMaterialText(value) {
+  return String(value || "")
+    .replace(/\u0000/g, " ")
+    .replace(/[\t ]+/g, " ")
+    .replace(/\n{3,}/g, "\n\n")
+    .trim();
+}
+
+function normalizeGeneratedQuestion(item, index, paperId, topic) {
+  const title = String(item?.question || item?.title || "").trim();
+  const options = Array.isArray(item?.options) ? item.options.map((option) => String(option).trim()).filter(Boolean).slice(0, 4) : [];
+  if (!title || options.length < 2) return null;
+  while (options.length < 4) options.push(localized(`Alternative ${options.length + 1}`, `其他选项 ${options.length + 1}`));
+  let correct = Number(item.correct);
+  if (!Number.isInteger(correct) && typeof item.correct === "string") correct = Math.max(0, "ABCD".indexOf(item.correct.toUpperCase()));
+  correct = Math.max(0, Math.min(Number.isInteger(correct) ? correct : 0, options.length - 1));
+  const explanation = String(item.explanation || localized("Review the source material for the supporting detail.", "请对照原始资料中的重点内容。"));
+  const mistake = String(item.mistake || localized("A common mistake is choosing a related term without checking the exact wording.", "常见错误：只凭相似词作答，没有核对资料中的准确叙述。"));
+  return {
+    id: `question-${Date.now()}-${index}-${Math.random().toString(36).slice(2, 6)}`,
+    paperId,
+    topic,
+    level: "中等",
+    title,
+    titleEn: title,
+    code: "",
+    options,
+    optionsEn: options,
+    correct,
+    explanation,
+    explanationEn: explanation,
+    mistake,
+    mistakeEn: mistake
+  };
+}
+
+function buildLocalQuestions(text, paperId, topic) {
+  const compact = normalizeMaterialText(text);
+  const sentences = compact
+    .split(/(?:\r?\n|(?<=[。！？.!?])\s*)/u)
+    .map((sentence) => sentence.replace(/^[-•\d.)、\s]+/, "").trim())
+    .filter((sentence) => sentence.length >= 22 && sentence.length <= 260);
+  const stopWords = new Set(["this", "that", "these", "those", "which", "there", "their", "about", "using", "with", "from", "have", "will", "可以", "一个", "以及", "进行", "使用", "这个", "这些", "其中", "因此", "通过"]);
+  const keywords = [...new Set((compact.match(/[A-Za-z][A-Za-z0-9_-]{4,}|[\u3400-\u9fff]{2,8}/gu) || [])
+    .map((word) => word.trim())
+    .filter((word) => !stopWords.has(word.toLowerCase())))].slice(0, 80);
+  const candidates = sentences.length ? sentences : compact.match(/.{22,180}/gu) || [];
+  return candidates.slice(0, 8).map((sentence, index) => {
+    const answer = keywords.find((word) => sentence.includes(word) && word.length < sentence.length * 0.55) || sentence.slice(0, Math.min(12, sentence.length));
+    const distractors = keywords.filter((word) => word !== answer && !answer.includes(word) && !word.includes(answer)).slice(index, index + 8);
+    const fallbackOptions = localized(["None of the above", "Unrelated concept", "Insufficient information"], ["以上皆非", "无关概念", "资料未提及"]);
+    const wrongOptions = [...distractors, ...fallbackOptions].filter((value, optionIndex, values) => value && values.indexOf(value) === optionIndex).slice(0, 3);
+    while (wrongOptions.length < 3) wrongOptions.push(localized(`Alternative ${wrongOptions.length + 1}`, `其他选项 ${wrongOptions.length + 1}`));
+    const correct = index % 4;
+    const options = [...wrongOptions];
+    options.splice(correct, 0, answer);
+    const blankSentence = sentence.replace(answer, "____");
+    const usesChinese = /[\u3400-\u9fff]/u.test(sentence);
+    return normalizeGeneratedQuestion({
+      question: usesChinese ? `根据上传资料，哪一个内容最适合填入空格？\n${blankSentence}` : `According to the uploaded material, what best completes the blank?\n${blankSentence}`,
+      options,
+      correct,
+      explanation: usesChinese ? `资料原文指出：“${sentence}”` : `The source material states: “${sentence}”`,
+      mistake: usesChinese ? "常见错误：选择看似相关的词语，却没有回到原文确认上下文。" : "A common mistake is choosing a related term without checking the source context."
+    }, index, paperId, topic);
+  }).filter(Boolean).slice(0, 6);
+}
+
+async function requestAIQuestions(text, fileName, paperId, topic) {
+  const configuredEndpoint = globalThis.PERSONAL_AI_CONFIG?.generationEndpoint?.trim()
+    || globalThis.PERSONAL_AI_CONFIG?.aiEndpoint?.trim()
+    || "./api/chat";
+  const prompt = `Create 6 multiple-choice questions from the learning material below. Return ONLY a JSON array. Each item must use this schema: {"question":"...","options":["...","...","...","..."],"correct":0,"explanation":"...","mistake":"..."}. The correct field is a zero-based option index. Use the material's main language. Cover important facts and concepts, not document formatting. File: ${fileName}\n\nMATERIAL:\n${text.slice(0, 5000)}`;
+  const controller = new AbortController();
+  const timeout = setTimeout(() => controller.abort(), 30000);
+  try {
+    const response = await fetch(configuredEndpoint, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      signal: controller.signal,
+      body: JSON.stringify({ message: prompt, messages: [{ role: "user", content: prompt }], mode: "study", task: "question-generation", language: currentLanguage })
+    });
+    if (!response.ok) throw new Error(`Question generation endpoint returned ${response.status}`);
+    const data = await response.json();
+    const raw = Array.isArray(data.questions) ? JSON.stringify(data.questions) : data.reply;
+    if (typeof raw !== "string") throw new Error("Question generation response was empty");
+    const start = raw.indexOf("[");
+    const end = raw.lastIndexOf("]");
+    if (start < 0 || end <= start) throw new Error("Question generation response did not contain JSON");
+    const parsed = JSON.parse(raw.slice(start, end + 1));
+    return parsed.map((item, index) => normalizeGeneratedQuestion(item, index, paperId, topic)).filter(Boolean).slice(0, 8);
+  } finally {
+    clearTimeout(timeout);
+  }
+}
+
+async function generateQuestionsFromFile(file, paperId, topic) {
+  const extractedText = normalizeMaterialText(await extractMaterialText(file));
+  if (extractedText.replace(/\s/g, "").length < 30) {
+    throw new Error(localized("Not enough readable text was found. Try a clearer scan or a text-based document.", "无法辨识足够文字，请尝试更清晰的扫描或含文字的文件。"));
+  }
+  setGenerationProgress(66, localized("Organizing key concepts…", "正在整理重点内容……"), "generate");
+  try {
+    const aiQuestions = await requestAIQuestions(extractedText, file.name, paperId, topic);
+    if (aiQuestions.length >= 2) return { questions: aiQuestions, mode: "ai" };
+  } catch (error) {
+    console.info("Online AI question generation unavailable; using local generator", error);
+  }
+  setGenerationProgress(78, localized("Generating questions on this device…", "正在本机生成题目……"), "generate");
+  const localQuestions = buildLocalQuestions(extractedText, paperId, topic);
+  if (!localQuestions.length) throw new Error(localized("The material could not be converted into questions.", "这份资料暂时无法转换成题目。"));
+  return { questions: localQuestions, mode: "local" };
 }
 
 function openPaperEditor(paperId) {
   const paper = papers.find((item) => item.id === paperId);
   if (!paper) {
-    showToast(localized("Paper not found", "找不到这份试卷"));
+    showToast(localized("Material not found", "找不到这份学习资料"));
     return;
   }
   $("#edit-paper-id").value = paper.id;
@@ -912,11 +1240,21 @@ function openPaperEditor(paperId) {
 }
 
 function startQuiz(index = 0) {
-  if (!assignments.length || !questions.length) {
+  if (!assignments.length) {
     showToast(localized("No interactive questions are available yet.", "目前还没有可作答的互动题目。"));
     return;
   }
   activeAssignmentIndex = Math.max(0, Math.min(index, assignments.length - 1));
+  const assignment = assignments[activeAssignmentIndex];
+  const questionIds = Array.isArray(assignment.questionIds) ? new Set(assignment.questionIds) : null;
+  questions = questionIds
+    ? questionBank.filter((question) => questionIds.has(question.id))
+    : questionBank.filter((question) => question.paperId && question.paperId === assignment.paperId);
+  if (!questions.length) {
+    showToast(localized("This assignment does not contain generated questions yet.", "这份练习还没有生成题目。"));
+    return;
+  }
+  answers = Array(questions.length).fill(null);
   currentQuestion = 0;
   renderQuestion();
   showView("quiz");
@@ -1161,6 +1499,7 @@ $("#copy-code").addEventListener("click", async () => {
 $("#logout-button").addEventListener("click", () => {
   clearInterval(codeTimer);
   activeStudent = null;
+  localStorage.removeItem(SESSION_KEY);
   $("#teacher-password").value = "";
   showPublicScreen("landing");
 });
@@ -1245,42 +1584,104 @@ $("#open-upload").addEventListener("click", openUpload);
 $("#quick-upload").addEventListener("click", openUpload);
 $("#mobile-add").addEventListener("click", () => role === "teacher" ? openUpload() : startQuiz());
 $("#file-input").addEventListener("change", (event) => loadFiles(event.target.files));
+$("#upload-dialog").addEventListener("cancel", (event) => { if (isGeneratingQuestions) event.preventDefault(); });
 $("#dropzone").addEventListener("dragover", (event) => { event.preventDefault(); event.currentTarget.classList.add("dragging"); });
 $("#dropzone").addEventListener("dragleave", (event) => event.currentTarget.classList.remove("dragging"));
 $("#dropzone").addEventListener("drop", (event) => { event.preventDefault(); event.currentTarget.classList.remove("dragging"); loadFiles(event.dataTransfer.files); });
-$("#process-upload").addEventListener("click", (event) => {
+$("#process-upload").addEventListener("click", async (event) => {
   event.preventDefault();
-  if (!pendingUploadFile) {
-    showToast(localized("Choose a paper file first.", "请先选择试卷文件。"));
+  const actionButton = $("#process-upload");
+  if (actionButton.dataset.complete === "true") {
+    $("#upload-dialog").close();
+    pendingUploadFile = null;
+    $("#file-input").value = "";
+    $("#file-preview").innerHTML = "";
+    resetGenerationUI();
     return;
   }
+  if (!pendingUploadFile) {
+    showToast(localized("Choose a learning material first.", "请先选择学习资料。"));
+    return;
+  }
+  if (isGeneratingQuestions) return;
+  isGeneratingQuestions = true;
+  actionButton.disabled = true;
+  $("#close-upload").disabled = true;
+  $("#cancel-upload").disabled = true;
+  $("#file-input").disabled = true;
+  $("#generation-progress").classList.remove("success", "error");
   const year = $("#upload-year").value;
   const topic = $("#upload-topic").value;
-  const title = pendingUploadFile.name.replace(/\.[^.]+$/, "").trim() || `${year} Computer Science Paper`;
+  const sourceFile = pendingUploadFile;
+  const title = sourceFile.name.replace(/\.[^.]+$/, "").trim() || `${year} Learning Material`;
   const now = new Date();
-  papers.unshift({
-    id: `paper-${now.getTime()}-${Math.random().toString(36).slice(2, 8)}`,
-    year,
-    title,
-    titleEn: title,
-    topic,
-    topicEn: TOPIC_EN[topic] || topic,
-    count: 0,
-    status: "待校对",
-    statusEn: "Needs review",
-    fileName: pendingUploadFile.name,
-    fileSize: pendingUploadFile.size,
-    createdAt: now.toISOString()
-  });
-  savePapers();
-  renderPapers();
-  if (activeWorkspaceView === "library") renderWorkspaceView("library");
-  $("#upload-dialog").close();
-  showToast(localized("Paper uploaded and saved. You can now edit its details.", "试卷已上传并储存，现在可以编辑试卷资料。"));
-  pendingUploadFile = null;
-  $("#file-input").value = "";
-  $("#file-preview").innerHTML = "";
-  $("#process-upload").disabled = true;
+  const paperId = `material-${now.getTime()}-${Math.random().toString(36).slice(2, 8)}`;
+  try {
+    const generated = await generateQuestionsFromFile(sourceFile, paperId, topic);
+    setGenerationProgress(93, localized("Saving the question set…", "正在储存题目练习……"), "save");
+    const paper = {
+      id: paperId,
+      year,
+      title,
+      titleEn: title,
+      topic,
+      topicEn: TOPIC_EN[topic] || topic,
+      count: generated.questions.length,
+      status: "已整理",
+      statusEn: "Organized",
+      fileName: sourceFile.name,
+      fileSize: sourceFile.size,
+      sourceType: sourceFile.type || sourceFile.name.split(".").pop()?.toUpperCase() || "Document",
+      generationMode: generated.mode,
+      createdAt: now.toISOString()
+    };
+    papers.unshift(paper);
+    questionBank.push(...generated.questions);
+    assignments.unshift({
+      id: `assignment-${now.getTime()}`,
+      paperId,
+      questionIds: generated.questions.map((question) => question.id),
+      questionCount: generated.questions.length,
+      icon: "✦",
+      title,
+      titleEn: title,
+      detail: `${generated.questions.length} 题 · 可开始`,
+      detailEn: `${generated.questions.length} questions · Ready`,
+      action: "开始练习",
+      actionEn: "Start Practice",
+      done: false
+    });
+    savePapers();
+    saveQuestions();
+    saveAssignments();
+    renderPapers();
+    renderAssignments();
+    if (activeWorkspaceView === "library") renderWorkspaceView("library");
+    const modeLabel = generated.mode === "ai" ? localized("AI", "AI") : localized("on-device", "本机");
+    const result = localized(
+      `${generated.questions.length} questions generated with ${modeLabel} processing. The practice is ready for students.`,
+      `已透过${modeLabel}整理生成 ${generated.questions.length} 道题目，学生端现在可以开始练习。`
+    );
+    setGenerationProgress(100, localized("Question generation complete", "题目生成完成"), "save", result);
+    $("#generation-progress").classList.add("success");
+    showToast(localized(`${generated.questions.length} questions generated successfully.`, `已成功生成 ${generated.questions.length} 道题目。`));
+    actionButton.dataset.complete = "true";
+    actionButton.textContent = localized("Done", "完成");
+    actionButton.disabled = false;
+  } catch (error) {
+    console.error("Material question generation failed", error);
+    $("#generation-progress").hidden = false;
+    $("#generation-progress").classList.add("error");
+    $("#generation-status").textContent = localized("Generation could not be completed", "题目生成未完成");
+    $("#generation-result").textContent = error?.message || localized("Try another file or a clearer scan.", "请尝试其他文件或更清晰的扫描。 ");
+    actionButton.textContent = localized("Try Again", "重新尝试");
+    actionButton.disabled = false;
+  } finally {
+    isGeneratingQuestions = false;
+    $("#close-upload").disabled = false;
+    $("#cancel-upload").disabled = false;
+    $("#file-input").disabled = false;
+  }
 });
 
 $("#close-edit-paper").addEventListener("click", () => $("#edit-paper-dialog").close());
@@ -1290,7 +1691,7 @@ $("#edit-paper-form").addEventListener("submit", (event) => {
   const paper = papers.find((item) => item.id === $("#edit-paper-id").value);
   const title = $("#edit-paper-title").value.trim();
   if (!paper || !title) {
-    $("#edit-paper-error").textContent = localized("Enter a paper title.", "请输入试卷名称。 ");
+    $("#edit-paper-error").textContent = localized("Enter a material title.", "请输入资料名称。 ");
     return;
   }
   paper.title = title;
@@ -1300,12 +1701,17 @@ $("#edit-paper-form").addEventListener("submit", (event) => {
   paper.topicEn = TOPIC_EN[paper.topic] || paper.topic;
   paper.status = $("#edit-paper-status").value;
   paper.statusEn = paper.status === "已整理" ? "Organized" : "Needs review";
+  assignments.filter((assignment) => assignment.paperId === paper.id).forEach((assignment) => {
+    assignment.title = title;
+    assignment.titleEn = title;
+  });
   savePapers();
+  saveAssignments();
   renderPapers(activePaperFilter);
   if (activeWorkspaceView === "library") renderWorkspaceView("library");
   $("#edit-paper-error").textContent = "";
   $("#edit-paper-dialog").close();
-  showToast(localized("Paper details saved.", "试卷资料已储存。"));
+  showToast(localized("Material details saved.", "学习资料已储存。"));
 });
 
 $(".filters").addEventListener("click", (event) => {
@@ -1406,6 +1812,8 @@ window.addEventListener("keydown", (event) => {
     if (button && !button.disabled) button.click();
   }
 });
+
+restoreSession();
 
 const revealTargets = $$(".landing-vision .lined-copy, .vision-model, .services-intro, .service-row, .highlight-card, .landing-numbers > *, .advantage-strip article, .landing-footer > *");
 revealTargets.forEach((element) => element.classList.add("reveal-on-scroll"));
