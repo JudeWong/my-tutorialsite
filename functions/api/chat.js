@@ -36,6 +36,17 @@ function systemPrompt(mode, language) {
   return `You are the Personal AI Assistant for secondary-school students. ${style} Answer in ${language === "zh" ? "Simplified Chinese" : "English"} unless the user asks for another language. Be clear, age-appropriate, and honest about uncertainty. Never claim to have performed an action you did not perform.`;
 }
 
+function isTransientGeminiError(status, message = "") {
+  return status >= 500
+    || status === 408
+    || status === 429
+    || /high demand|temporar|overload|unavailable|try again|deadline|timeout/i.test(message);
+}
+
+function waitForRetry(delay) {
+  return new Promise((resolve) => setTimeout(resolve, delay));
+}
+
 export async function onRequestPost({ request, env }) {
   if (!env.GEMINI_API_KEY) {
     return json({ error: "AI is not configured. Add the GEMINI_API_KEY secret in Cloudflare Pages." }, 503);
@@ -63,33 +74,56 @@ export async function onRequestPost({ request, env }) {
   const configuredModel = String(env.GEMINI_MODEL || "").trim().replace(/^models\//i, "");
   const model = !configuredModel || configuredModel === "gemini-2.5-flash" ? "gemini-3.8-flash" : configuredModel;
   const endpoint = "https://generativelanguage.googleapis.com/v1beta/interactions";
-  const response = await fetch(endpoint, {
-    method: "POST",
-    headers: { "Content-Type": "application/json", "x-goog-api-key": env.GEMINI_API_KEY },
-    body: JSON.stringify({
-      model,
-      input: body.task === "question-generation" ? message : conversation.join("\n\n"),
-      system_instruction: systemPrompt(body.mode, body.language),
-      store: false,
-      generation_config: {
-        temperature: body.task === "question-generation" ? 0.3 : body.mode === "creative" ? 0.9 : 0.55,
-        max_output_tokens: body.task === "question-generation" ? 6000 : 1200,
-        thinking_level: body.task === "question-generation" ? "medium" : "low"
-      },
-      ...(body.task === "question-generation" ? {
-        response_format: {
-          type: "text",
-          mime_type: "application/json",
-          schema: QUESTION_RESPONSE_SCHEMA
-        }
-      } : {})
-    })
-  });
-
-  const data = await response.json().catch(() => ({}));
-  if (!response.ok) {
-    console.error("Gemini API error", response.status, data?.error?.message || "Unknown error");
-    return json({ error: "The AI service is temporarily unavailable." }, 502);
+  const fallbackModels = ["gemini-3.7-flash", "gemini-3.6-flash"].filter((item) => item !== model);
+  const attemptModels = [model, model, ...fallbackModels];
+  let response;
+  let data = {};
+  let usedModel = model;
+  for (let attempt = 0; attempt < attemptModels.length; attempt += 1) {
+    usedModel = attemptModels[attempt];
+    try {
+      response = await fetch(endpoint, {
+        method: "POST",
+        headers: { "Content-Type": "application/json", "x-goog-api-key": env.GEMINI_API_KEY },
+        body: JSON.stringify({
+          model: usedModel,
+          input: body.task === "question-generation" ? message : conversation.join("\n\n"),
+          system_instruction: systemPrompt(body.mode, body.language),
+          store: false,
+          generation_config: {
+            temperature: body.task === "question-generation" ? 0.3 : body.mode === "creative" ? 0.9 : 0.55,
+            max_output_tokens: body.task === "question-generation" ? 6000 : 1200,
+            thinking_level: body.task === "question-generation" ? "medium" : "low"
+          },
+          ...(body.task === "question-generation" ? {
+            response_format: {
+              type: "text",
+              mime_type: "application/json",
+              schema: QUESTION_RESPONSE_SCHEMA
+            }
+          } : {})
+        })
+      });
+      data = await response.json().catch(() => ({}));
+    } catch (error) {
+      console.error("Gemini network error", error?.message || "Unknown error");
+      if (attempt < attemptModels.length - 1) {
+        await waitForRetry(700 * (2 ** attempt));
+        continue;
+      }
+      return json({ error: "Gemini is temporarily busy. Automatic retries and backup models were unsuccessful. Please try again shortly." }, 503);
+    }
+    if (response.ok) break;
+    const providerMessage = data?.error?.message || "Unknown error";
+    console.error("Gemini API error", response.status, providerMessage, usedModel);
+    if (isTransientGeminiError(response.status, providerMessage) && attempt < attemptModels.length - 1) {
+      await waitForRetry(700 * (2 ** attempt));
+      continue;
+    }
+    if (isTransientGeminiError(response.status, providerMessage)) {
+      return json({ error: "Gemini is temporarily busy. Automatic retries and backup models were unsuccessful. Please try again shortly." }, 503);
+    }
+    return json({ error: "The AI service rejected the request. Check the configured API key and model." }, 502);
   }
 
   const interaction = data?.interaction || data;
@@ -104,7 +138,7 @@ export async function onRequestPost({ request, env }) {
     .join("\n")
     .trim() || interaction?.output_text?.trim();
   if (!reply) return json({ error: "The AI service returned an empty response." }, 502);
-  return json({ reply, provider: "gemini", model });
+  return json({ reply, provider: "gemini", model: usedModel, fallback: usedModel !== model });
 }
 
 export function onRequestGet({ env }) {

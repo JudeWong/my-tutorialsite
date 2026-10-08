@@ -1299,6 +1299,29 @@ function parseAIQuestionResponse(raw, paperId, topic) {
   return parsed.map((item, index) => normalizeGeneratedQuestion(item, index, paperId, topic)).filter(Boolean).slice(0, 8);
 }
 
+function isTransientGeminiError(status, message = "") {
+  return status >= 500
+    || status === 408
+    || status === 429
+    || /high demand|temporar|overload|unavailable|try again|deadline|timeout/i.test(message);
+}
+
+function waitForGeminiRetry(delay, signal) {
+  return new Promise((resolve, reject) => {
+    const timer = setTimeout(resolve, delay);
+    signal?.addEventListener("abort", () => {
+      clearTimeout(timer);
+      reject(new DOMException("Request aborted", "AbortError"));
+    }, { once: true });
+  });
+}
+
+function getGeminiAttemptModels(preferredModel) {
+  const preferred = normalizeGeminiModel(preferredModel);
+  const fallbacks = ["gemini-3.7-flash", "gemini-3.6-flash"].filter((model) => model !== preferred);
+  return [preferred, preferred, ...fallbacks];
+}
+
 async function requestQuestionsFromProxy(endpoint, prompt, paperId, topic, signal) {
   const response = await fetch(endpoint, {
     method: "POST",
@@ -1314,83 +1337,123 @@ async function requestQuestionsFromProxy(endpoint, prompt, paperId, topic, signa
 
 async function requestQuestionsFromGemini(apiKey, model, prompt, paperId, topic, signal) {
   const endpoint = "https://generativelanguage.googleapis.com/v1beta/interactions";
-  const response = await fetch(endpoint, {
-    method: "POST",
-    headers: { "Content-Type": "application/json", "x-goog-api-key": apiKey },
-    signal,
-    body: JSON.stringify({
-      model: normalizeGeminiModel(model),
-      input: prompt,
-      system_instruction: "Produce accurate, source-grounded UEC computer science assessment questions. Return JSON only.",
-      store: false,
-      generation_config: {
-        temperature: 0.2,
-        max_output_tokens: 6000,
-        thinking_level: "medium"
-      },
-      response_format: {
-        type: "text",
-        mime_type: "application/json",
-        schema: {
-          type: "array",
-          minItems: 6,
-          maxItems: 6,
-          items: {
-            type: "object",
-            required: ["question", "code", "options", "correct", "level", "explanation", "mistake"],
-            properties: {
-              question: { type: "string" },
-              code: { type: "string" },
-              options: { type: "array", minItems: 4, maxItems: 4, items: { type: "string" } },
-              correct: { type: "integer", minimum: 0, maximum: 3 },
-              level: { type: "string", enum: ["Basic", "Intermediate", "Advanced"] },
-              explanation: { type: "string" },
-              mistake: { type: "string" }
+  const preferredModel = normalizeGeminiModel(model);
+  const attemptModels = getGeminiAttemptModels(preferredModel);
+  for (let attempt = 0; attempt < attemptModels.length; attempt += 1) {
+    const attemptedModel = attemptModels[attempt];
+    let response;
+    let data = {};
+    try {
+      response = await fetch(endpoint, {
+        method: "POST",
+        headers: { "Content-Type": "application/json", "x-goog-api-key": apiKey },
+        signal,
+        body: JSON.stringify({
+          model: attemptedModel,
+          input: prompt,
+          system_instruction: "Produce accurate, source-grounded UEC computer science assessment questions. Return JSON only.",
+          store: false,
+          generation_config: {
+            temperature: 0.2,
+            max_output_tokens: 6000,
+            thinking_level: "medium"
+          },
+          response_format: {
+            type: "text",
+            mime_type: "application/json",
+            schema: {
+              type: "array",
+              minItems: 6,
+              maxItems: 6,
+              items: {
+                type: "object",
+                required: ["question", "code", "options", "correct", "level", "explanation", "mistake"],
+                properties: {
+                  question: { type: "string" },
+                  code: { type: "string" },
+                  options: { type: "array", minItems: 4, maxItems: 4, items: { type: "string" } },
+                  correct: { type: "integer", minimum: 0, maximum: 3 },
+                  level: { type: "string", enum: ["Basic", "Intermediate", "Advanced"] },
+                  explanation: { type: "string" },
+                  mistake: { type: "string" }
+                }
+              }
             }
           }
-        }
+        })
+      });
+      data = await response.json().catch(() => ({}));
+    } catch (error) {
+      if (error?.name === "AbortError") throw error;
+      if (attempt < attemptModels.length - 1) {
+        await waitForGeminiRetry(700 * (2 ** attempt), signal);
+        continue;
       }
-    })
-  });
-  const data = await response.json().catch(() => ({}));
-  if (!response.ok) {
-    const messages = {
-      400: localized("The API key or Gemini model was rejected. Replace the key or check the model name.", "API Key 或 Gemini 模型被拒绝，请更换 Key 或检查模型名称。"),
-      401: localized("The Gemini API key is invalid. Please replace it with a new key.", "Gemini API Key 无效，请更换新的 Key。"),
-      403: localized("This Gemini API key is not authorized. Please replace it with another key.", "这个 Gemini API Key 没有使用权限，请更换其他 Key。"),
-      429: localized("This Gemini API key has reached its quota. Replace it or try again later.", "这个 Gemini API Key 已达到使用额度，请更换 Key 或稍后再试。")
-    };
-    const error = new Error(messages[response.status] || data?.error?.message || `Gemini returned ${response.status}`);
-    error.code = "GEMINI_DIRECT_FAILED";
-    error.source = "gemini-direct";
-    error.httpStatus = response.status;
-    localStorage.setItem(GEMINI_KEY_STATUS_KEY, "error");
+      const transientError = new Error(localized("Gemini is temporarily busy. Automatic retries and backup models were unsuccessful. Please try again shortly.", "Gemini 目前繁忙，自动重试及备用模型仍未成功，请稍后再试。"));
+      transientError.code = "GEMINI_TEMPORARILY_UNAVAILABLE";
+      transientError.source = "gemini-transient";
+      throw transientError;
+    }
+
+    if (!response.ok) {
+      const providerMessage = data?.error?.message || "";
+      if (isTransientGeminiError(response.status, providerMessage)) {
+        if (attempt < attemptModels.length - 1) {
+          await waitForGeminiRetry(700 * (2 ** attempt), signal);
+          continue;
+        }
+        const transientError = new Error(localized("Gemini is temporarily busy. Automatic retries and backup models were unsuccessful. Please try again shortly.", "Gemini 目前繁忙，自动重试及备用模型仍未成功，请稍后再试。"));
+        transientError.code = "GEMINI_TEMPORARILY_UNAVAILABLE";
+        transientError.source = "gemini-transient";
+        transientError.httpStatus = response.status;
+        throw transientError;
+      }
+      const messages = {
+        400: localized("The API key or Gemini model was rejected. Replace the key or check the model name.", "API Key 或 Gemini 模型被拒绝，请更换 Key 或检查模型名称。"),
+        401: localized("The Gemini API key is invalid. Please replace it with a new key.", "Gemini API Key 无效，请更换新的 Key。"),
+        403: localized("This Gemini API key is not authorized. Please replace it with another key.", "这个 Gemini API Key 没有使用权限，请更换其他 Key。")
+      };
+      const error = new Error(messages[response.status] || providerMessage || `Gemini returned ${response.status}`);
+      error.code = "GEMINI_DIRECT_FAILED";
+      error.source = "gemini-direct";
+      error.httpStatus = response.status;
+      localStorage.setItem(GEMINI_KEY_STATUS_KEY, "error");
+      updateAIConfigStatus();
+      throw error;
+    }
+
+    localStorage.setItem(GEMINI_KEY_STATUS_KEY, "valid");
     updateAIConfigStatus();
-    throw error;
+    const interaction = data?.interaction || data;
+    if (interaction?.status && interaction.status !== "completed") {
+      const error = new Error(localized("Gemini did not complete the request. Please try again.", "Gemini 未能完成请求，请重新尝试。"));
+      error.code = "GEMINI_RESPONSE_INCOMPLETE";
+      error.source = "gemini-response";
+      throw error;
+    }
+    const raw = interaction?.steps
+      ?.filter((step) => step?.type === "model_output")
+      .flatMap((step) => Array.isArray(step.content) ? step.content : [])
+      .filter((content) => content?.type === "text")
+      .map((content) => content.text || "")
+      .join("\n")
+      .trim() || interaction?.output_text?.trim();
+    try {
+      const questions = parseAIQuestionResponse(raw, paperId, topic);
+      if (attemptedModel !== preferredModel) {
+        showToast(localized(
+          `${preferredModel} is busy. Questions were generated with backup model ${attemptedModel}.`,
+          `${preferredModel} 目前繁忙，已自动使用备用模型 ${attemptedModel} 生成题目。`
+        ));
+      }
+      return questions;
+    } catch (error) {
+      error.code = "GEMINI_RESPONSE_INVALID";
+      error.source = "gemini-response";
+      throw error;
+    }
   }
-  localStorage.setItem(GEMINI_KEY_STATUS_KEY, "valid");
-  updateAIConfigStatus();
-  const interaction = data?.interaction || data;
-  if (interaction?.status && interaction.status !== "completed") {
-    const error = new Error(localized("Gemini did not complete the request. Please try again.", "Gemini 未能完成请求，请重新尝试。"));
-    error.code = "GEMINI_RESPONSE_INCOMPLETE";
-    error.source = "gemini-response";
-    throw error;
-  }
-  const raw = interaction?.steps
-    ?.filter((step) => step?.type === "model_output")
-    .flatMap((step) => Array.isArray(step.content) ? step.content : [])
-    .filter((content) => content?.type === "text")
-    .map((content) => content.text || "")
-    .join("\n")
-    .trim() || interaction?.output_text?.trim();
-  try {
-    return parseAIQuestionResponse(raw, paperId, topic);
-  } catch (error) {
-    error.code = "GEMINI_RESPONSE_INVALID";
-    error.source = "gemini-response";
-    throw error;
-  }
+  throw new Error("Gemini generation failed");
 }
 
 async function requestAIQuestions(text, fileName, paperId, topic) {
