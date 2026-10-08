@@ -217,9 +217,10 @@
               <h1>早上好，Teacher Jude</h1>
               <p>今天也一起把复杂的知识，变成学生看得懂的答案。</p>
             </div>
-              <button class="primary-button" id="open-upload">
-              <span aria-hidden="true">＋</span> 上传学习资料
-            </button>
+            <div class="page-head-actions">
+              <button class="secondary-button" id="open-question" type="button"><span aria-hidden="true">✎</span> 自行出题</button>
+              <button class="primary-button" id="open-upload" type="button"><span aria-hidden="true">＋</span> 上传学习资料</button>
+            </div>
           </div>
 
           <div class="metric-grid">
@@ -296,7 +297,7 @@
                 <div class="panel-heading compact"><div><p class="section-kicker">QUICK ACTIONS</p><h2>快捷操作</h2></div></div>
                 <div class="quick-actions">
                   <button id="quick-upload"><span>↑</span><b>上传学习资料</b><small>PDF / Word / 图片</small></button>
-                  <button id="create-set"><span>＋</span><b>建立练习</b><small>从题库选题</small></button>
+                  <button id="create-set"><span>＋</span><b>自行出题</b><small>选择题或填充题</small></button>
                   <button id="invite-students"><span>♙</span><b>邀请学生</b><small>分享班级码</small></button>
                   <button id="export-report"><span>↗</span><b>导出报告</b><small>学习数据</small></button>
                 </div>
@@ -404,10 +405,15 @@
           <div class="quiz-progress"><i id="quiz-progress-bar"></i></div>
           <div class="quiz-layout">
             <section class="quiz-card">
-              <div class="question-meta"><span id="question-topic">程序设计</span><span id="question-level">中等</span></div>
+              <div class="question-meta"><span id="question-topic">程序设计</span><span id="question-level">中等</span><span id="question-type-label">选择题</span></div>
               <h1 id="question-title"></h1>
               <pre id="code-block"><code></code></pre>
               <div class="options" id="quiz-options"></div>
+              <label class="fill-answer hidden" id="fill-answer">
+                <span>请输入答案</span>
+                <input id="fill-answer-input" type="text" autocomplete="off" />
+                <small>输入答案后提交；英文答案不区分大小写。</small>
+              </label>
               <div class="answer-feedback" id="answer-feedback" aria-live="polite"></div>
               <div class="quiz-actions">
                 <button class="secondary-button" id="previous-question" disabled>上一题</button>
@@ -441,6 +447,7 @@
           <button value="cancel" id="close-upload" aria-label="关闭">×</button>
         </div>
         <p class="modal-intro">可上传历届试卷、讲义或笔记。系统会读取内容、整理重点，并自动建立互动题目。</p>
+        <p class="generation-mode-note">自动生成统考风格选择题，不会产生填充题。</p>
         <label class="dropzone" id="dropzone">
           <input id="file-input" type="file" accept=".pdf,.png,.jpg,.jpeg,.webp,.txt,.md,.csv,.json,.html,.xml,.js,.py,.java,.c,.cpp,.sql,.docx,.pptx,.xlsx" />
           <span class="upload-icon">↑</span>
@@ -466,6 +473,46 @@
         <div class="modal-actions">
           <button class="secondary-button" value="cancel" id="cancel-upload">取消</button>
           <button class="primary-button" value="default" id="process-upload" disabled>开始生成题目</button>
+        </div>
+      </form>
+    </dialog>
+
+    <dialog id="question-dialog" class="modal question-modal">
+      <form id="question-form">
+        <div class="modal-head">
+          <div><p class="section-kicker">QUESTION BUILDER</p><h2>建立互动题目</h2></div>
+          <button type="button" id="close-question-dialog" aria-label="关闭">×</button>
+        </div>
+        <p class="modal-intro">自行建立选择题或填充题。储存后会立即加入学生练习。</p>
+        <div class="question-builder-grid">
+          <label>题型<select id="question-type"><option value="mcq">选择题</option><option value="fill">填充题</option></select></label>
+          <label>加入学习资料（可选）<select id="question-material"><option value="">独立出题</option></select></label>
+          <label>题目分类<select id="manual-question-topic"><option>综合试卷</option><option>程序设计</option><option>数据库</option><option>电脑网络</option><option>硬件</option></select></label>
+          <label>难度<select id="manual-question-level"><option>基础</option><option selected>中等</option><option>进阶</option></select></label>
+          <label class="full-field">题目<textarea id="manual-question-title" rows="3" maxlength="600" placeholder="请输入完整题目" required></textarea></label>
+          <label class="full-field">程序代码（可选）<textarea id="manual-question-code" rows="4" spellcheck="false"></textarea></label>
+        </div>
+        <section id="mcq-fields" class="question-type-fields">
+          <div class="option-builder-grid">
+            <label>选项 A<input id="manual-option-0" type="text" maxlength="300" required /></label>
+            <label>选项 B<input id="manual-option-1" type="text" maxlength="300" required /></label>
+            <label>选项 C<input id="manual-option-2" type="text" maxlength="300" required /></label>
+            <label>选项 D<input id="manual-option-3" type="text" maxlength="300" required /></label>
+          </div>
+          <label class="correct-option-field">正确选项<select id="manual-correct-option"><option value="0">A</option><option value="1">B</option><option value="2">C</option><option value="3">D</option></select></label>
+        </section>
+        <section id="fill-fields" class="question-type-fields hidden">
+          <label>正确答案<input id="manual-correct-answer" type="text" maxlength="300" placeholder="学生必须输入的答案" /></label>
+          <label>其他可接受答案（用逗号分隔，可选）<input id="manual-accepted-answers" type="text" maxlength="600" placeholder="例如：CPU, 中央处理器" /></label>
+        </section>
+        <div class="question-builder-grid explanation-fields">
+          <label class="full-field">答案解析<textarea id="manual-explanation" rows="3" maxlength="800" placeholder="说明为什么这是正确答案" required></textarea></label>
+          <label class="full-field">常见错误（可选）<textarea id="manual-mistake" rows="2" maxlength="500" placeholder="指出学生容易混淆的概念"></textarea></label>
+        </div>
+        <p class="form-error" id="question-form-error"></p>
+        <div class="modal-actions">
+          <button class="secondary-button" type="button" id="cancel-question-dialog">取消</button>
+          <button class="primary-button" type="submit">储存并发布</button>
         </div>
       </form>
     </dialog>

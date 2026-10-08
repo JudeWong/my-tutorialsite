@@ -40,18 +40,32 @@ papers = papers.map((paper, index) => ({
   createdAt: paper.createdAt || new Date().toISOString()
 }));
 
-questionBank = questionBank.filter((question) => (
-  question && typeof question.title === "string" && Array.isArray(question.options) && question.options.length >= 2
-)).map((question, index) => ({
-  ...question,
-  id: question.id || `question-${Date.now()}-${index}`,
-  paperId: question.paperId || "",
-  titleEn: question.titleEn || question.title,
-  optionsEn: Array.isArray(question.optionsEn) ? question.optionsEn : question.options,
-  explanationEn: question.explanationEn || question.explanation || "",
-  mistakeEn: question.mistakeEn || question.mistake || "",
-  correct: Math.max(0, Math.min(Number(question.correct) || 0, question.options.length - 1))
-}));
+questionBank = questionBank.filter((question) => {
+  if (!question || typeof question.title !== "string") return false;
+  if (question.type === "fill") return Boolean(String(question.correctAnswer || "").trim());
+  return Array.isArray(question.options) && question.options.length >= 2;
+}).map((question, index) => {
+  const type = question.type === "fill" ? "fill" : "mcq";
+  const options = type === "mcq" && Array.isArray(question.options) ? question.options : [];
+  const correctAnswer = type === "fill" ? String(question.correctAnswer || "").trim() : "";
+  const acceptedAnswers = type === "fill"
+    ? [...new Set([correctAnswer, ...(Array.isArray(question.acceptedAnswers) ? question.acceptedAnswers : [])].map((answer) => String(answer).trim()).filter(Boolean))]
+    : [];
+  return {
+    ...question,
+    type,
+    id: question.id || `question-${Date.now()}-${index}`,
+    paperId: question.paperId || "",
+    titleEn: question.titleEn || question.title,
+    options,
+    optionsEn: type === "mcq" && Array.isArray(question.optionsEn) ? question.optionsEn : options,
+    correctAnswer,
+    acceptedAnswers,
+    explanationEn: question.explanationEn || question.explanation || "",
+    mistakeEn: question.mistakeEn || question.mistake || "",
+    correct: type === "mcq" ? Math.max(0, Math.min(Number(question.correct) || 0, options.length - 1)) : 0
+  };
+});
 
 const $ = (selector, root = document) => root.querySelector(selector);
 const $$ = (selector, root = document) => [...root.querySelectorAll(selector)];
@@ -340,6 +354,39 @@ const UI_EN = Object.freeze({
   ,"六": "Sat"
   ,"日": "Sun"
   ,"中等": "Intermediate"
+  ,"自行出题": "Create a Question"
+  ,"选择题或填充题": "MCQ or fill-in question"
+  ,"建立互动题目": "Create an Interactive Question"
+  ,"自行建立选择题或填充题。储存后会立即加入学生练习。": "Create an MCQ or fill-in question. It will be added to student practice immediately."
+  ,"题型": "Question Type"
+  ,"选择题": "Multiple Choice"
+  ,"填充题": "Fill in the Answer"
+  ,"加入学习资料（可选）": "Add to Learning Material (Optional)"
+  ,"独立出题": "Standalone Question"
+  ,"题目分类": "Topic"
+  ,"难度": "Difficulty"
+  ,"基础": "Basic"
+  ,"进阶": "Advanced"
+  ,"题目": "Question"
+  ,"请输入完整题目": "Enter the complete question"
+  ,"程序代码（可选）": "Code Snippet (Optional)"
+  ,"选项 A": "Option A"
+  ,"选项 B": "Option B"
+  ,"选项 C": "Option C"
+  ,"选项 D": "Option D"
+  ,"正确选项": "Correct Option"
+  ,"正确答案": "Correct Answer"
+  ,"学生必须输入的答案": "The answer students should enter"
+  ,"其他可接受答案（用逗号分隔，可选）": "Other Accepted Answers (Comma-Separated, Optional)"
+  ,"例如：CPU, 中央处理器": "For example: CPU, Central Processing Unit"
+  ,"答案解析": "Answer Explanation"
+  ,"说明为什么这是正确答案": "Explain why this is the correct answer"
+  ,"常见错误（可选）": "Common Mistake (Optional)"
+  ,"指出学生容易混淆的概念": "Describe a concept students often confuse"
+  ,"储存并发布": "Save and Publish"
+  ,"请输入答案": "Enter Your Answer"
+  ,"输入答案后提交；英文答案不区分大小写。": "Enter your answer and submit. English answers are not case-sensitive."
+  ,"自动生成统考风格选择题，不会产生填充题。": "Generates UEC-style multiple-choice questions only; no fill-in questions are created automatically."
 });
 
 function applyLanguage(language = "zh", { persist = true } = {}) {
@@ -1119,8 +1166,8 @@ function normalizeMaterialText(value) {
 function normalizeGeneratedQuestion(item, index, paperId, topic) {
   const title = String(item?.question || item?.title || "").trim();
   const options = Array.isArray(item?.options) ? item.options.map((option) => String(option).trim()).filter(Boolean).slice(0, 4) : [];
-  if (!title || options.length < 2) return null;
-  while (options.length < 4) options.push(localized(`Alternative ${options.length + 1}`, `其他选项 ${options.length + 1}`));
+  const clozePattern = /_{2,}|填(?:入|写).{0,8}(?:空格|横线)|(?:fill|complete).{0,12}(?:blank|gap)|missing\s+(?:word|term)/iu;
+  if (!title || options.length !== 4 || clozePattern.test(title) || new Set(options.map((option) => option.toLocaleLowerCase())).size !== 4) return null;
   let correct = Number(item.correct);
   if (!Number.isInteger(correct) && typeof item.correct === "string") correct = Math.max(0, "ABCD".indexOf(item.correct.toUpperCase()));
   correct = Math.max(0, Math.min(Number.isInteger(correct) ? correct : 0, options.length - 1));
@@ -1128,6 +1175,7 @@ function normalizeGeneratedQuestion(item, index, paperId, topic) {
   const mistake = String(item.mistake || localized("A common mistake is choosing a related term without checking the exact wording.", "常见错误：只凭相似词作答，没有核对资料中的准确叙述。"));
   return {
     id: `question-${Date.now()}-${index}-${Math.random().toString(36).slice(2, 6)}`,
+    type: "mcq",
     paperId,
     topic,
     level: "中等",
@@ -1156,22 +1204,44 @@ function buildLocalQuestions(text, paperId, topic) {
     .filter((word) => !stopWords.has(word.toLowerCase())))].slice(0, 80);
   const candidates = sentences.length ? sentences : compact.match(/.{22,180}/gu) || [];
   return candidates.slice(0, 8).map((sentence, index) => {
-    const answer = keywords.find((word) => sentence.includes(word) && word.length < sentence.length * 0.55) || sentence.slice(0, Math.min(12, sentence.length));
-    const distractors = keywords.filter((word) => word !== answer && !answer.includes(word) && !word.includes(answer)).slice(index, index + 8);
-    const fallbackOptions = localized(["None of the above", "Unrelated concept", "Insufficient information"], ["以上皆非", "无关概念", "资料未提及"]);
-    const wrongOptions = [...distractors, ...fallbackOptions].filter((value, optionIndex, values) => value && values.indexOf(value) === optionIndex).slice(0, 3);
-    while (wrongOptions.length < 3) wrongOptions.push(localized(`Alternative ${wrongOptions.length + 1}`, `其他选项 ${wrongOptions.length + 1}`));
-    const correct = index % 4;
-    const options = [...wrongOptions];
-    options.splice(correct, 0, answer);
-    const blankSentence = sentence.replace(answer, "____");
     const usesChinese = /[\u3400-\u9fff]/u.test(sentence);
+    const chineseLead = usesChinese
+      ? sentence.split(/负责|用于|能够|根据|可以|主要|包含|包括|执行|储存|保存|提供|必须|表示|让|是/u)[0].replace(/[，。；：、\s]/gu, "").slice(0, 12)
+      : "";
+    const concept = (usesChinese && chineseLead.length >= 2 ? chineseLead : "")
+      || keywords.find((word) => sentence.includes(word) && word.length < sentence.length * 0.45)
+      || (sentence.match(/[A-Za-z][A-Za-z0-9_-]{3,}|[\u3400-\u9fff]{2,8}/u)?.[0])
+      || localized("this concept", "这个概念");
+    const correct = index % 4;
+    const wrongOptions = usesChinese
+      ? [
+        `资料表示「${concept}」与上述电脑功能完全没有关系。`,
+        `在所有情况下，「${concept}」不需要任何资料或指令便能完成任务。`,
+        `只要使用「${concept}」，其他电脑组件、程序与网络都可以完全省略。`
+      ]
+      : [
+        `The material states that “${concept}” has no relationship to the computer function described.`,
+        `In every situation, “${concept}” can complete its task without any data or instructions.`,
+        `Using “${concept}” makes every other computer component, program, and network unnecessary.`
+      ];
+    const options = [...wrongOptions];
+    options.splice(correct, 0, sentence);
+    const stemsZh = [
+      `关于「${concept}」，根据资料，下列哪一项叙述正确？`,
+      `一名学生正在复习「${topic}」。下列哪一项笔记与资料内容相符？`,
+      `老师要求学生判断有关「${concept}」的说明。下列哪一项最准确？`
+    ];
+    const stemsEn = [
+      `According to the material, which statement about “${concept}” is correct?`,
+      `A student is revising ${TOPIC_EN[topic] || topic}. Which note agrees with the material?`,
+      `A teacher asks the class to evaluate the descriptions of “${concept}”. Which is the most accurate?`
+    ];
     return normalizeGeneratedQuestion({
-      question: usesChinese ? `根据上传资料，哪一个内容最适合填入空格？\n${blankSentence}` : `According to the uploaded material, what best completes the blank?\n${blankSentence}`,
+      question: usesChinese ? stemsZh[index % stemsZh.length] : stemsEn[index % stemsEn.length],
       options,
       correct,
-      explanation: usesChinese ? `资料原文指出：“${sentence}”` : `The source material states: “${sentence}”`,
-      mistake: usesChinese ? "常见错误：选择看似相关的词语，却没有回到原文确认上下文。" : "A common mistake is choosing a related term without checking the source context."
+      explanation: usesChinese ? `正确选项完整表达了资料中的重点：“${sentence}”` : `The correct option accurately reflects this key point from the material: “${sentence}”`,
+      mistake: usesChinese ? "常见错误：被含有相关术语但使用绝对化说法的选项误导，没有核对概念的实际功能。" : "A common mistake is choosing an option that uses a related term but makes an absolute claim not supported by the material."
     }, index, paperId, topic);
   }).filter(Boolean).slice(0, 6);
 }
@@ -1180,7 +1250,7 @@ async function requestAIQuestions(text, fileName, paperId, topic) {
   const configuredEndpoint = globalThis.PERSONAL_AI_CONFIG?.generationEndpoint?.trim()
     || globalThis.PERSONAL_AI_CONFIG?.aiEndpoint?.trim()
     || "./api/chat";
-  const prompt = `Create 6 multiple-choice questions from the learning material below. Return ONLY a JSON array. Each item must use this schema: {"question":"...","options":["...","...","...","..."],"correct":0,"explanation":"...","mistake":"..."}. The correct field is a zero-based option index. Use the material's main language. Cover important facts and concepts, not document formatting. File: ${fileName}\n\nMATERIAL:\n${text.slice(0, 5000)}`;
+  const prompt = `Create 6 single-best-answer multiple-choice questions in the style of Malaysian UEC (Unified Examination Certificate) senior middle computer science examinations. Return ONLY a JSON array. Each item must use this schema: {"question":"...","options":["...","...","...","..."],"correct":0,"explanation":"...","mistake":"..."}. The correct field is a zero-based option index. Use the learning material's main language. Use formal exam wording and, where the source permits, scenarios involving programs, data, databases, networks, hardware, algorithms, or logical reasoning. Every question must have exactly four plausible options and one unambiguously correct answer. Never create fill-in-the-blank or cloze questions, never use underscores or a missing-word sentence, and never ask which word completes a blank. Cover important concepts rather than document formatting. File: ${fileName}\n\nMATERIAL:\n${text.slice(0, 5000)}`;
   const controller = new AbortController();
   const timeout = setTimeout(() => controller.abort(), 30000);
   try {
@@ -1222,6 +1292,125 @@ async function generateQuestionsFromFile(file, paperId, topic) {
   return { questions: localQuestions, mode: "local" };
 }
 
+function populateQuestionMaterialOptions() {
+  const materialSelect = $("#question-material");
+  materialSelect.innerHTML = `<option value="">${localized("Standalone Question", "独立出题")}</option>${papers.map((paper) => (
+    `<option value="${escapeHTML(paper.id)}">${escapeHTML(currentLanguage === "en" ? paper.titleEn : paper.title)}</option>`
+  )).join("")}`;
+}
+
+function toggleQuestionTypeFields() {
+  const isFill = $("#question-type").value === "fill";
+  $("#mcq-fields").classList.toggle("hidden", isFill);
+  $("#fill-fields").classList.toggle("hidden", !isFill);
+  for (let index = 0; index < 4; index += 1) $("#manual-option-" + index).required = !isFill;
+  $("#manual-correct-answer").required = isFill;
+}
+
+function openQuestionDialog() {
+  const form = $("#question-form");
+  form.reset();
+  $("#question-form-error").textContent = "";
+  populateQuestionMaterialOptions();
+  toggleQuestionTypeFields();
+  $("#question-dialog").showModal();
+  $("#manual-question-title").focus();
+}
+
+function addQuestionToAssignment(question, paper) {
+  const assignmentId = paper ? `material-assignment-${paper.id}` : "manual-question-set";
+  let assignment = paper
+    ? assignments.find((item) => item.paperId === paper.id)
+    : assignments.find((item) => item.id === assignmentId || item.paperId === "manual");
+  if (!assignment) {
+    assignment = {
+      id: assignmentId,
+      paperId: paper?.id || "manual",
+      questionIds: [],
+      icon: paper ? "✦" : "✎",
+      title: paper?.title || "老师自行出题",
+      titleEn: paper?.titleEn || "Teacher-Created Questions",
+      done: false
+    };
+    assignments.unshift(assignment);
+  }
+  if (!Array.isArray(assignment.questionIds)) assignment.questionIds = [];
+  if (!assignment.questionIds.includes(question.id)) assignment.questionIds.push(question.id);
+  assignment.questionCount = assignment.questionIds.length;
+  assignment.detail = `${assignment.questionCount} 题 · 可开始`;
+  assignment.detailEn = `${assignment.questionCount} questions · Ready`;
+  assignment.action = "开始练习";
+  assignment.actionEn = "Start Practice";
+  assignment.done = false;
+}
+
+function saveManualQuestion(event) {
+  event.preventDefault();
+  const type = $("#question-type").value === "fill" ? "fill" : "mcq";
+  const title = $("#manual-question-title").value.trim();
+  const explanation = $("#manual-explanation").value.trim();
+  const mistake = $("#manual-mistake").value.trim() || localized(
+    "A common mistake is answering before checking every condition in the question.",
+    "常见错误：还没有检查题目中的所有条件就作答。"
+  );
+  const materialId = $("#question-material").value;
+  const paper = papers.find((item) => item.id === materialId);
+  const options = type === "mcq" ? Array.from({ length: 4 }, (_, index) => $("#manual-option-" + index).value.trim()) : [];
+  const correctAnswer = type === "fill" ? $("#manual-correct-answer").value.trim() : "";
+  const error = $("#question-form-error");
+
+  if (!title || !explanation) {
+    error.textContent = localized("Enter the question and answer explanation.", "请输入题目与答案解析。");
+    return;
+  }
+  if (type === "mcq" && (options.some((option) => !option) || new Set(options.map((option) => option.toLocaleLowerCase())).size !== 4)) {
+    error.textContent = localized("Enter four different answer options.", "请输入四个不同的答案选项。");
+    return;
+  }
+  if (type === "fill" && !correctAnswer) {
+    error.textContent = localized("Enter the correct answer for the fill-in question.", "请输入填充题的正确答案。");
+    return;
+  }
+
+  const acceptedAnswers = type === "fill"
+    ? [...new Set([correctAnswer, ...$("#manual-accepted-answers").value.split(/[,，;；\n]/u)].map((answer) => answer.trim()).filter(Boolean))]
+    : [];
+  const question = {
+    id: `manual-question-${Date.now()}-${Math.random().toString(36).slice(2, 7)}`,
+    type,
+    paperId: paper?.id || "manual",
+    topic: $("#manual-question-topic").value,
+    level: $("#manual-question-level").value,
+    title,
+    titleEn: title,
+    code: $("#manual-question-code").value.trim(),
+    options,
+    optionsEn: options,
+    correct: type === "mcq" ? Number($("#manual-correct-option").value) : 0,
+    correctAnswer,
+    acceptedAnswers,
+    explanation,
+    explanationEn: explanation,
+    mistake,
+    mistakeEn: mistake,
+    createdAt: new Date().toISOString()
+  };
+  questionBank.push(question);
+  if (paper) paper.count = questionBank.filter((item) => item.paperId === paper.id).length;
+  addQuestionToAssignment(question, paper);
+  saveQuestions();
+  savePapers();
+  saveAssignments();
+  renderPapers(activePaperFilter);
+  renderAssignments();
+  if (activeWorkspaceView) renderWorkspaceView(activeWorkspaceView);
+  $("#question-dialog").close();
+  showToast(localized(
+    `${type === "fill" ? "Fill-in" : "Multiple-choice"} question published to student practice.`,
+    `${type === "fill" ? "填充" : "选择"}题已发布到学生练习。`
+  ));
+}
+
 function openPaperEditor(paperId) {
   const paper = papers.find((item) => item.id === paperId);
   if (!paper) {
@@ -1260,6 +1449,25 @@ function startQuiz(index = 0) {
   showView("quiz");
 }
 
+function hasAnswer(answer) {
+  return answer !== null && answer !== undefined && String(answer).trim() !== "";
+}
+
+function normalizeAnswer(answer) {
+  return String(answer ?? "").normalize("NFKC").trim().replace(/\s+/g, " ").toLocaleLowerCase();
+}
+
+function isQuestionAnswerCorrect(question, answer) {
+  if (question.type === "fill") {
+    const acceptedAnswers = Array.isArray(question.acceptedAnswers) && question.acceptedAnswers.length
+      ? question.acceptedAnswers
+      : [question.correctAnswer];
+    const normalizedAnswer = normalizeAnswer(answer);
+    return Boolean(normalizedAnswer) && acceptedAnswers.some((accepted) => normalizeAnswer(accepted) === normalizedAnswer);
+  }
+  return Number(answer) === Number(question.correct);
+}
+
 function renderQuestion() {
   const question = questions[currentQuestion];
   if (!question) {
@@ -1272,7 +1480,10 @@ function renderQuestion() {
     "数据库": localized("Database", "数据库"),
     "电脑网络": localized("Computer Networks", "电脑网络")
   }[question.topic] || question.topic;
-  const level = question.level === "中等" ? localized("Intermediate", "中等") : localized("Basic", "基础");
+  const level = question.level === "进阶"
+    ? localized("Advanced", "进阶")
+    : question.level === "中等" ? localized("Intermediate", "中等") : localized("Basic", "基础");
+  const isFill = question.type === "fill";
   const options = currentLanguage === "en" ? question.optionsEn : question.options;
   selectedOption = answers[currentQuestion];
   $("#current-number").textContent = currentQuestion + 1;
@@ -1280,17 +1491,24 @@ function renderQuestion() {
   $("#quiz-progress-bar").style.width = `${((currentQuestion + 1) / questions.length) * 100}%`;
   $("#question-topic").textContent = topic;
   $("#question-level").textContent = level;
+  $("#question-type-label").textContent = isFill ? localized("Fill in the Answer", "填充题") : localized("Multiple Choice", "选择题");
   $("#question-title").textContent = currentLanguage === "en" ? question.titleEn : question.title;
   $("#code-block code").textContent = question.code;
   $("#code-block").style.display = question.code ? "block" : "none";
-  $("#quiz-options").innerHTML = options.map((option, index) => `
+  $("#quiz-options").innerHTML = isFill ? "" : options.map((option, index) => `
     <button class="option ${selectedOption === index ? "selected" : ""}" data-option="${index}">
-      <span class="letter">${String.fromCharCode(65 + index)}</span><span>${option}</span>
+      <span class="letter">${String.fromCharCode(65 + index)}</span><span>${escapeHTML(option)}</span>
     </button>`).join("");
+  $("#quiz-options").classList.toggle("hidden", isFill);
+  $("#fill-answer").classList.toggle("hidden", !isFill);
+  const fillInput = $("#fill-answer-input");
+  fillInput.value = isFill && hasAnswer(selectedOption) ? selectedOption : "";
+  fillInput.disabled = false;
+  fillInput.classList.remove("correct", "wrong");
   $("#answer-feedback").className = "answer-feedback";
   $("#answer-feedback").innerHTML = "";
   $("#submit-answer").classList.remove("hidden");
-  $("#submit-answer").disabled = selectedOption === null;
+  $("#submit-answer").disabled = !hasAnswer(selectedOption);
   $("#next-question").classList.add("hidden");
   $("#previous-question").disabled = currentQuestion === 0;
   renderQuestionMap();
@@ -1298,24 +1516,34 @@ function renderQuestion() {
 }
 
 function renderQuestionMap() {
-  $("#question-dots").innerHTML = questions.map((_, index) => `<button data-jump="${index}" class="${index === currentQuestion ? "current" : ""} ${answers[index] !== null ? "answered" : ""}">${index + 1}</button>`).join("");
+  $("#question-dots").innerHTML = questions.map((_, index) => `<button data-jump="${index}" class="${index === currentQuestion ? "current" : ""} ${hasAnswer(answers[index]) ? "answered" : ""}">${index + 1}</button>`).join("");
 }
 
 function submitAnswer() {
-  if (selectedOption === null) return;
+  if (!hasAnswer(selectedOption)) return;
   const question = questions[currentQuestion];
   if (!question) return;
   answers[currentQuestion] = selectedOption;
-  $$(".option").forEach((option, index) => {
-    option.disabled = true;
-    option.classList.remove("selected");
-    if (index === question.correct) option.classList.add("correct");
-    if (index === selectedOption && index !== question.correct) option.classList.add("wrong");
-  });
-  const isCorrect = selectedOption === question.correct;
+  const isCorrect = isQuestionAnswerCorrect(question, selectedOption);
+  if (question.type === "fill") {
+    const fillInput = $("#fill-answer-input");
+    fillInput.disabled = true;
+    fillInput.classList.add(isCorrect ? "correct" : "wrong");
+  } else {
+    $$(".option").forEach((option, index) => {
+      option.disabled = true;
+      option.classList.remove("selected");
+      if (index === question.correct) option.classList.add("correct");
+      if (index === selectedOption && index !== question.correct) option.classList.add("wrong");
+    });
+  }
   const explanation = currentLanguage === "en" ? question.explanationEn : question.explanation;
-  const mistake = currentLanguage === "en" ? question.mistakeEn : question.mistake.replace("常见错误：", "");
-  $("#answer-feedback").innerHTML = `<h3>${isCorrect ? localized("Correct!", "回答正确！") : localized("Take another look", "再留意一下")}</h3><div>${explanation}</div><div class="mistake"><strong>${localized("Common mistake:", "易错提醒：")}</strong> ${mistake}</div>`;
+  const mistakeSource = currentLanguage === "en" ? question.mistakeEn : question.mistake;
+  const mistake = String(mistakeSource || "").replace("常见错误：", "");
+  const correctAnswerNote = question.type === "fill" && !isCorrect
+    ? `<div><strong>${localized("Correct answer:", "正确答案：")}</strong> ${escapeHTML(question.correctAnswer)}</div>`
+    : "";
+  $("#answer-feedback").innerHTML = `<h3>${isCorrect ? localized("Correct!", "回答正确！") : localized("Take another look", "再留意一下")}</h3>${correctAnswerNote}<div>${escapeHTML(explanation)}</div><div class="mistake"><strong>${localized("Common mistake:", "易错提醒：")}</strong> ${escapeHTML(mistake)}</div>`;
   $("#answer-feedback").classList.add("show");
   $("#submit-answer").classList.add("hidden");
   $("#next-question").classList.remove("hidden");
@@ -1581,6 +1809,7 @@ $$('[data-view]').forEach((button) => button.addEventListener("click", () => sho
 $$('[data-view-link]').forEach((button) => button.addEventListener("click", () => showView(button.dataset.viewLink)));
 $("#back-dashboard").addEventListener("click", () => showView("dashboard"));
 $("#open-upload").addEventListener("click", openUpload);
+$("#open-question").addEventListener("click", openQuestionDialog);
 $("#quick-upload").addEventListener("click", openUpload);
 $("#mobile-add").addEventListener("click", () => role === "teacher" ? openUpload() : startQuiz());
 $("#file-input").addEventListener("change", (event) => loadFiles(event.target.files));
@@ -1730,12 +1959,15 @@ $("#paper-list").addEventListener("click", (event) => {
   const button = event.target.closest("[data-paper-id]");
   if (button) openPaperEditor(button.dataset.paperId);
 });
-$("#create-set").addEventListener("click", () => {
-  assignments.unshift({ id: `assignment-${Date.now()}`, icon: "＋", title: "老师新建练习", titleEn: "New Teacher Practice", detail: "0 题 · 草稿", detailEn: "0 questions · Draft", action: "开始编辑", actionEn: "Start Editing", done: false });
-  saveAssignments();
-  renderAssignments();
-  showToast(localized("A new draft practice was created", "已建立新的空白练习"));
+$("#create-set").addEventListener("click", openQuestionDialog);
+$("#close-question-dialog").addEventListener("click", () => $("#question-dialog").close());
+$("#cancel-question-dialog").addEventListener("click", () => $("#question-dialog").close());
+$("#question-type").addEventListener("change", toggleQuestionTypeFields);
+$("#question-material").addEventListener("change", (event) => {
+  const paper = papers.find((item) => item.id === event.target.value);
+  if (paper) $("#manual-question-topic").value = paper.topic;
 });
+$("#question-form").addEventListener("submit", saveManualQuestion);
 $("#invite-students").addEventListener("click", () => {
   const code = getHourlyCode();
   navigator.clipboard?.writeText(code).catch(() => {});
@@ -1781,6 +2013,16 @@ $("#quiz-options").addEventListener("click", (event) => {
   option.classList.add("selected");
   $("#submit-answer").disabled = false;
 });
+$("#fill-answer-input").addEventListener("input", (event) => {
+  selectedOption = event.target.value;
+  $("#submit-answer").disabled = !hasAnswer(selectedOption);
+});
+$("#fill-answer-input").addEventListener("keydown", (event) => {
+  if (event.key === "Enter" && !$("#submit-answer").disabled) {
+    event.preventDefault();
+    submitAnswer();
+  }
+});
 $("#submit-answer").addEventListener("click", submitAnswer);
 $("#next-question").addEventListener("click", () => {
   if (currentQuestion === questions.length - 1) {
@@ -1795,8 +2037,8 @@ $("#next-question").addEventListener("click", () => {
     renderAssignments();
     showView("dashboard");
     showToast(localized(
-      `Practice complete: ${answers.filter((answer, index) => answer === questions[index].correct).length} of ${questions.length} correct.`,
-      `练习完成，答对 ${answers.filter((answer, index) => answer === questions[index].correct).length} / ${questions.length} 题。`
+      `Practice complete: ${answers.filter((answer, index) => isQuestionAnswerCorrect(questions[index], answer)).length} of ${questions.length} correct.`,
+      `练习完成，答对 ${answers.filter((answer, index) => isQuestionAnswerCorrect(questions[index], answer)).length} / ${questions.length} 题。`
     ));
   } else {
     currentQuestion += 1;
