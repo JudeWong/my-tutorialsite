@@ -4,30 +4,37 @@ const JSON_HEADERS = {
   "Access-Control-Allow-Headers": "Content-Type",
   "Access-Control-Allow-Methods": "GET, POST, OPTIONS"
 };
-const QUESTION_RESPONSE_SCHEMA = {
-  type: "array",
-  minItems: 6,
-  maxItems: 6,
-  items: {
-    type: "object",
-    required: ["question", "code", "options", "correct", "level", "explanation", "mistake"],
-    properties: {
-      question: { type: "string" },
-      code: { type: "string" },
-      options: { type: "array", minItems: 4, maxItems: 4, items: { type: "string" } },
-      correct: { type: "integer", minimum: 0, maximum: 3 },
-      level: { type: "string", enum: ["Basic", "Intermediate", "Advanced"] },
-      explanation: { type: "string" },
-      mistake: { type: "string" }
+function questionResponseSchema(body) {
+  const isTeachingMaterial = body.materialType === "teaching-material";
+  const requestedCount = Math.max(10, Math.min(50, Number(body.questionCount) || 10));
+  return {
+    type: "array",
+    minItems: isTeachingMaterial ? requestedCount : 1,
+    maxItems: isTeachingMaterial ? requestedCount : 100,
+    items: {
+      type: "object",
+      required: ["question", "code", "options", "correct", "level", "explanation", "mistake"],
+      properties: {
+        question: { type: "string" },
+        code: { type: "string" },
+        options: { type: "array", minItems: 4, maxItems: 4, items: { type: "string" } },
+        correct: { type: "integer", minimum: 0, maximum: 3 },
+        level: { type: "string", enum: ["Basic", "Intermediate", "Advanced"] },
+        explanation: { type: "string" },
+        mistake: { type: "string" }
+      }
     }
-  }
-};
+  };
+}
 
 function json(data, status = 200) {
   return new Response(JSON.stringify(data), { status, headers: JSON_HEADERS });
 }
 
-function systemPrompt(mode, language) {
+function systemPrompt(mode, language, task) {
+  if (task === "question-generation") {
+    return "Produce accurate, source-grounded UEC computer science assessment questions. Every user-visible natural-language question, option, explanation, and common mistake must be in Simplified Chinese. English is allowed only for source code, identifiers, abbreviations, and unavoidable standard computing terms. Return JSON only.";
+  }
   const style = mode === "study"
     ? "Teach step by step, ask useful follow-up questions, and help the learner reason instead of merely giving an answer."
     : mode === "creative"
@@ -60,7 +67,7 @@ export async function onRequestPost({ request, env }) {
   }
 
   const message = typeof body.message === "string" ? body.message.trim() : "";
-  const messageLimit = body.task === "question-generation" ? 18000 : 6000;
+  const messageLimit = body.task === "question-generation" ? 140000 : 6000;
   if (!message || message.length > messageLimit) {
     return json({ error: `Message must contain between 1 and ${messageLimit} characters.` }, 400);
   }
@@ -88,18 +95,20 @@ export async function onRequestPost({ request, env }) {
         body: JSON.stringify({
           model: usedModel,
           input: body.task === "question-generation" ? message : conversation.join("\n\n"),
-          system_instruction: systemPrompt(body.mode, body.language),
+          system_instruction: systemPrompt(body.mode, body.language, body.task),
           store: false,
           generation_config: {
             temperature: body.task === "question-generation" ? 0.3 : body.mode === "creative" ? 0.9 : 0.55,
-            max_output_tokens: body.task === "question-generation" ? 6000 : 1200,
+            max_output_tokens: body.task === "question-generation"
+              ? body.materialType === "past-paper" ? 32768 : Math.min(24000, Math.max(10000, (Number(body.questionCount) || 10) * 700))
+              : 1200,
             thinking_level: body.task === "question-generation" ? "medium" : "low"
           },
           ...(body.task === "question-generation" ? {
             response_format: {
               type: "text",
               mime_type: "application/json",
-              schema: QUESTION_RESPONSE_SCHEMA
+              schema: questionResponseSchema(body)
             }
           } : {})
         })

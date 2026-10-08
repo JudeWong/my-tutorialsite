@@ -685,6 +685,17 @@ html[lang="en"] .landing-section-label, html[lang="en"] .section-kicker { font-f
   box-shadow: 0 0 0 4px rgba(229, 161, 38, .13);
 }
 
+.upload-generation-options [hidden] { display: none !important; }
+.upload-option-help { margin: 10px 0 0; padding: 10px 12px; border-radius: 8px; color: #5f586b; background: #f5f2fb; font-size: 13px; line-height: 1.55; }
+.danger-button { margin-right: auto; padding: 12px 17px; border: 1px solid #d94d44; border-radius: 24px; color: #b62f28; background: #fff3f1; cursor: pointer; font: 700 14px Arial,Helvetica,sans-serif; transition: .2s; }
+.danger-button:hover { color: #fff; background: #c93b33; }
+.status-pill.status-disabled { color: #9d3029; background: #ffe8e4; }
+
+@media (max-width: 700px) {
+  .modal-actions { flex-wrap: wrap; }
+  .modal-actions .danger-button { width: 100%; margin-right: 0; order: 3; }
+}
+
 .data-empty {
   min-height: 150px;
   padding: 30px 22px;

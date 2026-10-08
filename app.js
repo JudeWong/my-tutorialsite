@@ -47,6 +47,8 @@ papers = papers.map((paper, index) => ({
   statusEn: paper.statusEn || "Needs review",
   fileName: paper.fileName || "",
   fileSize: Number(paper.fileSize) || 0,
+  materialType: paper.materialType === "teaching-material" ? "teaching-material" : "past-paper",
+  requestedQuestionCount: Number(paper.requestedQuestionCount) || 0,
   createdAt: paper.createdAt || new Date().toISOString()
 }));
 
@@ -430,6 +432,32 @@ const UI_EN = Object.freeze({
   ,"清除密钥": "Clear Key"
   ,"更换 API Key": "Change API Key"
   ,"AI 已设置，上传资料时会由 Gemini 理解内容并生成题目。": "AI is configured. Gemini will understand uploaded content and generate the questions."
+  ,"设置密码": "Set Password"
+  ,"确认密码": "Confirm Password"
+  ,"至少 4 个字符": "At least 4 characters"
+  ,"再次输入密码": "Enter the password again"
+  ,"资料类型": "Material Type"
+  ,"历届试卷（辨识全部题目）": "Past Paper (Extract All Questions)"
+  ,"讲义或教学资料": "Handout or Teaching Material"
+  ,"生成题数": "Number of Questions"
+  ,"10 题": "10 Questions"
+  ,"15 题": "15 Questions"
+  ,"20 题": "20 Questions"
+  ,"25 题": "25 Questions"
+  ,"30 题": "30 Questions"
+  ,"40 题": "40 Questions"
+  ,"50 题": "50 Questions"
+  ,"系统会辨识试卷里的所有完整题目，并依原顺序生成。": "The system will identify every complete question in the paper and generate them in the original order."
+  ,"删除资料": "Delete Material"
+  ,"管理学生账号": "Manage Student Account"
+  ,"修改学生资料、停用账号，或为学生重设登入密码。": "Edit student details, disable the account, or reset the student's sign-in password."
+  ,"账号状态": "Account Status"
+  ,"启用": "Active"
+  ,"停用": "Disabled"
+  ,"重设密码": "Reset Password"
+  ,"留空则保留目前密码": "Leave blank to keep the current password"
+  ,"删除账号": "Delete Account"
+  ,"储存账号修改": "Save Account Changes"
 });
 
 function applyLanguage(language = "zh", { persist = true } = {}) {
@@ -474,12 +502,45 @@ function getTeacherPassword() {
   return localStorage.getItem(PASSWORD_KEY) || "0000";
 }
 
+function createStudentId(student) {
+  const source = [student?.name, student?.className, student?.year, student?.createdAt].join("|");
+  let hash = 2166136261;
+  for (const character of source) {
+    hash ^= character.charCodeAt(0);
+    hash = Math.imul(hash, 16777619);
+  }
+  return `student-${(hash >>> 0).toString(36)}`;
+}
+
 function getStudents() {
   try {
-    return JSON.parse(localStorage.getItem(STUDENTS_KEY) || "[]");
+    const stored = JSON.parse(localStorage.getItem(STUDENTS_KEY) || "[]");
+    if (!Array.isArray(stored)) return [];
+    let migrated = false;
+    const students = stored.filter((student) => student && typeof student === "object").map((student) => {
+      const normalized = {
+        ...student,
+        id: String(student.id || createStudentId(student)),
+        name: String(student.name || "").trim(),
+        className: String(student.className || "").trim(),
+        year: String(student.year || ""),
+        password: String(student.password || "0000"),
+        status: student.status === "disabled" ? "disabled" : "active"
+      };
+      if (normalized.id !== student.id || normalized.password !== student.password || normalized.status !== student.status) migrated = true;
+      return normalized;
+    });
+    if (migrated) localStorage.setItem(STUDENTS_KEY, JSON.stringify(students));
+    return students;
   } catch {
     return [];
   }
+}
+
+function saveStudents(students) {
+  localStorage.setItem(STUDENTS_KEY, JSON.stringify(students));
+  renderTeacherMetrics();
+  if (activeWorkspaceView === "classes") renderWorkspaceView("classes");
 }
 
 function getClasses() {
@@ -506,7 +567,12 @@ function saveQuestions() {
 function saveSession() {
   localStorage.setItem(SESSION_KEY, JSON.stringify({
     role,
-    student: role === "student" ? activeStudent : null
+    student: role === "student" && activeStudent ? {
+      id: activeStudent.id,
+      name: activeStudent.name,
+      className: activeStudent.className,
+      year: activeStudent.year
+    } : null
   }));
 }
 
@@ -519,11 +585,12 @@ function restoreSession() {
     }
     if (session?.role === "student" && session.student?.name) {
       const registeredStudent = getStudents().find((student) => (
-        student.name === session.student.name
-        && student.className === session.student.className
-        && student.year === session.student.year
+        (session.student.id && student.id === session.student.id)
+        || (student.name === session.student.name
+          && student.className === session.student.className
+          && student.year === session.student.year)
       ));
-      if (registeredStudent) {
+      if (registeredStudent && registeredStudent.status !== "disabled") {
         enterApp("student", registeredStudent);
         return true;
       }
@@ -565,6 +632,7 @@ function populateYears() {
   $("#register-year").innerHTML = options;
   $("#upload-year").innerHTML = options;
   $("#edit-paper-year").innerHTML = options;
+  $("#edit-student-year").innerHTML = options;
 }
 
 function renderClassOptions() {
@@ -574,6 +642,7 @@ function renderClassOptions() {
     : `<option value="" disabled selected>${localized("No classes available", "暂无班级")}</option>`;
   $("#student-login-class").innerHTML = options;
   $("#register-class").innerHTML = options;
+  $("#edit-student-class").innerHTML = options;
 }
 
 function renderTeacherClasses() {
@@ -595,7 +664,7 @@ function renderTeacherMetrics() {
   $("#teacher-completion-note").textContent = localized(`${completedAssignments} of ${assignments.length} assignments completed`, `${completedAssignments} / ${assignments.length} 份练习已完成`);
   $("#teacher-accuracy").textContent = "—";
   $("#teacher-accuracy-note").textContent = localized("No graded results yet", "尚无评分记录");
-  $("#teacher-student-count").textContent = students.length;
+  $("#teacher-student-count").textContent = students.filter((student) => student.status !== "disabled").length;
   $("#teacher-class-count").textContent = localized(`${classes.length} classes`, `${classes.length} 个班级`);
 }
 
@@ -971,7 +1040,7 @@ function renderWorkspaceView(name) {
       const completionRate = assignments.length ? Math.round((completedAssignments / assignments.length) * 100) : 0;
       content.innerHTML = `
         <div class="workspace-metrics"><article><strong>${getClasses().length}</strong><span>${localized("Active classes", "启用班级")}</span></article><article><strong>${students.length}</strong><span>${localized("Registered students", "已注册学生")}</span></article><article><strong>${completionRate}%</strong><span>${localized("Completion rate", "完成率")}</span></article></div>
-        <section class="panel workspace-panel"><h2>${localized("Student Roster", "学生名册")}</h2>${students.length ? `<div class="workspace-table">${students.map((student) => `<article><span class="student-initial">${escapeHTML(student.name?.slice(-1) || "S")}</span><div><strong>${escapeHTML(student.name)}</strong><small>${escapeHTML(student.className)} · ${escapeHTML(student.year)}</small></div><span class="status-pill">${localized("Active", "活跃")}</span></article>`).join("")}</div>` : `<div class="workspace-empty"><strong>${localized("No students registered yet", "暂时没有学生注册")}</strong><p>${localized("Share the hourly verification code with students to get started.", "把每小时验证码交给学生即可开始注册。")}</p></div>`}</section>`;
+        <section class="panel workspace-panel"><h2>${localized("Student Roster", "学生名册")}</h2>${students.length ? `<div class="workspace-table">${students.map((student) => `<article><span class="student-initial">${escapeHTML(student.name?.slice(-1) || "S")}</span><div><strong>${escapeHTML(student.name)}</strong><small>${escapeHTML(student.className)} · ${escapeHTML(student.year)}</small></div><span class="status-pill ${student.status === "disabled" ? "status-disabled" : ""}">${student.status === "disabled" ? localized("Disabled", "已停用") : localized("Active", "启用中")}</span><button type="button" data-manage-student-id="${escapeHTML(student.id)}">${localized("Manage Account", "管理账号")}</button></article>`).join("")}</div>` : `<div class="workspace-empty"><strong>${localized("No students registered yet", "暂时没有学生注册")}</strong><p>${localized("Share the hourly verification code with students to get started.", "把每小时验证码交给学生即可开始注册。")}</p></div>`}</section>`;
     } else {
       const completed = assignments.filter((item) => item.done).length;
       const level = Math.max(1, LEVEL_TARGETS.filter((target) => completed >= target).length + 1);
@@ -1036,10 +1105,37 @@ function updateNavigationLabels() {
   });
 }
 
+function getUploadGenerationOptions() {
+  const materialType = $("#upload-material-type").value === "teaching-material" ? "teaching-material" : "past-paper";
+  const requested = Number.parseInt($("#upload-question-count").value, 10);
+  return {
+    materialType,
+    questionCount: materialType === "teaching-material" ? Math.max(10, Math.min(50, requested || 10)) : 0
+  };
+}
+
+function syncUploadGenerationOptions() {
+  const { materialType, questionCount } = getUploadGenerationOptions();
+  const isTeachingMaterial = materialType === "teaching-material";
+  $("#upload-question-count-field").hidden = !isTeachingMaterial;
+  $("#upload-option-help").textContent = isTeachingMaterial
+    ? localized(
+      `Gemini will understand the teaching content and create exactly ${questionCount} Chinese questions (minimum 10).`,
+      `Gemini 会理解教学内容，并生成 ${questionCount} 道中文题目（最少 10 题）。`
+    )
+    : localized(
+      "The system will identify every complete question in the paper and generate them in the original order.",
+      "系统会辨识试卷里的所有完整题目，并依原顺序生成。"
+    );
+}
+
 function openUpload() {
   pendingUploadFile = null;
   $("#file-input").value = "";
   $("#file-preview").innerHTML = "";
+  $("#upload-material-type").value = "past-paper";
+  $("#upload-question-count").value = "10";
+  syncUploadGenerationOptions();
   resetGenerationUI();
   $("#upload-dialog").showModal();
 }
@@ -1084,6 +1180,8 @@ function resetGenerationUI() {
   $("#close-upload").disabled = false;
   $("#cancel-upload").disabled = false;
   $("#file-input").disabled = false;
+  $("#upload-material-type").disabled = false;
+  $("#upload-question-count").disabled = false;
 }
 
 function setGenerationProgress(percent, status, stage, result = "") {
@@ -1207,16 +1305,34 @@ function normalizeMaterialText(value) {
     .trim();
 }
 
+function containsChineseText(value) {
+  return /[\u3400-\u9fff]/u.test(String(value || ""));
+}
+
+function isAcceptableChineseOption(value) {
+  const text = String(value || "").trim();
+  if (containsChineseText(text)) return true;
+  return /^[A-Za-z][A-Za-z0-9+.#/_-]*$/u.test(text)
+    || /^(?:SELECT|INSERT|UPDATE|DELETE|CREATE|DROP|ALTER)\b|[=<>()[\]{};]|^\d{1,3}(?:\.\d{1,3}){3}(?:\/\d{1,2})?$/iu.test(text);
+}
+
 function normalizeGeneratedQuestion(item, index, paperId, topic) {
   const title = String(item?.question || item?.title || "").trim();
   const options = Array.isArray(item?.options) ? item.options.map((option) => String(option).trim()).filter(Boolean).slice(0, 4) : [];
   const clozePattern = /_{2,}|填(?:入|写).{0,8}(?:空格|横线)|(?:fill|complete).{0,12}(?:blank|gap)|missing\s+(?:word|term)/iu;
-  if (!title || options.length !== 4 || clozePattern.test(title) || new Set(options.map((option) => option.toLocaleLowerCase())).size !== 4) return null;
+  const explanation = String(item?.explanation || "请对照原始资料中的重点内容理解正确答案。").trim();
+  const mistake = String(item?.mistake || "常见错误：没有检查题目中的全部条件就作答。").trim();
+  if (!title
+    || !containsChineseText(title)
+    || !containsChineseText(explanation)
+    || !containsChineseText(mistake)
+    || options.length !== 4
+    || options.some((option) => !isAcceptableChineseOption(option))
+    || clozePattern.test(title)
+    || new Set(options.map((option) => option.toLocaleLowerCase())).size !== 4) return null;
   let correct = Number(item.correct);
   if (!Number.isInteger(correct) && typeof item.correct === "string") correct = Math.max(0, "ABCD".indexOf(item.correct.toUpperCase()));
   correct = Math.max(0, Math.min(Number.isInteger(correct) ? correct : 0, options.length - 1));
-  const explanation = String(item.explanation || localized("Review the source material for the supporting detail.", "请对照原始资料中的重点内容。"));
-  const mistake = String(item.mistake || localized("A common mistake is choosing a related term without checking the exact wording.", "常见错误：只凭相似词作答，没有核对资料中的准确叙述。"));
   const levelMap = { Basic: "基础", Intermediate: "中等", Advanced: "进阶", "基础": "基础", "中等": "中等", "进阶": "进阶" };
   return {
     id: `question-${Date.now()}-${index}-${Math.random().toString(36).slice(2, 6)}`,
@@ -1265,10 +1381,44 @@ function createAISetupError(message) {
   return error;
 }
 
-function buildQuestionGenerationPrompt(text, fileName, topic) {
+function getQuestionGenerationLimits(options = {}) {
+  const materialType = options.materialType === "teaching-material" ? "teaching-material" : "past-paper";
+  const requestedCount = Math.max(10, Math.min(50, Number(options.questionCount) || 10));
+  return materialType === "teaching-material"
+    ? { materialType, requestedCount, minItems: requestedCount, maxItems: requestedCount }
+    : { materialType, requestedCount: 0, minItems: 1, maxItems: 100 };
+}
+
+function buildQuestionResponseSchema(options = {}) {
+  const { minItems, maxItems } = getQuestionGenerationLimits(options);
+  return {
+    type: "array",
+    minItems,
+    maxItems,
+    items: {
+      type: "object",
+      required: ["question", "code", "options", "correct", "level", "explanation", "mistake"],
+      properties: {
+        question: { type: "string" },
+        code: { type: "string" },
+        options: { type: "array", minItems: 4, maxItems: 4, items: { type: "string" } },
+        correct: { type: "integer", minimum: 0, maximum: 3 },
+        level: { type: "string", enum: ["Basic", "Intermediate", "Advanced"] },
+        explanation: { type: "string" },
+        mistake: { type: "string" }
+      }
+    }
+  };
+}
+
+function buildQuestionGenerationPrompt(text, fileName, topic, options = {}) {
+  const { materialType, requestedCount } = getQuestionGenerationLimits(options);
+  const generationTask = materialType === "past-paper"
+    ? `This is a past-year examination paper. Identify EVERY complete numbered question and separately numbered sub-question visible in the supplied document. Return one output item for each source question, in exactly the original order. Do not stop after a sample and do not silently omit later questions. Preserve the original meaning and choices when they exist; if an item is not already multiple-choice, convert it into one logically equivalent single-best-answer question without losing the tested concept.`
+    : `This is a handout or teaching resource. Create exactly ${requestedCount} distinct single-best-answer multiple-choice questions that cover the material broadly and proportionally.`;
   return `You are an experienced Malaysian Independent Chinese Secondary School computer science teacher and UEC examination setter. Read and understand the supplied learning material before writing any question.
 
-Create exactly 6 single-best-answer multiple-choice questions in the same level and reasoning style as Malaysian UEC senior middle computer science questions.
+${generationTask}
 
 Strict quality rules:
 1. Every correct answer must be directly supported by the supplied material. Do not invent facts, definitions, numbers, program output, or technical requirements.
@@ -1277,8 +1427,9 @@ Strict quality rules:
 4. Never create cloze, missing-word, fill-in-the-blank, underscore, or simple sentence-copy questions.
 5. Avoid repeatedly asking “according to the material”. Test understanding, application, output tracing, comparison, or reasoning instead.
 6. The explanation must state why the correct option is correct. The common mistake must identify a realistic misunderstanding.
-7. Use the main language of the material. Keep standard English computing terms where appropriate.
-8. Return only a JSON array with this exact schema:
+7. ALL user-visible natural-language content must be in Simplified Chinese, even when the source is English or Malay. This includes every question, every answer option, every explanation, and every common mistake. Do not write complete English sentences. English is allowed only inside source code, identifiers, commands, protocol abbreviations, or unavoidable standard computing terms such as CPU, SQL, HTML and Python.
+8. For a past paper, solve each source question carefully and set the correct answer from the source answer key when present; otherwise determine it by sound computer-science reasoning.
+9. Return only a JSON array with this exact schema:
 [{"question":"...","code":"optional code or empty string","options":["A text","B text","C text","D text"],"correct":0,"level":"Basic|Intermediate|Advanced","explanation":"...","mistake":"..."}]
 The correct value is a zero-based integer from 0 to 3.
 
@@ -1286,17 +1437,28 @@ Category: ${TOPIC_EN[topic] || topic}
 Source file: ${fileName}
 
 LEARNING MATERIAL:
-${text.slice(0, 14000)}`;
+${text.slice(0, 120000)}`;
 }
 
-function parseAIQuestionResponse(raw, paperId, topic) {
+function parseAIQuestionResponse(raw, paperId, topic, options = {}) {
   if (typeof raw !== "string") throw new Error("Question generation response was empty");
   const start = raw.indexOf("[");
   const end = raw.lastIndexOf("]");
   if (start < 0 || end <= start) throw new Error("Question generation response did not contain JSON");
   const parsed = JSON.parse(raw.slice(start, end + 1));
   if (!Array.isArray(parsed)) throw new Error("Question generation response was not an array");
-  return parsed.map((item, index) => normalizeGeneratedQuestion(item, index, paperId, topic)).filter(Boolean).slice(0, 8);
+  const questions = parsed.map((item, index) => normalizeGeneratedQuestion(item, index, paperId, topic)).filter(Boolean);
+  const { materialType, requestedCount, maxItems } = getQuestionGenerationLimits(options);
+  if (materialType === "teaching-material" && questions.length !== requestedCount) {
+    throw new Error(localized(
+      `Gemini returned ${questions.length} valid Chinese questions instead of the requested ${requestedCount}. Please try again.`,
+      `Gemini 返回了 ${questions.length} 道有效中文题目，没有达到所选的 ${requestedCount} 题，请重新尝试。`
+    ));
+  }
+  if (materialType === "past-paper" && !questions.length) {
+    throw new Error(localized("No complete Chinese questions could be generated from this paper.", "无法从这份试卷生成完整的中文题目。"));
+  }
+  return questions.slice(0, maxItems);
 }
 
 function isTransientGeminiError(status, message = "") {
@@ -1352,20 +1514,20 @@ function getGeminiAttemptModels(preferredModel) {
   return [preferred, preferred, ...fallbacks];
 }
 
-async function requestQuestionsFromProxy(endpoint, prompt, paperId, topic, signal) {
+async function requestQuestionsFromProxy(endpoint, prompt, paperId, topic, options, signal) {
   const response = await fetch(endpoint, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
     signal,
-    body: JSON.stringify({ message: prompt, messages: [{ role: "user", content: prompt }], mode: "study", task: "question-generation", language: currentLanguage })
+    body: JSON.stringify({ message: prompt, messages: [{ role: "user", content: prompt }], mode: "study", task: "question-generation", language: "zh", materialType: options.materialType, questionCount: options.questionCount })
   });
   if (!response.ok) throw new Error(`Question generation endpoint returned ${response.status}`);
   const data = await response.json();
   const raw = Array.isArray(data.questions) ? JSON.stringify(data.questions) : data.reply;
-  return parseAIQuestionResponse(raw, paperId, topic);
+  return parseAIQuestionResponse(raw, paperId, topic, options);
 }
 
-async function requestQuestionsFromGemini(apiKey, model, prompt, paperId, topic, signal) {
+async function requestQuestionsFromGemini(apiKey, model, prompt, paperId, topic, options, signal) {
   const endpoint = "https://generativelanguage.googleapis.com/v1beta/interactions";
   const preferredModel = normalizeGeminiModel(model);
   const attemptModels = getGeminiAttemptModels(preferredModel);
@@ -1380,37 +1542,20 @@ async function requestQuestionsFromGemini(apiKey, model, prompt, paperId, topic,
         body: JSON.stringify({
           model: attemptedModel,
           input: prompt,
-          system_instruction: "Produce accurate, source-grounded UEC computer science assessment questions. Return JSON only.",
+          system_instruction: "Produce accurate, source-grounded UEC computer science assessment questions. All natural-language question content must be Simplified Chinese. Return JSON only.",
           store: false,
           generation_config: {
             temperature: 0.2,
-            max_output_tokens: 6000,
+            max_output_tokens: options.materialType === "past-paper" ? 32768 : Math.min(24000, Math.max(10000, options.questionCount * 700)),
             thinking_level: "medium"
           },
           response_format: {
             type: "text",
             mime_type: "application/json",
-            schema: {
-              type: "array",
-              minItems: 6,
-              maxItems: 6,
-              items: {
-                type: "object",
-                required: ["question", "code", "options", "correct", "level", "explanation", "mistake"],
-                properties: {
-                  question: { type: "string" },
-                  code: { type: "string" },
-                  options: { type: "array", minItems: 4, maxItems: 4, items: { type: "string" } },
-                  correct: { type: "integer", minimum: 0, maximum: 3 },
-                  level: { type: "string", enum: ["Basic", "Intermediate", "Advanced"] },
-                  explanation: { type: "string" },
-                  mistake: { type: "string" }
-                }
-              }
-            }
+            schema: buildQuestionResponseSchema(options)
           }
         })
-      }, signal);
+      }, signal, options.materialType === "past-paper" ? 150000 : 90000);
       data = await response.json().catch(() => ({}));
     } catch (error) {
       if (error?.name === "AbortError") throw error;
@@ -1483,7 +1628,7 @@ async function requestQuestionsFromGemini(apiKey, model, prompt, paperId, topic,
       .join("\n")
       .trim() || interaction?.output_text?.trim();
     try {
-      const questions = parseAIQuestionResponse(raw, paperId, topic);
+      const questions = parseAIQuestionResponse(raw, paperId, topic, options);
       if (attemptedModel !== preferredModel) {
         showToast(localized(
           `${preferredModel} is busy. Questions were generated with backup model ${attemptedModel}.`,
@@ -1500,11 +1645,11 @@ async function requestQuestionsFromGemini(apiKey, model, prompt, paperId, topic,
   throw new Error("Gemini generation failed");
 }
 
-async function requestAIQuestions(text, fileName, paperId, topic) {
+async function requestAIQuestions(text, fileName, paperId, topic, options) {
   const configuredEndpoint = globalThis.PERSONAL_AI_CONFIG?.generationEndpoint?.trim()
     || globalThis.PERSONAL_AI_CONFIG?.aiEndpoint?.trim();
   const apiKey = getGeminiApiKey();
-  const prompt = buildQuestionGenerationPrompt(text, fileName, topic);
+  const prompt = buildQuestionGenerationPrompt(text, fileName, topic, options);
   const controller = new AbortController();
   let generationTimedOut = false;
   const timeout = setTimeout(() => {
@@ -1512,10 +1657,10 @@ async function requestAIQuestions(text, fileName, paperId, topic) {
     controller.abort(new DOMException("Question generation timed out", "TimeoutError"));
   }, 300000);
   try {
-    if (configuredEndpoint) return await requestQuestionsFromProxy(configuredEndpoint, prompt, paperId, topic, controller.signal);
+    if (configuredEndpoint) return await requestQuestionsFromProxy(configuredEndpoint, prompt, paperId, topic, options, controller.signal);
     if (apiKey) {
       try {
-        return await requestQuestionsFromGemini(apiKey, getGeminiModel(), prompt, paperId, topic, controller.signal);
+        return await requestQuestionsFromGemini(apiKey, getGeminiModel(), prompt, paperId, topic, options, controller.signal);
       } catch (error) {
         if (error?.name === "AbortError" || error?.source) throw error;
         error.code = "GEMINI_DIRECT_FAILED";
@@ -1527,7 +1672,7 @@ async function requestAIQuestions(text, fileName, paperId, topic) {
     }
     if (location.hostname.endsWith("github.io") || globalThis.Capacitor?.isNativePlatform?.()) throw createAISetupError();
     try {
-      return await requestQuestionsFromProxy("./api/chat", prompt, paperId, topic, controller.signal);
+      return await requestQuestionsFromProxy("./api/chat", prompt, paperId, topic, options, controller.signal);
     } catch (error) {
       if (error?.name === "AbortError") throw error;
       throw createAISetupError();
@@ -1548,20 +1693,16 @@ async function requestAIQuestions(text, fileName, paperId, topic) {
   }
 }
 
-async function generateQuestionsFromFile(file, paperId, topic) {
+async function generateQuestionsFromFile(file, paperId, topic, options) {
   const extractedText = normalizeMaterialText(await extractMaterialText(file));
   if (extractedText.replace(/\s/g, "").length < 30) {
     throw new Error(localized("Not enough readable text was found. Try a clearer scan or a text-based document.", "无法辨识足够文字，请尝试更清晰的扫描或含文字的文件。"));
   }
   setGenerationProgress(66, localized("Organizing key concepts…", "正在整理重点内容……"), "generate");
-  setGenerationProgress(76, localized("Gemini is understanding the material and writing questions…", "Gemini 正在理解资料并编写题目……"), "generate");
-  const aiQuestions = await requestAIQuestions(extractedText, file.name, paperId, topic);
-  if (aiQuestions.length < 4) {
-    throw new Error(localized(
-      "AI did not return enough valid questions. Please try again.",
-      "AI 没有返回足够的有效题目，请重新尝试。"
-    ));
-  }
+  setGenerationProgress(76, options.materialType === "past-paper"
+    ? localized("Gemini is identifying every question in the paper…", "Gemini 正在辨识试卷中的所有题目……")
+    : localized(`Gemini is understanding the material and writing ${options.questionCount} questions…`, `Gemini 正在理解资料并编写 ${options.questionCount} 道题目……`), "generate");
+  const aiQuestions = await requestAIQuestions(extractedText, file.name, paperId, topic, options);
   return { questions: aiQuestions, mode: "ai" };
 }
 
@@ -1702,10 +1843,7 @@ function saveManualQuestion(event) {
   const type = $("#question-type").value === "fill" ? "fill" : "mcq";
   const title = $("#manual-question-title").value.trim();
   const explanation = $("#manual-explanation").value.trim();
-  const mistake = $("#manual-mistake").value.trim() || localized(
-    "A common mistake is answering before checking every condition in the question.",
-    "常见错误：还没有检查题目中的所有条件就作答。"
-  );
+  const mistake = $("#manual-mistake").value.trim() || "常见错误：还没有检查题目中的所有条件就作答。";
   const materialId = existingQuestion?.paperId || $("#question-material").value;
   const paper = papers.find((item) => item.id === materialId);
   const options = type === "mcq" ? Array.from({ length: 4 }, (_, index) => $("#manual-option-" + index).value.trim()) : [];
@@ -1716,8 +1854,22 @@ function saveManualQuestion(event) {
     error.textContent = localized("Enter the question and answer explanation.", "请输入题目与答案解析。");
     return;
   }
+  if (!containsChineseText(title) || !containsChineseText(explanation) || (mistake && !containsChineseText(mistake))) {
+    error.textContent = localized(
+      "Write the question, explanation, and common mistake in Chinese. Code and standard computing terms may remain in English.",
+      "题目、答案解析与常见错误必须使用中文；程序代码及标准电脑术语可以保留英文。"
+    );
+    return;
+  }
   if (type === "mcq" && (options.some((option) => !option) || new Set(options.map((option) => option.toLocaleLowerCase())).size !== 4)) {
     error.textContent = localized("Enter four different answer options.", "请输入四个不同的答案选项。");
+    return;
+  }
+  if (type === "mcq" && options.some((option) => !isAcceptableChineseOption(option))) {
+    error.textContent = localized(
+      "Write answer options in Chinese. Code, abbreviations, and standard computing terms may remain in English.",
+      "答案选项必须使用中文；程序代码、缩写及标准电脑术语可以保留英文。"
+    );
     return;
   }
   if (type === "fill" && !correctAnswer) {
@@ -1808,6 +1960,119 @@ function openPaperEditor(paperId) {
   );
   $("#manage-paper-questions").disabled = materialQuestionCount === 0;
   $("#edit-paper-dialog").showModal();
+}
+
+function deletePaper(paperId) {
+  const paper = papers.find((item) => item.id === paperId);
+  if (!paper) return;
+  const confirmed = window.confirm(localized(
+    `Delete “${paper.title}” and all of its questions and assignments? This cannot be undone.`,
+    `确定删除“${paper.title}”及其所有题目与练习吗？此操作无法复原。`
+  ));
+  if (!confirmed) return;
+  const deletedQuestionCount = questionBank.filter((question) => question.paperId === paperId).length;
+  papers = papers.filter((item) => item.id !== paperId);
+  questionBank = questionBank.filter((question) => question.paperId !== paperId);
+  assignments = assignments.filter((assignment) => assignment.paperId !== paperId);
+  questions = questions.filter((question) => question.paperId !== paperId);
+  activeAssignmentIndex = Math.max(0, Math.min(activeAssignmentIndex, assignments.length - 1));
+  savePapers();
+  saveQuestions();
+  saveAssignments();
+  renderPapers(activePaperFilter);
+  renderAssignments();
+  if (activeWorkspaceView) renderWorkspaceView(activeWorkspaceView);
+  if ($("#edit-paper-dialog").open) $("#edit-paper-dialog").close();
+  showToast(localized(
+    `Material deleted with ${deletedQuestionCount} questions.`,
+    `学习资料及其 ${deletedQuestionCount} 道题目已删除。`
+  ));
+}
+
+function closeStudentAccountEditor() {
+  $("#student-account-dialog").close();
+  $("#student-account-error").textContent = "";
+}
+
+function openStudentAccountEditor(studentId) {
+  const student = getStudents().find((item) => item.id === studentId);
+  if (!student) {
+    showToast(localized("Student account not found.", "找不到这个学生账号。"));
+    return;
+  }
+  renderClassOptions();
+  const classSelect = $("#edit-student-class");
+  if (![...classSelect.options].some((option) => option.value === student.className)) {
+    classSelect.add(new Option(student.className, student.className));
+  }
+  const yearSelect = $("#edit-student-year");
+  if (![...yearSelect.options].some((option) => option.value === student.year)) {
+    yearSelect.add(new Option(student.year, student.year));
+  }
+  $("#student-account-form").reset();
+  $("#edit-student-id").value = student.id;
+  $("#edit-student-name").value = student.name;
+  $("#edit-student-class").value = student.className;
+  $("#edit-student-year").value = student.year;
+  $("#edit-student-status").value = student.status;
+  $("#edit-student-password").value = "";
+  $("#student-account-error").textContent = "";
+  $("#student-account-dialog").showModal();
+}
+
+function saveStudentAccount(event) {
+  event.preventDefault();
+  const students = getStudents();
+  const student = students.find((item) => item.id === $("#edit-student-id").value);
+  const error = $("#student-account-error");
+  const name = $("#edit-student-name").value.trim();
+  const className = $("#edit-student-class").value;
+  const year = $("#edit-student-year").value;
+  const newPassword = $("#edit-student-password").value;
+  if (!student) {
+    error.textContent = localized("Student account not found.", "找不到这个学生账号。");
+    return;
+  }
+  if (!/^[\u3400-\u9fff·]{2,12}$/u.test(name)) {
+    error.textContent = localized("Enter a Chinese name containing 2 to 12 characters.", "请输入 2 至 12 个字的中文姓名。");
+    return;
+  }
+  if (!className || !year) {
+    error.textContent = localized("Select the student's class and enrollment year.", "请选择学生班级与入学年份。");
+    return;
+  }
+  if (newPassword && newPassword.length < 4) {
+    error.textContent = localized("The new password must contain at least 4 characters.", "新密码至少需要 4 个字符。");
+    return;
+  }
+  if (students.some((item) => item.id !== student.id && item.name === name && item.className === className && item.year === year)) {
+    error.textContent = localized("Another student account already uses these details.", "已有其他学生账号使用相同资料。");
+    return;
+  }
+  student.name = name;
+  student.className = className;
+  student.year = year;
+  student.status = $("#edit-student-status").value === "disabled" ? "disabled" : "active";
+  if (newPassword) student.password = newPassword;
+  student.updatedAt = new Date().toISOString();
+  saveStudents(students);
+  closeStudentAccountEditor();
+  showToast(localized("Student account changes saved.", "学生账号修改已储存。"));
+}
+
+function deleteStudentAccount() {
+  const studentId = $("#edit-student-id").value;
+  const students = getStudents();
+  const student = students.find((item) => item.id === studentId);
+  if (!student) return;
+  const confirmed = window.confirm(localized(
+    `Delete the student account for ${student.name}? This cannot be undone.`,
+    `确定删除学生“${student.name}”的账号吗？此操作无法复原。`
+  ));
+  if (!confirmed) return;
+  saveStudents(students.filter((item) => item.id !== studentId));
+  closeStudentAccountEditor();
+  showToast(localized("Student account deleted.", "学生账号已删除。"));
 }
 
 function startQuiz(index = 0) {
@@ -2017,6 +2282,8 @@ $("#student-register-form").addEventListener("submit", (event) => {
   const name = $("#register-name").value.trim();
   const className = $("#register-class").value.trim();
   const year = $("#register-year").value;
+  const password = $("#register-password").value;
+  const passwordConfirmation = $("#register-password-confirm").value;
   const code = $("#register-code").value.trim();
   const error = $("#student-register-error");
   if (!/^[\u3400-\u9fff·]{2,12}$/.test(name)) {
@@ -2025,6 +2292,14 @@ $("#student-register-form").addEventListener("submit", (event) => {
   }
   if (className.length < 2) {
     error.textContent = localized("Select a complete class name.", "请输入完整班级名称。");
+    return;
+  }
+  if (password.length < 4) {
+    error.textContent = localized("The password must contain at least 4 characters.", "密码至少需要 4 个字符。");
+    return;
+  }
+  if (password !== passwordConfirmation) {
+    error.textContent = localized("The passwords do not match.", "两次输入的密码不一致。");
     return;
   }
   if (code !== getHourlyCode()) {
@@ -2036,10 +2311,10 @@ $("#student-register-form").addEventListener("submit", (event) => {
     error.textContent = localized("This student account already exists. Switch to Existing Account to sign in.", "此学生账号已注册，请切换至“已有账号”登入。");
     return;
   }
-  const student = { name, className, year, createdAt: new Date().toISOString() };
+  const student = { id: "", name, className, year, password, status: "active", createdAt: new Date().toISOString() };
+  student.id = createStudentId(student);
   students.push(student);
-  localStorage.setItem(STUDENTS_KEY, JSON.stringify(students));
-  renderTeacherMetrics();
+  saveStudents(students);
   error.textContent = "";
   enterApp("student", student);
   showToast(localized("Registration successful. Welcome!", "注册成功，欢迎开始学习"));
@@ -2050,9 +2325,18 @@ $("#student-login-form").addEventListener("submit", (event) => {
   const name = $("#student-login-name").value.trim();
   const className = $("#student-login-class").value.trim();
   const year = $("#student-login-year").value;
+  const password = $("#student-login-password").value;
   const student = getStudents().find((item) => item.name === name && item.className === className && item.year === year);
   if (!student) {
     $("#student-login-error").textContent = localized("Student account not found. Check the details or register first.", "找不到这个学生账号，请检查资料或先完成注册。");
+    return;
+  }
+  if (student.status === "disabled") {
+    $("#student-login-error").textContent = localized("This account has been disabled. Contact your teacher.", "此账号已停用，请联系老师。");
+    return;
+  }
+  if (student.password !== password) {
+    $("#student-login-error").textContent = localized("The student password is incorrect.", "学生密码不正确。");
     return;
   }
   $("#student-login-error").textContent = "";
@@ -2198,6 +2482,8 @@ $("#open-ai-settings").addEventListener("click", () => openAISettings());
 $("#quick-upload").addEventListener("click", openUpload);
 $("#mobile-add").addEventListener("click", () => role === "teacher" ? openUpload() : startQuiz());
 $("#file-input").addEventListener("change", (event) => loadFiles(event.target.files));
+$("#upload-material-type").addEventListener("change", syncUploadGenerationOptions);
+$("#upload-question-count").addEventListener("change", syncUploadGenerationOptions);
 $("#upload-dialog").addEventListener("cancel", (event) => { if (isGeneratingQuestions) event.preventDefault(); });
 $("#dropzone").addEventListener("dragover", (event) => { event.preventDefault(); event.currentTarget.classList.add("dragging"); });
 $("#dropzone").addEventListener("dragleave", (event) => event.currentTarget.classList.remove("dragging"));
@@ -2229,15 +2515,18 @@ $("#process-upload").addEventListener("click", async (event) => {
   $("#close-upload").disabled = true;
   $("#cancel-upload").disabled = true;
   $("#file-input").disabled = true;
+  $("#upload-material-type").disabled = true;
+  $("#upload-question-count").disabled = true;
   $("#generation-progress").classList.remove("success", "error");
   const year = $("#upload-year").value;
   const topic = $("#upload-topic").value;
+  const generationOptions = getUploadGenerationOptions();
   const sourceFile = pendingUploadFile;
-  const title = sourceFile.name.replace(/\.[^.]+$/, "").trim() || `${year} Learning Material`;
+  const title = sourceFile.name.replace(/\.[^.]+$/, "").trim() || `${year} 学习资料`;
   const now = new Date();
   const paperId = `material-${now.getTime()}-${Math.random().toString(36).slice(2, 8)}`;
   try {
-    const generated = await generateQuestionsFromFile(sourceFile, paperId, topic);
+    const generated = await generateQuestionsFromFile(sourceFile, paperId, topic, generationOptions);
     setGenerationProgress(93, localized("Saving the question set…", "正在储存题目练习……"), "save");
     const paper = {
       id: paperId,
@@ -2253,6 +2542,8 @@ $("#process-upload").addEventListener("click", async (event) => {
       fileSize: sourceFile.size,
       sourceType: sourceFile.type || sourceFile.name.split(".").pop()?.toUpperCase() || "Document",
       generationMode: generated.mode,
+      materialType: generationOptions.materialType,
+      requestedQuestionCount: generationOptions.questionCount,
       createdAt: now.toISOString()
     };
     papers.unshift(paper);
@@ -2307,12 +2598,15 @@ $("#process-upload").addEventListener("click", async (event) => {
     $("#cancel-upload").disabled = false;
     $("#file-input").disabled = false;
     $("#change-gemini-key").disabled = false;
+    $("#upload-material-type").disabled = false;
+    $("#upload-question-count").disabled = false;
   }
 });
 $("#change-gemini-key").addEventListener("click", openAISettingsFromUpload);
 
 $("#close-edit-paper").addEventListener("click", () => $("#edit-paper-dialog").close());
 $("#cancel-edit-paper").addEventListener("click", () => $("#edit-paper-dialog").close());
+$("#delete-paper").addEventListener("click", () => deletePaper($("#edit-paper-id").value));
 $("#manage-paper-questions").addEventListener("click", () => {
   const paperId = $("#edit-paper-id").value;
   $("#edit-paper-dialog").close();
@@ -2345,6 +2639,11 @@ $("#edit-paper-form").addEventListener("submit", (event) => {
   $("#edit-paper-dialog").close();
   showToast(localized("Material details saved.", "学习资料已储存。"));
 });
+
+$("#close-student-account").addEventListener("click", closeStudentAccountEditor);
+$("#cancel-student-account").addEventListener("click", closeStudentAccountEditor);
+$("#student-account-form").addEventListener("submit", saveStudentAccount);
+$("#delete-student-account").addEventListener("click", deleteStudentAccount);
 
 $(".filters").addEventListener("click", (event) => {
   const button = event.target.closest(".filter");
@@ -2447,6 +2746,11 @@ $("#workspace-primary-action").addEventListener("click", (event) => {
   }
 });
 $("#workspace-content").addEventListener("click", (event) => {
+  const studentButton = event.target.closest("[data-manage-student-id]");
+  if (studentButton) {
+    openStudentAccountEditor(studentButton.dataset.manageStudentId);
+    return;
+  }
   const paperButton = event.target.closest("[data-workspace-paper-id]");
   if (paperButton) {
     openPaperEditor(paperButton.dataset.workspacePaperId);
