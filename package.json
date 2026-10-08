@@ -1,0 +1,24 @@
+{
+  "name": "personal-ai-learning-platform",
+  "version": "1.0.0",
+  "packageManager": "pnpm@11.25.0",
+  "private": true,
+  "type": "module",
+  "description": "Your Personal AI Assistant computer science learning platform",
+  "scripts": {
+    "serve": "node scripts/serve.mjs",
+    "prepare:web": "node scripts/sync-web.mjs",
+    "prepare:android": "node scripts/sync-web.mjs --android",
+    "android:add": "cap add android",
+    "android:sync": "pnpm run prepare:android && cap sync android",
+    "android:build": "pnpm run android:sync && cd android && gradlew.bat assembleDebug",
+    "android:release": "pnpm run android:sync && cd android && gradlew.bat assembleRelease"
+  },
+  "dependencies": {
+    "@capacitor/android": "^6.2.1",
+    "@capacitor/core": "^6.2.1"
+  },
+  "devDependencies": {
+    "@capacitor/cli": "^6.2.1"
+  }
+}

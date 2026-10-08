@@ -1,0 +1,21 @@
+{
+  "name": "Your Personal AI Assistant · Computer Science Learning",
+  "short_name": "Personal AI",
+  "description": "An interactive computer science learning platform for teachers and students.",
+  "lang": "en",
+  "dir": "ltr",
+  "start_url": "./",
+  "scope": "./",
+  "display": "standalone",
+  "orientation": "portrait-primary",
+  "theme_color": "#6d54e8",
+  "background_color": "#ffffff",
+  "icons": [
+    {
+      "src": "assets/icons/icon.svg",
+      "sizes": "any",
+      "type": "image/svg+xml",
+      "purpose": "any maskable"
+    }
+  ]
+}

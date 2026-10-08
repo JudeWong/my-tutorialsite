@@ -1,0 +1,8 @@
+{
+  "appId": "my.edu.chms3.personalai",
+  "appName": "Personal AI Assistant",
+  "webDir": "web",
+  "android": {
+    "backgroundColor": "#ffffff"
+  }
+}

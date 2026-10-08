@@ -1,0 +1,14 @@
+node_modules/
+android/.gradle/
+android/build/
+android/app/build/
+android/local.properties
+_buildtools/
+build-tools/
+licenses/
+platform-tools/
+platforms/
+assets/models/
+web/
+*.keystore
+*.jks

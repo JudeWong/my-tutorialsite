@@ -1,0 +1,7 @@
+<?xml version='1.0' encoding='utf-8'?>
+<resources>
+    <string name="app_name">Personal AI Assistant</string>
+    <string name="title_activity_main">Personal AI Assistant</string>
+    <string name="package_name">my.edu.chms3.personalai</string>
+    <string name="custom_url_scheme">my.edu.chms3.personalai</string>
+</resources>
