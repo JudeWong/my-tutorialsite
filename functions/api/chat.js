@@ -74,7 +74,7 @@ export async function onRequestPost({ request, env }) {
   const configuredModel = String(env.GEMINI_MODEL || "").trim().replace(/^models\//i, "");
   const model = !configuredModel || configuredModel === "gemini-2.5-flash" ? "gemini-3.8-flash" : configuredModel;
   const endpoint = "https://generativelanguage.googleapis.com/v1beta/interactions";
-  const fallbackModels = ["gemini-3.7-flash", "gemini-3.6-flash"].filter((item) => item !== model);
+  const fallbackModels = ["gemini-3.7-flash", "gemini-3.1-flash-lite"].filter((item) => item !== model);
   const attemptModels = [model, model, ...fallbackModels];
   let response;
   let data = {};

@@ -1316,7 +1316,7 @@ function waitForGeminiRetry(delay, signal) {
   });
 }
 
-async function fetchWithGeminiAttemptTimeout(endpoint, options, parentSignal, timeoutMs = 40000) {
+async function fetchWithGeminiAttemptTimeout(endpoint, options, parentSignal, timeoutMs = 90000) {
   const attemptController = new AbortController();
   let attemptTimedOut = false;
   const abortFromParent = () => attemptController.abort(parentSignal?.reason);
@@ -1348,7 +1348,7 @@ async function fetchWithGeminiAttemptTimeout(endpoint, options, parentSignal, ti
 
 function getGeminiAttemptModels(preferredModel) {
   const preferred = normalizeGeminiModel(preferredModel);
-  const fallbacks = ["gemini-3.7-flash", "gemini-3.6-flash"].filter((model) => model !== preferred);
+  const fallbacks = ["gemini-3.7-flash", "gemini-3.1-flash-lite"].filter((model) => model !== preferred);
   return [preferred, preferred, ...fallbacks];
 }
 
@@ -1414,6 +1414,9 @@ async function requestQuestionsFromGemini(apiKey, model, prompt, paperId, topic,
       data = await response.json().catch(() => ({}));
     } catch (error) {
       if (error?.name === "AbortError") throw error;
+      if (error?.name === "GeminiAttemptTimeout" && attemptModels[attempt + 1] === attemptedModel) {
+        attempt += 1;
+      }
       if (attempt < attemptModels.length - 1) {
         const nextModel = attemptModels[attempt + 1];
         setGenerationProgress(
@@ -1507,7 +1510,7 @@ async function requestAIQuestions(text, fileName, paperId, topic) {
   const timeout = setTimeout(() => {
     generationTimedOut = true;
     controller.abort(new DOMException("Question generation timed out", "TimeoutError"));
-  }, 180000);
+  }, 300000);
   try {
     if (configuredEndpoint) return await requestQuestionsFromProxy(configuredEndpoint, prompt, paperId, topic, controller.signal);
     if (apiKey) {
@@ -1532,8 +1535,8 @@ async function requestAIQuestions(text, fileName, paperId, topic) {
   } catch (error) {
     if (generationTimedOut || error?.name === "AbortError" || error?.name === "TimeoutError") {
       const timeoutError = new Error(localized(
-        "AI generation took longer than three minutes. No material was saved. Please try again; the system will retry and switch backup models automatically.",
-        "AI 生成超过三分钟，系统没有储存未完成的资料。请重新尝试，系统会自动重试并切换备用模型。"
+        "AI generation took longer than five minutes. No material was saved. Please try again; the system will retry and switch backup models automatically.",
+        "AI 生成超过五分钟，系统没有储存未完成的资料。请重新尝试，系统会自动重试并切换备用模型。"
       ));
       timeoutError.code = "GEMINI_TIMEOUT";
       timeoutError.source = "gemini-transient";
