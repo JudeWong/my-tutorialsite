@@ -9,7 +9,7 @@
    - Build output directory：`web`
 4. 部署完成后，到项目的 **Settings → Variables and Secrets** 新增加密变量：
    - `GEMINI_API_KEY`：Google AI Studio 产生的 API key
-   - `GEMINI_MODEL`：可选；未设置时使用 `gemini-2.5-flash`
+   - `GEMINI_MODEL`：可选；未设置时使用 `gemini-3.8-flash`
 5. 重新部署。网页会通过 `/api/chat` 使用 `functions/api/chat.js`，密钥不会传到浏览器。
 
 Cloudflare Pages 和 Gemini 的免费额度均有限，学校大量使用前应查看当时的额度、加入身份验证与速率限制。

@@ -98,6 +98,7 @@ const LANGUAGE_KEY = "tixi_language_v2";
 const GEMINI_KEY = "tixi_gemini_api_key";
 const GEMINI_MODEL_KEY = "tixi_gemini_model";
 const GEMINI_KEY_STATUS_KEY = "tixi_gemini_key_status";
+const DEFAULT_GEMINI_MODEL = "gemini-3.8-flash";
 const LEVEL_TARGETS = [2, 5, 8];
 let currentLanguage = "en";
 let lastAIQuestion = "";
@@ -1240,8 +1241,19 @@ function getGeminiApiKey() {
   return localStorage.getItem(GEMINI_KEY)?.trim() || "";
 }
 
+function normalizeGeminiModel(value = "") {
+  const model = String(value).trim().replace(/^models\//i, "");
+  return !model || model === "gemini-2.5-flash" ? DEFAULT_GEMINI_MODEL : model;
+}
+
 function getGeminiModel() {
-  return localStorage.getItem(GEMINI_MODEL_KEY)?.trim() || "gemini-2.5-flash";
+  const storedModel = localStorage.getItem(GEMINI_MODEL_KEY)?.trim() || "";
+  const currentModel = normalizeGeminiModel(storedModel);
+  if (storedModel && storedModel !== currentModel) {
+    localStorage.setItem(GEMINI_MODEL_KEY, currentModel);
+    if (getGeminiApiKey()) localStorage.setItem(GEMINI_KEY_STATUS_KEY, "untested");
+  }
+  return currentModel;
 }
 
 function createAISetupError(message) {
@@ -1301,33 +1313,39 @@ async function requestQuestionsFromProxy(endpoint, prompt, paperId, topic, signa
 }
 
 async function requestQuestionsFromGemini(apiKey, model, prompt, paperId, topic, signal) {
-  const endpoint = `https://generativelanguage.googleapis.com/v1beta/models/${encodeURIComponent(model)}:generateContent`;
+  const endpoint = "https://generativelanguage.googleapis.com/v1beta/interactions";
   const response = await fetch(endpoint, {
     method: "POST",
     headers: { "Content-Type": "application/json", "x-goog-api-key": apiKey },
     signal,
     body: JSON.stringify({
-      systemInstruction: { parts: [{ text: "Produce accurate, source-grounded UEC computer science assessment questions. Return JSON only." }] },
-      contents: [{ role: "user", parts: [{ text: prompt }] }],
-      generationConfig: {
+      model: normalizeGeminiModel(model),
+      input: prompt,
+      system_instruction: "Produce accurate, source-grounded UEC computer science assessment questions. Return JSON only.",
+      store: false,
+      generation_config: {
         temperature: 0.2,
-        maxOutputTokens: 6000,
-        responseMimeType: "application/json",
-        responseSchema: {
-          type: "ARRAY",
+        max_output_tokens: 6000,
+        thinking_level: "medium"
+      },
+      response_format: {
+        type: "text",
+        mime_type: "application/json",
+        schema: {
+          type: "array",
           minItems: 6,
           maxItems: 6,
           items: {
-            type: "OBJECT",
+            type: "object",
             required: ["question", "code", "options", "correct", "level", "explanation", "mistake"],
             properties: {
-              question: { type: "STRING" },
-              code: { type: "STRING" },
-              options: { type: "ARRAY", minItems: 4, maxItems: 4, items: { type: "STRING" } },
-              correct: { type: "INTEGER", minimum: 0, maximum: 3 },
-              level: { type: "STRING", enum: ["Basic", "Intermediate", "Advanced"] },
-              explanation: { type: "STRING" },
-              mistake: { type: "STRING" }
+              question: { type: "string" },
+              code: { type: "string" },
+              options: { type: "array", minItems: 4, maxItems: 4, items: { type: "string" } },
+              correct: { type: "integer", minimum: 0, maximum: 3 },
+              level: { type: "string", enum: ["Basic", "Intermediate", "Advanced"] },
+              explanation: { type: "string" },
+              mistake: { type: "string" }
             }
           }
         }
@@ -1352,7 +1370,20 @@ async function requestQuestionsFromGemini(apiKey, model, prompt, paperId, topic,
   }
   localStorage.setItem(GEMINI_KEY_STATUS_KEY, "valid");
   updateAIConfigStatus();
-  const raw = data?.candidates?.[0]?.content?.parts?.map((part) => part.text || "").join("\n").trim();
+  const interaction = data?.interaction || data;
+  if (interaction?.status && interaction.status !== "completed") {
+    const error = new Error(localized("Gemini did not complete the request. Please try again.", "Gemini 未能完成请求，请重新尝试。"));
+    error.code = "GEMINI_RESPONSE_INCOMPLETE";
+    error.source = "gemini-response";
+    throw error;
+  }
+  const raw = interaction?.steps
+    ?.filter((step) => step?.type === "model_output")
+    .flatMap((step) => Array.isArray(step.content) ? step.content : [])
+    .filter((content) => content?.type === "text")
+    .map((content) => content.text || "")
+    .join("\n")
+    .trim() || interaction?.output_text?.trim();
   try {
     return parseAIQuestionResponse(raw, paperId, topic);
   } catch (error) {
@@ -1430,6 +1461,7 @@ function toggleQuestionTypeFields() {
 function updateAIConfigStatus() {
   const configuredEndpoint = globalThis.PERSONAL_AI_CONFIG?.generationEndpoint?.trim()
     || globalThis.PERSONAL_AI_CONFIG?.aiEndpoint?.trim();
+  getGeminiModel();
   const hasBrowserKey = Boolean(getGeminiApiKey());
   const browserKeyStatus = localStorage.getItem(GEMINI_KEY_STATUS_KEY) || "untested";
   const hasSameOriginBackend = !location.hostname.endsWith("github.io")
@@ -2252,7 +2284,7 @@ $("#clear-ai-key").addEventListener("click", () => {
 $("#ai-settings-form").addEventListener("submit", (event) => {
   event.preventDefault();
   const apiKey = $("#gemini-api-key").value.trim();
-  const model = $("#gemini-model").value.trim();
+  const model = normalizeGeminiModel($("#gemini-model").value);
   if (!apiKey || !model) {
     $("#ai-settings-error").textContent = localized("Enter the Gemini API key and model.", "请输入 Gemini API Key 与模型名称。");
     return;

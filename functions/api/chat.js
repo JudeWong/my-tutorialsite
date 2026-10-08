@@ -5,20 +5,20 @@ const JSON_HEADERS = {
   "Access-Control-Allow-Methods": "GET, POST, OPTIONS"
 };
 const QUESTION_RESPONSE_SCHEMA = {
-  type: "ARRAY",
+  type: "array",
   minItems: 6,
   maxItems: 6,
   items: {
-    type: "OBJECT",
+    type: "object",
     required: ["question", "code", "options", "correct", "level", "explanation", "mistake"],
     properties: {
-      question: { type: "STRING" },
-      code: { type: "STRING" },
-      options: { type: "ARRAY", minItems: 4, maxItems: 4, items: { type: "STRING" } },
-      correct: { type: "INTEGER", minimum: 0, maximum: 3 },
-      level: { type: "STRING", enum: ["Basic", "Intermediate", "Advanced"] },
-      explanation: { type: "STRING" },
-      mistake: { type: "STRING" }
+      question: { type: "string" },
+      code: { type: "string" },
+      options: { type: "array", minItems: 4, maxItems: 4, items: { type: "string" } },
+      correct: { type: "integer", minimum: 0, maximum: 3 },
+      level: { type: "string", enum: ["Basic", "Intermediate", "Advanced"] },
+      explanation: { type: "string" },
+      mistake: { type: "string" }
     }
   }
 };
@@ -55,29 +55,34 @@ export async function onRequestPost({ request, env }) {
   }
 
   const history = Array.isArray(body.messages) ? body.messages.slice(-12) : [];
-  const contents = history
+  const conversation = history
     .filter((item) => item && typeof item.content === "string" && ["user", "assistant"].includes(item.role))
-    .map((item) => ({ role: item.role === "assistant" ? "model" : "user", parts: [{ text: item.content.slice(0, messageLimit) }] }));
-  if (!contents.length || contents.at(-1)?.role !== "user") {
-    contents.push({ role: "user", parts: [{ text: message }] });
-  }
+    .map((item) => `${item.role === "assistant" ? "Assistant" : "User"}: ${item.content.slice(0, messageLimit)}`);
+  if (!conversation.length || history.at(-1)?.role !== "user") conversation.push(`User: ${message}`);
 
-  const model = env.GEMINI_MODEL || "gemini-2.5-flash";
-  const endpoint = `https://generativelanguage.googleapis.com/v1beta/models/${encodeURIComponent(model)}:generateContent?key=${encodeURIComponent(env.GEMINI_API_KEY)}`;
+  const configuredModel = String(env.GEMINI_MODEL || "").trim().replace(/^models\//i, "");
+  const model = !configuredModel || configuredModel === "gemini-2.5-flash" ? "gemini-3.8-flash" : configuredModel;
+  const endpoint = "https://generativelanguage.googleapis.com/v1beta/interactions";
   const response = await fetch(endpoint, {
     method: "POST",
-    headers: JSON_HEADERS,
+    headers: { "Content-Type": "application/json", "x-goog-api-key": env.GEMINI_API_KEY },
     body: JSON.stringify({
-      systemInstruction: { parts: [{ text: systemPrompt(body.mode, body.language) }] },
-      contents,
-      generationConfig: {
+      model,
+      input: body.task === "question-generation" ? message : conversation.join("\n\n"),
+      system_instruction: systemPrompt(body.mode, body.language),
+      store: false,
+      generation_config: {
         temperature: body.task === "question-generation" ? 0.3 : body.mode === "creative" ? 0.9 : 0.55,
-        maxOutputTokens: body.task === "question-generation" ? 6000 : 1200,
-        ...(body.task === "question-generation" ? {
-          responseMimeType: "application/json",
-          responseSchema: QUESTION_RESPONSE_SCHEMA
-        } : {})
-      }
+        max_output_tokens: body.task === "question-generation" ? 6000 : 1200,
+        thinking_level: body.task === "question-generation" ? "medium" : "low"
+      },
+      ...(body.task === "question-generation" ? {
+        response_format: {
+          type: "text",
+          mime_type: "application/json",
+          schema: QUESTION_RESPONSE_SCHEMA
+        }
+      } : {})
     })
   });
 
@@ -87,7 +92,17 @@ export async function onRequestPost({ request, env }) {
     return json({ error: "The AI service is temporarily unavailable." }, 502);
   }
 
-  const reply = data?.candidates?.[0]?.content?.parts?.map((part) => part.text || "").join("\n").trim();
+  const interaction = data?.interaction || data;
+  if (interaction?.status && interaction.status !== "completed") {
+    return json({ error: "The AI service did not complete the request." }, 502);
+  }
+  const reply = interaction?.steps
+    ?.filter((step) => step?.type === "model_output")
+    .flatMap((step) => Array.isArray(step.content) ? step.content : [])
+    .filter((content) => content?.type === "text")
+    .map((content) => content.text || "")
+    .join("\n")
+    .trim() || interaction?.output_text?.trim();
   if (!reply) return json({ error: "The AI service returned an empty response." }, 502);
   return json({ reply, provider: "gemini", model });
 }
