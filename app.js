@@ -1,52 +1,41 @@
-const papers = [
-  { year: "2025", title: "高中统一考试 · 电脑科试卷", titleEn: "Senior Unified Exam · Computer Science", topic: "综合试卷", topicEn: "General Paper", count: 40, status: "已整理", statusEn: "Organized" },
-  { year: "2024", title: "高中统考 · 程序设计专题", titleEn: "Senior Exam · Programming Focus", topic: "程序设计", topicEn: "Programming", count: 28, status: "已整理", statusEn: "Organized" },
-  { year: "2023", title: "校内评估 · 数据库与 SQL", titleEn: "School Assessment · Database and SQL", topic: "数据库", topicEn: "Database", count: 32, status: "已整理", statusEn: "Organized" },
-  { year: "2022", title: "全国独中统考 · 电脑科", titleEn: "National Independent-School Exam · Computer Science", topic: "综合试卷", topicEn: "General Paper", count: 45, status: "已整理", statusEn: "Organized" }
-];
+const PAPERS_KEY = "tixi_papers_v1";
+const ASSIGNMENTS_KEY = "tixi_assignments_v1";
 
-const assignments = [
-  { icon: "⌘", title: "2024 统考 · 程序设计", titleEn: "2024 Exam · Programming", detail: "20 题 · 截止 10月9日", detailEn: "20 questions · Due 9 Oct", action: "继续作答", actionEn: "Continue", done: false },
-  { icon: "▦", title: "SQL 查询基础强化", titleEn: "SQL Query Foundations", detail: "15 题 · 截止 10月12日", detailEn: "15 questions · Due 12 Oct", action: "开始练习", actionEn: "Start Practice", done: false },
-  { icon: "✓", title: "网络基础概念复习", titleEn: "Networking Fundamentals Review", detail: "12 题 · 已完成 · 83分", detailEn: "12 questions · Completed · 83%", action: "查看解析", actionEn: "Review Answers", done: true }
-];
-
-const questions = [
-  {
-    topic: "程序设计", level: "中等",
-    title: "执行以下 Python 程序后，输出结果是什么？",
-    titleEn: "What is the output after running the following Python program?",
-    code: "numbers = [2, 4, 6, 8]\nresult = 0\nfor n in numbers:\n    if n > 4:\n        result += n\nprint(result)",
-    options: ["8", "12", "14", "20"], correct: 2,
-    optionsEn: ["8", "12", "14", "20"],
-    explanation: "条件 n > 4 只会选中 6 和 8，因此 result = 6 + 8 = 14。",
-    explanationEn: "The condition n > 4 selects only 6 and 8, so result = 6 + 8 = 14.",
-    mistake: "常见错误：把 n > 4 看成 n ≥ 4，误将 4 加入，得到 18。",
-    mistakeEn: "A common mistake is reading n > 4 as n ≥ 4 and incorrectly including 4."
-  },
-  {
-    topic: "数据库", level: "基础",
-    title: "以下哪一个 SQL 指令用于读取资料表中的数据？",
-    titleEn: "Which SQL command is used to retrieve data from a table?",
-    code: "", options: ["SELECT", "UPDATE", "DELETE", "INSERT"], correct: 0,
-    optionsEn: ["SELECT", "UPDATE", "DELETE", "INSERT"],
-    explanation: "SELECT 用来查询资料；UPDATE 修改、DELETE 删除，而 INSERT 用来新增记录。",
-    explanationEn: "SELECT retrieves data; UPDATE changes data, DELETE removes it, and INSERT adds new records.",
-    mistake: "常见错误：混淆 SELECT 与 INSERT；记住 SELECT 是“选取”已有资料。",
-    mistakeEn: "A common mistake is confusing SELECT with INSERT. SELECT reads existing data."
-  },
-  {
-    topic: "电脑网络", level: "中等",
-    title: "一台电脑的 IPv4 地址为 192.168.1.20/24。以下哪一个地址与它位于同一子网？",
-    titleEn: "A computer has the IPv4 address 192.168.1.20/24. Which address is on the same subnet?",
-    code: "", options: ["192.168.2.20", "192.168.1.88", "192.168.0.1", "10.0.1.20"], correct: 1,
-    optionsEn: ["192.168.2.20", "192.168.1.88", "192.168.0.1", "10.0.1.20"],
-    explanation: "/24 表示前 24 位是网络部分，因此同一子网的地址必须以 192.168.1 开头。",
-    explanationEn: "/24 means the first 24 bits identify the network, so an address on the same subnet must start with 192.168.1.",
-    mistake: "常见错误：只比较地址的最后一段。判断子网时应先依据遮罩确认网络部分。",
-    mistakeEn: "A common mistake is comparing only the final octet. Use the subnet mask to identify the network portion first."
+function readStoredArray(key) {
+  try {
+    const value = JSON.parse(localStorage.getItem(key) || "[]");
+    return Array.isArray(value) ? value : [];
+  } catch {
+    return [];
   }
-];
+}
+
+let papers = readStoredArray(PAPERS_KEY);
+let assignments = readStoredArray(ASSIGNMENTS_KEY);
+let questions = [];
+
+const TOPIC_EN = Object.freeze({
+  "综合试卷": "General Paper",
+  "程序设计": "Programming",
+  "数据库": "Database",
+  "电脑网络": "Computer Networks",
+  "硬件": "Hardware"
+});
+
+papers = papers.map((paper, index) => ({
+  id: paper.id || `paper-${paper.createdAt || Date.now()}-${index}`,
+  title: paper.title || paper.fileName || "Untitled Paper",
+  titleEn: paper.titleEn || paper.title || paper.fileName || "Untitled Paper",
+  year: String(paper.year || new Date().getFullYear()),
+  topic: paper.topic || "综合试卷",
+  topicEn: paper.topicEn || TOPIC_EN[paper.topic] || "General Paper",
+  count: Number(paper.count) || 0,
+  status: paper.status || "待校对",
+  statusEn: paper.statusEn || "Needs review",
+  fileName: paper.fileName || "",
+  fileSize: Number(paper.fileSize) || 0,
+  createdAt: paper.createdAt || new Date().toISOString()
+}));
 
 const $ = (selector, root = document) => root.querySelector(selector);
 const $$ = (selector, root = document) => [...root.querySelectorAll(selector)];
@@ -55,6 +44,7 @@ let currentQuestion = 0;
 let activeAssignmentIndex = 0;
 const answers = Array(questions.length).fill(null);
 let selectedOption = null;
+let pendingUploadFile = null;
 let toastTimer;
 let codeTimer;
 let activeStudent = null;
@@ -63,7 +53,6 @@ const PASSWORD_KEY = "tixi_superadmin_password";
 const STUDENTS_KEY = "tixi_students";
 const CLASSES_KEY = "tixi_classes";
 const LANGUAGE_KEY = "tixi_language_v2";
-const DEFAULT_CLASSES = ["高一仁", "高一义", "高二理信", "高二理忠", "高三理爱"];
 const LEVEL_TARGETS = [2, 5, 8];
 let currentLanguage = "en";
 let lastAIQuestion = "";
@@ -90,10 +79,7 @@ const UI_EN = Object.freeze({
   "AI助理": "AI Assistant",
   "修改 Superadmin 密码 →": "Change Superadmin Password →",
   "0 个班级": "0 classes",
-  "/ 4 份": "/ 4 assignments",
-  "2024 高中统考 · 程序设计": "2024 Senior Exam · Programming",
   "第": "Question",
-  "/ 3 题": "/ 3",
   "中等": "Intermediate",
   "你的私人AI助理": "Your Personal AI Assistant",
   "你的私人": "Your Personal",
@@ -228,24 +214,13 @@ const UI_EN = Object.freeze({
   "输入消息，按 Enter 发送……": "Message AI and press Enter to send…",
   "任何问题都可以问我……": "Ask me anything…",
   "2026 学年 · 高中电脑科": "2026 Academic Year · Senior Computer Science",
-  "早上好，陈老师": "Good morning, Teacher Chen",
+  "早上好，Teacher Jude": "Good morning, Teacher Jude",
   "今天也一起把复杂的知识，变成学生看得懂的答案。": "Let's turn complex knowledge into answers students can understand.",
-  "本月新增": "Added this month",
-  "较上个月": "vs. last month",
-  "最弱：数据结构": "Weakest: Data Structures",
-  "共 5 个班级": "Across 5 classes",
   "把验证码交给学生完成注册，有效期至本小时结束。": "Give this code to students for registration. It remains valid until the end of the hour.",
   "自动更换倒数": "Refresh countdown",
   "学生班级列表": "Student Class List",
   "＋ 添加": "+ Add",
   "此列表会同步到学生登入与注册页面。": "This list is synced with student sign-in and registration.",
-  "平均分": "Average",
-  "优秀": "Excellent",
-  "达标": "On Target",
-  "待加强": "Needs Work",
-  "需要关注": "Needs Attention",
-  "递归与堆栈": "Recursion and Stacks",
-  "全班正确率 42%": "Class accuracy: 42%",
   "PDF / 图片": "PDF / Image",
   "从题库选题": "Select from library",
   "分享班级码": "Share class code",
@@ -253,28 +228,6 @@ const UI_EN = Object.freeze({
   "星期二 · 继续保持学习节奏": "Tuesday · Keep up your learning rhythm",
   "嗨，": "Hi, ",
   "！准备好挑战了吗？": "! Ready for a challenge?",
-  "你本周已完成 3 份练习，再完成一份就达成目标。": "You completed 3 practices this week. One more reaches your goal.",
-  "12 天": "12 days",
-  "基础制服": "Basic Uniform",
-  "休闲鞋": "Sneakers",
-  "帆布帽": "Canvas Cap",
-  "AI 耳机": "AI Headset",
-  "数据眼镜": "Data Glasses",
-  "云端背包": "Cloud Backpack",
-  "科技外套": "Tech Hoodie",
-  "极速战靴": "Speed Boots",
-  "机器宠物": "Robot Pet",
-  "像素翅膀": "Pixel Wings",
-  "算法王冠": "Algorithm Crown",
-  "霓虹光环": "Neon Aura",
-  "助手无人机": "Assistant Drone",
-  "等级 1 · 基础造型": "Level 1 · Basic Style",
-  "等级 2 · 智能配件": "Level 2 · Smart Accessories",
-  "等级 3 · 进阶造型": "Level 3 · Advanced Style",
-  "等级 4 · 传奇收藏": "Level 4 · Legendary Collection",
-  "完成 2 份作业": "Complete 2 assignments",
-  "完成 5 份作业": "Complete 5 assignments",
-  "完成 8 份作业": "Complete 8 assignments",
   "← 返回总览": "← Back to Overview",
   "此模块已预留，正式系统可在这里连接后端资料库与账号权限。": "This module is reserved for the production database and account permissions.",
   "← 退出练习": "← Exit Practice",
@@ -306,6 +259,24 @@ const UI_EN = Object.freeze({
   "新密码": "New Password",
   "确认新密码": "Confirm New Password",
   "储存新密码": "Save New Password"
+  ,"暂无班级": "No Classes"
+  ,"尚未建立班级": "No Classes Yet"
+  ,"请先在上方添加班级。": "Add a class above to get started."
+  ,"学生": "Student"
+  ,"老师尚未布置练习。": "No assignments have been assigned yet."
+  ,"已完成账号注册": "Account registered"
+  ,"学习后将解锁更多成就": "More achievements will appear as you learn"
+  ,"本周尚未设置练习目标。": "No weekly goal has been assigned."
+  ,"/ 0 份": "/ 0 assignments"
+  ,"互动练习": "Interactive Practice"
+  ,"题": "questions"
+  ,"编辑试卷": "Edit Paper"
+  ,"修改试卷名称、年份、分类与整理状态，储存后会立即更新题库。": "Update the paper title, year, category, and status. Changes are saved immediately."
+  ,"试卷名称": "Paper Title"
+  ,"整理状态": "Status"
+  ,"待校对": "Needs Review"
+  ,"已整理": "Organized"
+  ,"储存修改": "Save Changes"
   ,"解析": "Explanations"
   ,"进度": "Progress"
   ,"问答": "Q&A"
@@ -314,22 +285,11 @@ const UI_EN = Object.freeze({
   ,"STEP 03 — 理解答案": "STEP 03 — Understand the answer"
   ,"开始学习 →": "Start Learning →"
   ,"AI助理": "AI Assistant"
-  ,"陈老师": "Teacher Chen"
-  ,"高中统一考试 · 电脑科试卷": "Senior Unified Exam · Computer Science"
-  ,"高中统考 · 程序设计专题": "Senior Exam · Programming Focus"
-  ,"校内评估 · 数据库与 SQL": "School Assessment · Database and SQL"
-  ,"全国独中统考 · 电脑科": "National Independent-School Exam · Computer Science"
+  ,"Teacher Jude": "Teacher Jude"
   ,"综合试卷": "General Paper"
   ,"编辑 →": "Edit →"
   ,"修改 Superadmin 密码 →": "Change Superadmin Password →"
-  ,"等级 2": "Level 2"
-  ,"等级 3": "Level 3"
-  ,"等级 4": "Level 4"
-  ,"2024 统考 · 程序设计": "2024 Exam · Programming"
-  ,"继续作答": "Continue"
-  ,"SQL 查询基础强化": "SQL Query Fundamentals"
   ,"开始练习": "Start Practice"
-  ,"网络基础概念复习": "Network Fundamentals Review"
   ,"查看解析": "View Explanation"
   ,"一": "Mon"
   ,"二": "Tue"
@@ -338,7 +298,6 @@ const UI_EN = Object.freeze({
   ,"五": "Fri"
   ,"六": "Sat"
   ,"日": "Sun"
-  ,"2024 高中统考 · 程序设计": "2024 Senior Exam · Programming"
   ,"中等": "Intermediate"
 });
 
@@ -394,17 +353,27 @@ function getStudents() {
 
 function getClasses() {
   try {
-    const stored = JSON.parse(localStorage.getItem(CLASSES_KEY) || "null");
-    return Array.isArray(stored) && stored.length ? stored : [...DEFAULT_CLASSES];
+    const stored = JSON.parse(localStorage.getItem(CLASSES_KEY) || "[]");
+    return Array.isArray(stored) ? stored : [];
   } catch {
-    return [...DEFAULT_CLASSES];
+    return [];
   }
+}
+
+function savePapers() {
+  localStorage.setItem(PAPERS_KEY, JSON.stringify(papers));
+}
+
+function saveAssignments() {
+  localStorage.setItem(ASSIGNMENTS_KEY, JSON.stringify(assignments));
 }
 
 function saveClasses(classes) {
   localStorage.setItem(CLASSES_KEY, JSON.stringify(classes));
   renderClassOptions();
   renderTeacherClasses();
+  renderTeacherMetrics();
+  renderClassPerformance();
 }
 
 function getHourKey(date = new Date()) {
@@ -427,11 +396,15 @@ function populateYears() {
   const options = years.map((year) => `<option value="${year}">${year}</option>`).join("");
   $("#student-login-year").innerHTML = options;
   $("#register-year").innerHTML = options;
+  $("#upload-year").innerHTML = options;
+  $("#edit-paper-year").innerHTML = options;
 }
 
 function renderClassOptions() {
   const classes = getClasses();
-  const options = classes.map((className) => `<option value="${className}">${className}</option>`).join("");
+  const options = classes.length
+    ? classes.map((className) => `<option value="${escapeHTML(className)}">${escapeHTML(className)}</option>`).join("")
+    : `<option value="" disabled selected>${localized("No classes available", "暂无班级")}</option>`;
   $("#student-login-class").innerHTML = options;
   $("#register-class").innerHTML = options;
 }
@@ -441,6 +414,35 @@ function renderTeacherClasses() {
   $("#class-count").textContent = localized(`${classes.length} classes`, `${classes.length} 个班级`);
   $("#class-list").innerHTML = classes.map((className) => `<span class="class-chip">${escapeHTML(className)}<button type="button" data-remove-class="${escapeHTML(className)}" aria-label="${localized(`Remove ${className}`, `移除 ${className}`)}">×</button></span>`).join("");
   refreshLanguage();
+}
+
+function renderTeacherMetrics() {
+  const questionCount = papers.reduce((total, paper) => total + (Number(paper.count) || 0), 0);
+  const completedAssignments = assignments.filter((assignment) => assignment.done).length;
+  const completionRate = assignments.length ? Math.round((completedAssignments / assignments.length) * 100) : 0;
+  const students = getStudents();
+  const classes = getClasses();
+  $("#teacher-question-count").textContent = questionCount.toLocaleString();
+  $("#teacher-paper-count").textContent = localized(`${papers.length} papers uploaded`, `${papers.length} 份试卷已上传`);
+  $("#teacher-completion-rate").innerHTML = `${completionRate}<sup>%</sup>`;
+  $("#teacher-completion-note").textContent = localized(`${completedAssignments} of ${assignments.length} assignments completed`, `${completedAssignments} / ${assignments.length} 份练习已完成`);
+  $("#teacher-accuracy").textContent = "—";
+  $("#teacher-accuracy-note").textContent = localized("No graded results yet", "尚无评分记录");
+  $("#teacher-student-count").textContent = students.length;
+  $("#teacher-class-count").textContent = localized(`${classes.length} classes`, `${classes.length} 个班级`);
+}
+
+function renderClassPerformance() {
+  const classes = getClasses();
+  const select = $("#performance-class-select");
+  if (!select) return;
+  select.innerHTML = classes.length
+    ? classes.map((className) => `<option value="${escapeHTML(className)}">${escapeHTML(className)}</option>`).join("")
+    : `<option value="">${localized("No classes", "暂无班级")}</option>`;
+  select.disabled = !classes.length;
+  $("#performance-empty").innerHTML = classes.length
+    ? `<strong>${localized("No performance data yet", "尚无学习表现数据")}</strong><p>${localized("Results will appear after students complete graded assignments.", "学生完成评分练习后，成绩会显示在这里。")}</p>`
+    : `<strong>${localized("No classes yet", "尚未建立班级")}</strong><p>${localized("Add a class above to begin collecting learning data.", "请先在上方添加班级。")}</p>`;
 }
 
 function showPublicScreen(screen) {
@@ -458,12 +460,12 @@ function openAuth() {
 
 function updateAccountUI() {
   const isTeacher = role === "teacher";
-  const displayName = isTeacher ? "陈老师" : activeStudent?.name || "学生";
-  const avatarText = displayName.slice(-1);
+  const displayName = isTeacher ? "Teacher Jude" : activeStudent?.name || localized("Student", "学生");
+  const avatarText = isTeacher ? "J" : displayName.slice(-1);
   $("#account-role").textContent = isTeacher ? localized("Teacher Portal · Superadmin", "老师端 · Superadmin") : `${activeStudent?.className || localized("Student Portal", "学生端")} · ${localized("Student", "学生")}`;
   $("#account-button").textContent = avatarText;
   $("#sidebar-avatar").textContent = avatarText;
-  $("#sidebar-name").textContent = isTeacher ? localized("Teacher Chen", "陈老师") : displayName;
+  $("#sidebar-name").textContent = displayName;
   $("#sidebar-role").textContent = isTeacher ? "Superadmin" : `${activeStudent?.className} · ${activeStudent?.year}`;
   if (!isTeacher) $("#student-greeting-name").textContent = displayName.replace(/^[^·]*·/, "").slice(-2);
   refreshLanguage();
@@ -508,19 +510,21 @@ function renderPapers(filter = "全部") {
     <article class="paper-row">
       <div class="paper-year">${paper.year}</div>
       <div class="paper-info"><strong>${escapeHTML(currentLanguage === "en" ? paper.titleEn : paper.title)}</strong><small>${paper.count} ${localized("questions", "道题目")} · ${escapeHTML(currentLanguage === "en" ? paper.statusEn : paper.status)}</small></div>
-      <div class="paper-meta"><span>${escapeHTML(currentLanguage === "en" ? paper.topicEn : paper.topic)}</span><button data-paper="${escapeHTML(paper.title)}">${localized("Edit →", "编辑 →")}</button></div>
-    </article>`).join("") || `<p style="color:var(--muted);font-size:15px;padding:25px 0">${localized("There are no papers in this category yet.", "这个分类暂时没有试卷。")}</p>`;
+      <div class="paper-meta"><span>${escapeHTML(currentLanguage === "en" ? paper.topicEn : paper.topic)}</span><button data-paper-id="${escapeHTML(paper.id)}">${localized("Edit Paper →", "编辑试卷 →")}</button></div>
+    </article>`).join("") || `<div class="data-empty"><strong>${localized("No papers uploaded", "尚未上传试卷")}</strong><p>${localized("Upload a PDF or image to create your first paper record.", "上传 PDF 或图片即可建立第一份试卷记录。")}</p><button type="button" data-empty-upload>${localized("Upload Past Paper", "上传历届试卷")}</button></div>`;
+  renderTeacherMetrics();
   refreshLanguage();
 }
 
 function renderAssignments() {
-  $("#assignment-list").innerHTML = assignments.map((item, index) => `
+  $("#assignment-list").innerHTML = assignments.length ? assignments.map((item, index) => `
     <article class="assignment ${item.done ? "done" : ""}">
       <div class="paper-year">${item.icon}</div>
       <div><strong>${escapeHTML(currentLanguage === "en" ? item.titleEn : item.title)}</strong><small>${escapeHTML(currentLanguage === "en" ? item.detailEn : item.detail)}</small></div>
       <button data-assignment="${index}">${escapeHTML(currentLanguage === "en" ? item.actionEn : item.action)}</button>
-    </article>`).join("");
+    </article>`).join("") : `<div class="data-empty"><strong>${localized("No assignments yet", "尚未布置练习")}</strong><p>${localized("Assignments created by the teacher will appear here.", "老师建立练习后会显示在这里。")}</p></div>`;
   updateStudentProgress();
+  renderTeacherMetrics();
   refreshLanguage();
 }
 
@@ -536,6 +540,21 @@ function updateStudentProgress() {
   const level = Math.max(1, LEVEL_TARGETS.filter((target) => completed >= target).length + 1);
   $(".student-progress-card .level-chip").textContent = `LV. ${level}`;
   $("#student-level-number").textContent = level;
+  $("#student-accuracy").textContent = "—";
+  $("#student-progress-accuracy").textContent = "—";
+  $("#student-streak").textContent = localized("0 days", "0 天");
+  $("#student-question-count").textContent = "0";
+  $("#student-rank").textContent = "—";
+  $("#student-weekly-count").textContent = completed;
+  $("#student-weekly-total").textContent = `/ ${assignments.length}`;
+  $("#student-hero-summary").textContent = assignments.length
+    ? localized(`${completed} of ${assignments.length} assignments completed.`, `已完成 ${completed} / ${assignments.length} 份练习。`)
+    : localized("No assignments have been assigned yet.", "老师尚未布置练习。 ");
+  $("#continue-quiz").disabled = !assignments.length || !questions.length;
+  $("#student-achievements").innerHTML = `<span>✓ ${localized("Account registered", "已完成账号注册")}</span>${completed ? `<span>✓ ${localized(`${completed} assignments completed`, `已完成 ${completed} 份练习`)}</span>` : ""}<span>→ ${localized("More achievements will appear as you learn", "学习后将解锁更多成就")}</span>`;
+  $("#weekly-goal-note").textContent = assignments.length
+    ? localized("Complete the assigned practice to build your progress.", "完成老师布置的练习以累积进度。")
+    : localized("No weekly goal has been assigned.", "本周尚未设置练习目标。 ");
 }
 
 function getAIAnswer(question) {
@@ -760,13 +779,13 @@ function renderWorkspaceView(name) {
     action.dataset.action = role === "teacher" ? "upload" : "start-practice";
     content.innerHTML = role === "teacher" ? `
       <section class="panel workspace-panel">
-        <div class="workspace-summary"><strong>${papers.length}</strong><span>${localized("papers organized", "份试卷已整理")}</span></div>
+        <div class="workspace-summary"><strong>${papers.length}</strong><span>${localized("papers uploaded", "份试卷已上传")}</span></div>
         <div class="workspace-table" role="table">
-          ${papers.map((paper) => `<article role="row"><span class="workspace-year">${escapeHTML(paper.year)}</span><div><strong>${escapeHTML(currentLanguage === "en" ? paper.titleEn : paper.title)}</strong><small>${escapeHTML(currentLanguage === "en" ? paper.topicEn : paper.topic)} · ${paper.count} ${localized("questions", "题")}</small></div><span class="status-pill">${escapeHTML(currentLanguage === "en" ? paper.statusEn : paper.status)}</span><button type="button" data-workspace-paper="${escapeHTML(paper.title)}">${localized("Edit", "编辑")}</button></article>`).join("")}
+          ${papers.length ? papers.map((paper) => `<article role="row"><span class="workspace-year">${escapeHTML(paper.year)}</span><div><strong>${escapeHTML(currentLanguage === "en" ? paper.titleEn : paper.title)}</strong><small>${escapeHTML(currentLanguage === "en" ? paper.topicEn : paper.topic)} · ${paper.count} ${localized("questions", "题")}</small></div><span class="status-pill">${escapeHTML(currentLanguage === "en" ? paper.statusEn : paper.status)}</span><button type="button" data-workspace-paper-id="${escapeHTML(paper.id)}">${localized("Edit Paper", "编辑试卷")}</button></article>`).join("") : `<div class="data-empty"><strong>${localized("No papers uploaded", "尚未上传试卷")}</strong><p>${localized("Use Upload Paper to add your first past-year paper.", "点击上传试卷以新增第一份历届考题。")}</p></div>`}
         </div>
       </section>` : `
       <div class="practice-grid">
-        ${assignments.map((item, index) => `<article class="panel practice-card"><span>${escapeHTML(item.icon)}</span><small>${item.done ? localized("COMPLETED", "已完成") : localized("READY", "可开始")}</small><h2>${escapeHTML(currentLanguage === "en" ? item.titleEn : item.title)}</h2><p>${escapeHTML(currentLanguage === "en" ? item.detailEn : item.detail)}</p><button type="button" data-start-assignment="${index}">${item.done ? localized("Review Answers", "查看解析") : localized("Start Practice", "开始练习")}</button></article>`).join("")}
+        ${assignments.length ? assignments.map((item, index) => `<article class="panel practice-card"><span>${escapeHTML(item.icon)}</span><small>${item.done ? localized("COMPLETED", "已完成") : localized("READY", "可开始")}</small><h2>${escapeHTML(currentLanguage === "en" ? item.titleEn : item.title)}</h2><p>${escapeHTML(currentLanguage === "en" ? item.detailEn : item.detail)}</p><button type="button" data-start-assignment="${index}">${item.done ? localized("Review Answers", "查看解析") : localized("Start Practice", "开始练习")}</button></article>`).join("") : `<div class="data-empty"><strong>${localized("No assignments yet", "尚未布置练习")}</strong><p>${localized("Teacher assignments will appear here.", "老师建立练习后会显示在这里。")}</p></div>`}
       </div>`;
   } else if (name === "classes") {
     title.textContent = role === "teacher" ? localized("Class Progress", "班级进度") : localized("My Progress", "我的进度");
@@ -777,15 +796,17 @@ function renderWorkspaceView(name) {
       const students = getStudents();
       action.textContent = localized("＋ Add Class", "＋ 添加班级");
       action.dataset.action = "dashboard-classes";
+      const completedAssignments = assignments.filter((item) => item.done).length;
+      const completionRate = assignments.length ? Math.round((completedAssignments / assignments.length) * 100) : 0;
       content.innerHTML = `
-        <div class="workspace-metrics"><article><strong>${getClasses().length}</strong><span>${localized("Active classes", "启用班级")}</span></article><article><strong>${students.length}</strong><span>${localized("Registered students", "已注册学生")}</span></article><article><strong>82%</strong><span>${localized("Completion rate", "完成率")}</span></article></div>
+        <div class="workspace-metrics"><article><strong>${getClasses().length}</strong><span>${localized("Active classes", "启用班级")}</span></article><article><strong>${students.length}</strong><span>${localized("Registered students", "已注册学生")}</span></article><article><strong>${completionRate}%</strong><span>${localized("Completion rate", "完成率")}</span></article></div>
         <section class="panel workspace-panel"><h2>${localized("Student Roster", "学生名册")}</h2>${students.length ? `<div class="workspace-table">${students.map((student) => `<article><span class="student-initial">${escapeHTML(student.name?.slice(-1) || "S")}</span><div><strong>${escapeHTML(student.name)}</strong><small>${escapeHTML(student.className)} · ${escapeHTML(student.year)}</small></div><span class="status-pill">${localized("Active", "活跃")}</span></article>`).join("")}</div>` : `<div class="workspace-empty"><strong>${localized("No students registered yet", "暂时没有学生注册")}</strong><p>${localized("Share the hourly verification code with students to get started.", "把每小时验证码交给学生即可开始注册。")}</p></div>`}</section>`;
     } else {
       const completed = assignments.filter((item) => item.done).length;
       const level = Math.max(1, LEVEL_TARGETS.filter((target) => completed >= target).length + 1);
       action.textContent = localized("Continue Learning →", "继续学习 →");
       action.dataset.action = "start-practice";
-      content.innerHTML = `<div class="workspace-metrics"><article><strong>LV. ${level}</strong><span>${localized("Current level", "目前等级")}</span></article><article><strong>${completed}/${assignments.length}</strong><span>${localized("Assignments completed", "已完成作业")}</span></article><article><strong>76%</strong><span>${localized("Answer accuracy", "答题正确率")}</span></article></div><section class="panel workspace-panel"><h2>${localized("Learning Milestones", "学习里程碑")}</h2><div class="milestone-list"><span class="done">✓ ${localized("Registered an account", "完成账号注册")}</span><span class="done">✓ ${localized("Completed the first practice", "完成第一份练习")}</span><span>${localized("Complete two assignments to reach Level 2", "完成两份作业升至等级 2")}</span></div></section>`;
+      content.innerHTML = `<div class="workspace-metrics"><article><strong>LV. ${level}</strong><span>${localized("Current level", "目前等级")}</span></article><article><strong>${completed}/${assignments.length}</strong><span>${localized("Assignments completed", "已完成作业")}</span></article><article><strong>—</strong><span>${localized("Answer accuracy", "答题正确率")}</span></article></div><section class="panel workspace-panel"><h2>${localized("Learning Milestones", "学习里程碑")}</h2><div class="milestone-list"><span class="done">✓ ${localized("Registered an account", "完成账号注册")}</span>${completed ? `<span class="done">✓ ${localized(`${completed} assignments completed`, `完成 ${completed} 份练习`)}</span>` : ""}<span>${localized("Complete assignments to unlock more milestones", "完成练习以解锁更多里程碑")}</span></div></section>`;
     }
   } else {
     title.textContent = role === "teacher" ? localized("Learning Analytics", "学习分析") : localized("Learning Report", "学习报告");
@@ -794,14 +815,14 @@ function renderWorkspaceView(name) {
       : localized("Review your performance and choose what to practise next.", "查看学习表现，并选择下一步要加强的内容。 ");
     action.textContent = role === "teacher" ? localized("Download CSV", "下载 CSV") : localized("Practise Weak Topics", "练习弱项");
     action.dataset.action = role === "teacher" ? "export" : "start-practice";
-    content.innerHTML = `<div class="workspace-metrics"><article><strong>${role === "teacher" ? "74%" : "76%"}</strong><span>${localized("Average accuracy", "平均正确率")}</span></article><article><strong>${role === "teacher" ? "186" : "284"}</strong><span>${role === "teacher" ? localized("Active students", "活跃学生") : localized("Questions completed", "完成题数")}</span></article><article><strong>12</strong><span>${role === "teacher" ? localized("Assignments", "练习套题") : localized("Day streak", "连续学习天数")}</span></article></div><section class="panel workspace-panel"><h2>${localized("Topic Performance", "知识点表现")}</h2><div class="topic-bars"><div><span>${localized("Programming", "程序设计")}</span><i><b style="width:84%"></b></i><strong>84%</strong></div><div><span>${localized("Database", "数据库")}</span><i><b style="width:72%"></b></i><strong>72%</strong></div><div><span>${localized("Networking", "电脑网络")}</span><i><b style="width:64%"></b></i><strong>64%</strong></div><div><span>${localized("Data Structures", "数据结构")}</span><i><b style="width:42%"></b></i><strong>42%</strong></div></div></section>`;
+    content.innerHTML = `<div class="workspace-metrics"><article><strong>—</strong><span>${localized("Average accuracy", "平均正确率")}</span></article><article><strong>${role === "teacher" ? getStudents().length : 0}</strong><span>${role === "teacher" ? localized("Registered students", "已注册学生") : localized("Questions completed", "完成题数")}</span></article><article><strong>${role === "teacher" ? assignments.length : 0}</strong><span>${role === "teacher" ? localized("Assignments", "练习套题") : localized("Day streak", "连续学习天数")}</span></article></div><section class="panel workspace-panel"><h2>${localized("Topic Performance", "知识点表现")}</h2><div class="data-empty"><strong>${localized("No graded data yet", "尚无评分数据")}</strong><p>${localized("Topic analytics will appear after students answer graded questions.", "学生完成评分题目后，知识点分析会显示在这里。")}</p></div></section>`;
   }
 }
 
 function downloadReport() {
   const rows = [
     ["Metric", "Value"], ["Questions in library", papers.reduce((sum, paper) => sum + paper.count, 0)],
-    ["Registered students", getStudents().length], ["Classes", getClasses().length], ["Average accuracy", "74%"]
+    ["Registered students", getStudents().length], ["Classes", getClasses().length], ["Average accuracy", "N/A"]
   ];
   const csv = `\uFEFF${rows.map((row) => row.map((value) => `"${String(value).replace(/"/g, '""')}"`).join(",")).join("\n")}`;
   const url = URL.createObjectURL(new Blob([csv], { type: "text/csv;charset=utf-8" }));
@@ -845,17 +866,56 @@ function updateNavigationLabels() {
 }
 
 function openUpload() {
+  pendingUploadFile = null;
+  $("#file-input").value = "";
+  $("#file-preview").innerHTML = "";
+  $("#process-upload").disabled = true;
   $("#upload-dialog").showModal();
 }
 
 function loadFiles(files) {
   if (!files.length) return;
   const file = files[0];
-  $("#file-preview").innerHTML = `<div class="file-pill"><span>▤ ${file.name}</span><span>${(file.size / 1024 / 1024).toFixed(1)} MB</span></div>`;
+  const accepted = /\.(pdf|png|jpe?g)$/i.test(file.name);
+  if (!accepted) {
+    pendingUploadFile = null;
+    $("#file-preview").innerHTML = `<p class="form-error">${localized("Choose a PDF, JPG, or PNG file.", "请选择 PDF、JPG 或 PNG 文件。")}</p>`;
+    $("#process-upload").disabled = true;
+    return;
+  }
+  if (file.size > 25 * 1024 * 1024) {
+    pendingUploadFile = null;
+    $("#file-preview").innerHTML = `<p class="form-error">${localized("The selected file exceeds 25 MB.", "所选文件超过 25MB。")}</p>`;
+    $("#process-upload").disabled = true;
+    return;
+  }
+  pendingUploadFile = file;
+  $("#file-preview").innerHTML = `<div class="file-pill"><span>▤ ${escapeHTML(file.name)}</span><span>${(file.size / 1024 / 1024).toFixed(1)} MB</span></div>`;
   $("#process-upload").disabled = false;
 }
 
+function openPaperEditor(paperId) {
+  const paper = papers.find((item) => item.id === paperId);
+  if (!paper) {
+    showToast(localized("Paper not found", "找不到这份试卷"));
+    return;
+  }
+  $("#edit-paper-id").value = paper.id;
+  $("#edit-paper-title").value = paper.title;
+  $("#edit-paper-year").value = paper.year;
+  $("#edit-paper-topic").value = paper.topic;
+  $("#edit-paper-status").value = paper.status;
+  $("#edit-paper-file").textContent = paper.fileName
+    ? `${paper.fileName} · ${(paper.fileSize / 1024 / 1024).toFixed(1)} MB`
+    : localized("No source filename recorded", "没有记录来源文件名");
+  $("#edit-paper-dialog").showModal();
+}
+
 function startQuiz(index = 0) {
+  if (!assignments.length || !questions.length) {
+    showToast(localized("No interactive questions are available yet.", "目前还没有可作答的互动题目。"));
+    return;
+  }
   activeAssignmentIndex = Math.max(0, Math.min(index, assignments.length - 1));
   currentQuestion = 0;
   renderQuestion();
@@ -864,6 +924,11 @@ function startQuiz(index = 0) {
 
 function renderQuestion() {
   const question = questions[currentQuestion];
+  if (!question) {
+    showView("dashboard");
+    showToast(localized("No interactive questions are available yet.", "目前还没有可作答的互动题目。"));
+    return;
+  }
   const topic = {
     "程序设计": localized("Programming", "程序设计"),
     "数据库": localized("Database", "数据库"),
@@ -873,6 +938,7 @@ function renderQuestion() {
   const options = currentLanguage === "en" ? question.optionsEn : question.options;
   selectedOption = answers[currentQuestion];
   $("#current-number").textContent = currentQuestion + 1;
+  $("#question-total").textContent = questions.length;
   $("#quiz-progress-bar").style.width = `${((currentQuestion + 1) / questions.length) * 100}%`;
   $("#question-topic").textContent = topic;
   $("#question-level").textContent = level;
@@ -900,6 +966,7 @@ function renderQuestionMap() {
 function submitAnswer() {
   if (selectedOption === null) return;
   const question = questions[currentQuestion];
+  if (!question) return;
   answers[currentQuestion] = selectedOption;
   $$(".option").forEach((option, index) => {
     option.disabled = true;
@@ -925,12 +992,17 @@ populateYears();
 renderClassOptions();
 renderTeacherClasses();
 applyLanguage(localStorage.getItem(LANGUAGE_KEY) || "en", { persist: false });
+renderTeacherMetrics();
+renderClassPerformance();
+updateStudentProgress();
 
 $$(".language-select").forEach((select) => select.addEventListener("change", (event) => {
   applyLanguage(event.target.value);
   renderPapers(activePaperFilter);
   renderAssignments();
   renderTeacherClasses();
+  renderTeacherMetrics();
+  renderClassPerformance();
   updateAccountUI();
   updateNavigationLabels();
   updateStudentProgress();
@@ -987,7 +1059,7 @@ $("#teacher-login-form").addEventListener("submit", (event) => {
   }
   $("#teacher-login-error").textContent = "";
   enterApp("teacher");
-  showToast(localized("Welcome back, Teacher Chen", "欢迎回来，陈老师"));
+  showToast(localized("Welcome back, Teacher Jude", "欢迎回来，Teacher Jude"));
 });
 
 $("#student-register-form").addEventListener("submit", (event) => {
@@ -1017,6 +1089,7 @@ $("#student-register-form").addEventListener("submit", (event) => {
   const student = { name, className, year, createdAt: new Date().toISOString() };
   students.push(student);
   localStorage.setItem(STUDENTS_KEY, JSON.stringify(students));
+  renderTeacherMetrics();
   error.textContent = "";
   enterApp("student", student);
   showToast(localized("Registration successful. Welcome!", "注册成功，欢迎开始学习"));
@@ -1115,10 +1188,6 @@ $("#class-list").addEventListener("click", (event) => {
   const button = event.target.closest("[data-remove-class]");
   if (!button) return;
   const classes = getClasses().filter((className) => className !== button.dataset.removeClass);
-  if (!classes.length) {
-    showToast(localized("At least one class must remain", "至少需要保留一个班级"));
-    return;
-  }
   saveClasses(classes);
   showToast(`${button.dataset.removeClass} ${localized("was removed", "已从列表移除")}`);
 });
@@ -1181,15 +1250,62 @@ $("#dropzone").addEventListener("dragleave", (event) => event.currentTarget.clas
 $("#dropzone").addEventListener("drop", (event) => { event.preventDefault(); event.currentTarget.classList.remove("dragging"); loadFiles(event.dataTransfer.files); });
 $("#process-upload").addEventListener("click", (event) => {
   event.preventDefault();
+  if (!pendingUploadFile) {
+    showToast(localized("Choose a paper file first.", "请先选择试卷文件。"));
+    return;
+  }
   const year = $("#upload-year").value;
   const topic = $("#upload-topic").value;
-  const topicNames = { "综合试卷": "General Paper", "程序设计": "Programming", "数据库": "Database", "电脑网络": "Computer Networks", "硬件": "Hardware" };
-  papers.unshift({ year, title: `${year} 新上传电脑科试卷`, titleEn: `${year} Newly Uploaded Computer Science Paper`, topic, topicEn: topicNames[topic] || topic, count: 0, status: "待校对", statusEn: "Needs review" });
+  const title = pendingUploadFile.name.replace(/\.[^.]+$/, "").trim() || `${year} Computer Science Paper`;
+  const now = new Date();
+  papers.unshift({
+    id: `paper-${now.getTime()}-${Math.random().toString(36).slice(2, 8)}`,
+    year,
+    title,
+    titleEn: title,
+    topic,
+    topicEn: TOPIC_EN[topic] || topic,
+    count: 0,
+    status: "待校对",
+    statusEn: "Needs review",
+    fileName: pendingUploadFile.name,
+    fileSize: pendingUploadFile.size,
+    createdAt: now.toISOString()
+  });
+  savePapers();
   renderPapers();
+  if (activeWorkspaceView === "library") renderWorkspaceView("library");
   $("#upload-dialog").close();
-  showToast(localized("Upload complete. The paper is being organized.", "上传成功，系统正在辨识并整理题目"));
+  showToast(localized("Paper uploaded and saved. You can now edit its details.", "试卷已上传并储存，现在可以编辑试卷资料。"));
+  pendingUploadFile = null;
+  $("#file-input").value = "";
   $("#file-preview").innerHTML = "";
   $("#process-upload").disabled = true;
+});
+
+$("#close-edit-paper").addEventListener("click", () => $("#edit-paper-dialog").close());
+$("#cancel-edit-paper").addEventListener("click", () => $("#edit-paper-dialog").close());
+$("#edit-paper-form").addEventListener("submit", (event) => {
+  event.preventDefault();
+  const paper = papers.find((item) => item.id === $("#edit-paper-id").value);
+  const title = $("#edit-paper-title").value.trim();
+  if (!paper || !title) {
+    $("#edit-paper-error").textContent = localized("Enter a paper title.", "请输入试卷名称。 ");
+    return;
+  }
+  paper.title = title;
+  paper.titleEn = title;
+  paper.year = $("#edit-paper-year").value;
+  paper.topic = $("#edit-paper-topic").value;
+  paper.topicEn = TOPIC_EN[paper.topic] || paper.topic;
+  paper.status = $("#edit-paper-status").value;
+  paper.statusEn = paper.status === "已整理" ? "Organized" : "Needs review";
+  savePapers();
+  renderPapers(activePaperFilter);
+  if (activeWorkspaceView === "library") renderWorkspaceView("library");
+  $("#edit-paper-error").textContent = "";
+  $("#edit-paper-dialog").close();
+  showToast(localized("Paper details saved.", "试卷资料已储存。"));
 });
 
 $(".filters").addEventListener("click", (event) => {
@@ -1201,11 +1317,16 @@ $(".filters").addEventListener("click", (event) => {
 });
 
 $("#paper-list").addEventListener("click", (event) => {
-  const button = event.target.closest("[data-paper]");
-  if (button) showToast(`${localized("Opened editor for", "已打开")}「${button.dataset.paper}」`);
+  if (event.target.closest("[data-empty-upload]")) {
+    openUpload();
+    return;
+  }
+  const button = event.target.closest("[data-paper-id]");
+  if (button) openPaperEditor(button.dataset.paperId);
 });
 $("#create-set").addEventListener("click", () => {
-  assignments.unshift({ icon: "＋", title: "老师新建练习", titleEn: "New Teacher Practice", detail: "0 题 · 草稿", detailEn: "0 questions · Draft", action: "开始编辑", actionEn: "Start Editing", done: false });
+  assignments.unshift({ id: `assignment-${Date.now()}`, icon: "＋", title: "老师新建练习", titleEn: "New Teacher Practice", detail: "0 题 · 草稿", detailEn: "0 questions · Draft", action: "开始编辑", actionEn: "Start Editing", done: false });
+  saveAssignments();
   renderAssignments();
   showToast(localized("A new draft practice was created", "已建立新的空白练习"));
 });
@@ -1227,15 +1348,22 @@ $("#workspace-primary-action").addEventListener("click", (event) => {
   }
 });
 $("#workspace-content").addEventListener("click", (event) => {
-  const paperButton = event.target.closest("[data-workspace-paper]");
-  if (paperButton) showToast(`${localized("Opened", "已打开")}「${paperButton.dataset.workspacePaper}」`);
+  const paperButton = event.target.closest("[data-workspace-paper-id]");
+  if (paperButton) {
+    openPaperEditor(paperButton.dataset.workspacePaperId);
+    return;
+  }
   const assignmentButton = event.target.closest("[data-start-assignment]");
-  if (assignmentButton) Number(assignmentButton.dataset.startAssignment) === 2 ? showToast(localized("Answer review opened", "解析报告已打开")) : startQuiz(0);
+  if (assignmentButton) {
+    const index = Number(assignmentButton.dataset.startAssignment);
+    assignments[index]?.done ? showToast(localized("No saved answer review is available yet.", "目前没有已储存的答题解析。")) : startQuiz(index);
+  }
 });
 $("#assignment-list").addEventListener("click", (event) => {
   const button = event.target.closest("[data-assignment]");
   if (!button) return;
-  Number(button.dataset.assignment) === 2 ? showToast(localized("Answer review opened", "解析报告已打开")) : startQuiz(0);
+  const index = Number(button.dataset.assignment);
+  assignments[index]?.done ? showToast(localized("No saved answer review is available yet.", "目前没有已储存的答题解析。")) : startQuiz(index);
 });
 $("#continue-quiz").addEventListener("click", () => startQuiz(0));
 $("#exit-quiz").addEventListener("click", () => showView("dashboard"));
@@ -1250,14 +1378,20 @@ $("#quiz-options").addEventListener("click", (event) => {
 $("#submit-answer").addEventListener("click", submitAnswer);
 $("#next-question").addEventListener("click", () => {
   if (currentQuestion === questions.length - 1) {
-    assignments[activeAssignmentIndex].done = true;
-    assignments[activeAssignmentIndex].action = "查看解析";
-    assignments[activeAssignmentIndex].actionEn = "Review Answers";
-    assignments[activeAssignmentIndex].detail = "20 题 · 已完成";
-    assignments[activeAssignmentIndex].detailEn = "20 questions · Completed";
+    const assignment = assignments[activeAssignmentIndex];
+    if (!assignment) return;
+    assignment.done = true;
+    assignment.action = "查看解析";
+    assignment.actionEn = "Review Answers";
+    assignment.detail = `${questions.length} 题 · 已完成`;
+    assignment.detailEn = `${questions.length} questions · Completed`;
+    saveAssignments();
     renderAssignments();
     showView("dashboard");
-    showToast(`练习完成，已解锁新的个人形象装饰！答对 ${answers.filter((answer, index) => answer === questions[index].correct).length} / ${questions.length} 题`);
+    showToast(localized(
+      `Practice complete: ${answers.filter((answer, index) => answer === questions[index].correct).length} of ${questions.length} correct.`,
+      `练习完成，答对 ${answers.filter((answer, index) => answer === questions[index].correct).length} / ${questions.length} 题。`
+    ));
   } else {
     currentQuestion += 1;
     renderQuestion();
