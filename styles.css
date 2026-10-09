@@ -650,15 +650,37 @@ html[lang="en"] .landing-section-label, html[lang="en"] .section-kicker { font-f
 /* Desktop hero: copy and machine occupy separate columns, so translated CTAs never overlap the artwork. */
 .start-learning { position: relative; z-index: 12; }
 .hero-machine { pointer-events: none; }
+.machine-head {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 3px;
+  padding: 12px;
+  text-align: center;
+}
+.machine-head small, .machine-head b {
+  width: 100%;
+  line-height: 1;
+  text-align: center;
+  font-family: Arial, Helvetica, sans-serif;
+}
+.machine-head strong {
+  margin: 0;
+  line-height: .9;
+  text-align: center;
+  font-family: Arial, Helvetica, sans-serif;
+}
 @media (min-width:901px) {
   .landing-main {
     height: 820px;
     min-height: 760px;
     padding: 128px clamp(48px,7vw,118px) 82px;
     display: grid;
-    grid-template-columns: minmax(0,1.14fr) minmax(360px,.86fr);
+    grid-template-columns: minmax(0,650px) minmax(360px,440px);
+    justify-content: center;
     align-items: center;
-    column-gap: clamp(30px,5vw,86px);
+    column-gap: clamp(12px,2vw,28px);
     text-align: left;
   }
   .hero-copy {
@@ -707,7 +729,7 @@ html[lang="en"] .landing-section-label, html[lang="en"] .section-kicker { font-f
   }
 }
 @media (min-width:901px) and (max-width:1100px) {
-  .landing-main { grid-template-columns: minmax(0,1fr) minmax(340px,.82fr); }
+  .landing-main { grid-template-columns: minmax(0,650px) minmax(360px,440px); }
   .hero-machine { transform: scale(.9); transform-origin: center; }
 }
 @media (max-width:900px) {
