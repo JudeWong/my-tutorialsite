@@ -1233,7 +1233,7 @@ async function extractPdfText(file) {
   const pdfjsLib = await loadExternalScript("https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.min.js", "pdfjsLib");
   pdfjsLib.GlobalWorkerOptions.workerSrc = "https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.worker.min.js";
   const pdf = await pdfjsLib.getDocument({ data: new Uint8Array(await file.arrayBuffer()) }).promise;
-  const pageLimit = Math.min(pdf.numPages, 40);
+  const pageLimit = pdf.numPages;
   const chunks = [];
   for (let pageNumber = 1; pageNumber <= pageLimit; pageNumber += 1) {
     const page = await pdf.getPage(pageNumber);
@@ -1244,7 +1244,7 @@ async function extractPdfText(file) {
   let text = chunks.join("\n").trim();
   if (text.replace(/\s/g, "").length < 100) {
     const ocrChunks = [];
-    const ocrLimit = Math.min(pdf.numPages, 3);
+    const ocrLimit = pdf.numPages;
     for (let pageNumber = 1; pageNumber <= ocrLimit; pageNumber += 1) {
       const page = await pdf.getPage(pageNumber);
       const viewport = page.getViewport({ scale: 1.45 });
@@ -1386,7 +1386,7 @@ function getQuestionGenerationLimits(options = {}) {
   const requestedCount = Math.max(10, Math.min(50, Number(options.questionCount) || 10));
   return materialType === "teaching-material"
     ? { materialType, requestedCount, minItems: requestedCount, maxItems: requestedCount }
-    : { materialType, requestedCount: 0, minItems: 1, maxItems: 100 };
+    : { materialType, requestedCount: 0, minItems: 1, maxItems: null };
 }
 
 function buildQuestionResponseSchema(options = {}) {
@@ -1394,7 +1394,7 @@ function buildQuestionResponseSchema(options = {}) {
   return {
     type: "array",
     minItems,
-    maxItems,
+    ...(maxItems ? { maxItems } : {}),
     items: {
       type: "object",
       required: ["question", "code", "options", "correct", "level", "explanation", "mistake"],
@@ -1437,7 +1437,7 @@ Category: ${TOPIC_EN[topic] || topic}
 Source file: ${fileName}
 
 LEARNING MATERIAL:
-${text.slice(0, 120000)}`;
+${text.slice(0, 500000)}`;
 }
 
 function parseAIQuestionResponse(raw, paperId, topic, options = {}) {
@@ -1458,7 +1458,7 @@ function parseAIQuestionResponse(raw, paperId, topic, options = {}) {
   if (materialType === "past-paper" && !questions.length) {
     throw new Error(localized("No complete Chinese questions could be generated from this paper.", "无法从这份试卷生成完整的中文题目。"));
   }
-  return questions.slice(0, maxItems);
+  return maxItems ? questions.slice(0, maxItems) : questions;
 }
 
 function isTransientGeminiError(status, message = "") {

@@ -7,10 +7,9 @@ const JSON_HEADERS = {
 function questionResponseSchema(body) {
   const isTeachingMaterial = body.materialType === "teaching-material";
   const requestedCount = Math.max(10, Math.min(50, Number(body.questionCount) || 10));
-  return {
+  const schema = {
     type: "array",
     minItems: isTeachingMaterial ? requestedCount : 1,
-    maxItems: isTeachingMaterial ? requestedCount : 100,
     items: {
       type: "object",
       required: ["question", "code", "options", "correct", "level", "explanation", "mistake"],
@@ -25,6 +24,8 @@ function questionResponseSchema(body) {
       }
     }
   };
+  if (isTeachingMaterial) schema.maxItems = requestedCount;
+  return schema;
 }
 
 function json(data, status = 200) {
@@ -67,7 +68,7 @@ export async function onRequestPost({ request, env }) {
   }
 
   const message = typeof body.message === "string" ? body.message.trim() : "";
-  const messageLimit = body.task === "question-generation" ? 140000 : 6000;
+  const messageLimit = body.task === "question-generation" ? 520000 : 6000;
   if (!message || message.length > messageLimit) {
     return json({ error: `Message must contain between 1 and ${messageLimit} characters.` }, 400);
   }
