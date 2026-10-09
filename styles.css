@@ -647,18 +647,105 @@ html[lang="en"] .landing-section-label, html[lang="en"] .section-kicker { font-f
 }
 .download-apk:hover { color: #6d54e8; border-color: #8b69f5; transform: translateY(-2px); }
 
-/* Reserve a dedicated lower zone for the decorative machine so the CTA stays readable. */
-.hero-copy { position: relative; z-index: 8; padding-bottom: 250px; }
+/* Desktop hero: copy and machine occupy separate columns, so translated CTAs never overlap the artwork. */
 .start-learning { position: relative; z-index: 12; }
-.hero-machine { z-index: 2; bottom: -96px; pointer-events: none; }
+.hero-machine { pointer-events: none; }
+@media (min-width:901px) {
+  .landing-main {
+    height: 820px;
+    min-height: 760px;
+    padding: 128px clamp(48px,7vw,118px) 82px;
+    display: grid;
+    grid-template-columns: minmax(0,1.14fr) minmax(360px,.86fr);
+    align-items: center;
+    column-gap: clamp(30px,5vw,86px);
+    text-align: left;
+  }
+  .hero-copy {
+    z-index: 8;
+    grid-column: 1;
+    grid-row: 1;
+    width: 100%;
+    max-width: 720px;
+    padding: 0;
+    justify-self: end;
+  }
+  .landing-main h1 {
+    max-width: 720px;
+    margin: 0;
+    font-size: clamp(54px,6vw,92px);
+  }
+  html[lang="en"] .landing-main h1 {
+    max-width: 680px;
+    font-size: clamp(52px,5.35vw,82px);
+    letter-spacing: -3px;
+  }
+  .landing-lead {
+    max-width: 650px;
+    margin: 28px 0 26px;
+  }
+  .hero-actions {
+    justify-content: flex-start;
+    flex-wrap: wrap;
+  }
+  .hero-machine-column {
+    z-index: 4;
+    grid-column: 2;
+    grid-row: 1;
+    width: 100%;
+    min-height: 360px;
+    display: grid;
+    place-items: center;
+    justify-self: center;
+    align-self: center;
+  }
+  .hero-machine {
+    position: relative;
+    left: auto;
+    bottom: auto;
+    transform: none;
+  }
+}
+@media (min-width:901px) and (max-width:1100px) {
+  .landing-main { grid-template-columns: minmax(0,1fr) minmax(340px,.82fr); }
+  .hero-machine { transform: scale(.9); transform-origin: center; }
+}
 @media (max-width:900px) {
-  .hero-copy { padding-top: 120px; padding-bottom: 245px; }
-  .hero-machine { bottom: -82px; }
+  .landing-main {
+    height: auto;
+    min-height: 900px;
+    padding: 120px 24px 74px;
+    display: flex;
+    flex-direction: column;
+    justify-content: flex-start;
+    align-items: center;
+  }
+  .hero-copy { width: 100%; padding: 0; }
+  .landing-main h1 { font-size: clamp(54px,8vw,68px); }
+  html[lang="en"] .landing-main h1 { font-size: clamp(50px,7vw,60px); letter-spacing: -2px; }
+  .hero-machine-column {
+    position: relative;
+    z-index: 4;
+    width: 100%;
+    height: 280px;
+    margin-top: 46px;
+    display: grid;
+    place-items: start center;
+  }
+  .hero-machine {
+    position: relative;
+    left: auto;
+    bottom: auto;
+    width: 440px;
+    transform: scale(.82);
+    transform-origin: top center;
+  }
 }
 @media (max-width:760px) {
-  .landing-main { height: 780px; min-height: 780px; }
-  .hero-copy { padding-top: 108px; padding-bottom: 210px; }
-  .hero-machine { bottom: -72px; transform: translateX(-50%) scale(.55); }
+  .landing-main { height: auto; min-height: 1040px; padding: 112px 20px 82px; }
+  .hero-copy { padding: 0; }
+  .hero-machine-column { height: 230px; margin-top: 36px; }
+  .hero-machine { bottom: auto; transform: scale(.66); }
   .start-learning { margin-top: 8px; }
   .hero-actions { flex-direction: column; gap: 9px; }
   .hero-actions .start-learning { margin-top: 0; }
