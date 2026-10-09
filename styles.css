@@ -924,6 +924,41 @@ html[lang="en"] .landing-section-label, html[lang="en"] .section-kicker { font-f
   }
 }
 
+/* Shared entrance motion for every dialog opened from the teacher and student portals. */
+.modal[open] {
+  transform-origin: center 42%;
+  animation: popup-fade-in .32s cubic-bezier(.2,.78,.25,1) both;
+}
+
+.modal[open]::backdrop {
+  animation: popup-backdrop-in .26s ease-out both;
+}
+
+@keyframes popup-fade-in {
+  from {
+    opacity: 0;
+    transform: translateY(18px) scale(.96);
+    filter: blur(4px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0) scale(1);
+    filter: blur(0);
+  }
+}
+
+@keyframes popup-backdrop-in {
+  from { opacity: 0; }
+  to { opacity: 1; }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .modal[open],
+  .modal[open]::backdrop {
+    animation: none !important;
+  }
+}
+
 .upload-generation-options [hidden] { display: none !important; }
 .upload-option-help { margin: 10px 0 0; padding: 10px 12px; border-radius: 8px; color: #5f586b; background: #f5f2fb; font-size: 13px; line-height: 1.55; }
 .danger-button { margin-right: auto; padding: 12px 17px; border: 1px solid #d94d44; border-radius: 24px; color: #b62f28; background: #fff3f1; cursor: pointer; font: 700 14px Arial,Helvetica,sans-serif; transition: .2s; }
