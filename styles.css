@@ -795,6 +795,106 @@ html[lang="en"] .landing-section-label, html[lang="en"] .section-kicker { font-f
   box-shadow: 0 0 0 4px rgba(229, 161, 38, .13);
 }
 
+/* Compact homepage navigation for phones. Keep both language labels fully visible. */
+@media (max-width: 760px) {
+  .landing-nav {
+    height: 70px;
+    padding: 0 14px;
+  }
+  .landing-nav > .dark-brand {
+    min-width: 0;
+    gap: 6px;
+  }
+  .landing-nav .dark-brand > span {
+    width: 32px;
+    height: 32px;
+    flex: 0 0 32px;
+    font-size: 11px;
+  }
+  .landing-nav .dark-brand strong {
+    max-width: 128px;
+    font-size: 14px;
+    line-height: 1.1;
+    letter-spacing: 0;
+  }
+  .landing-nav > div {
+    flex: 0 0 auto;
+    gap: 5px;
+  }
+  .landing-nav .language-switcher {
+    gap: 0;
+  }
+  .landing-nav .language-switcher select {
+    width: 88px;
+    height: 34px;
+    padding: 5px 24px 5px 8px;
+    font-size: 12px;
+    line-height: 1;
+  }
+  .landing-nav button {
+    height: 34px;
+    padding: 0 10px;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    font-size: 12px;
+    line-height: 1;
+    white-space: nowrap;
+    box-shadow: 0 5px 12px rgba(109,84,232,.16);
+  }
+}
+
+@media (max-width: 430px) {
+  .landing-nav {
+    padding: 0 10px;
+  }
+  .landing-nav > .dark-brand {
+    gap: 5px;
+  }
+  .landing-nav .dark-brand > span {
+    width: 30px;
+    height: 30px;
+    flex-basis: 30px;
+    font-size: 10px;
+  }
+  .landing-nav .dark-brand strong {
+    max-width: 90px;
+    font-size: 12px;
+    line-height: 1.05;
+  }
+  .landing-nav > div {
+    gap: 4px;
+  }
+  .landing-nav .language-switcher select {
+    width: 82px;
+    height: 32px;
+    padding: 4px 22px 4px 6px;
+    font-size: 11px;
+  }
+  .landing-nav button {
+    height: 32px;
+    padding: 0 7px;
+    font-size: 11px;
+  }
+}
+
+@media (max-width: 350px) {
+  .landing-nav {
+    padding: 0 8px;
+  }
+  .landing-nav .dark-brand strong {
+    max-width: 76px;
+    font-size: 11px;
+  }
+  .landing-nav .language-switcher select {
+    width: 84px;
+  }
+  .landing-nav button {
+    padding: 0 5px;
+    font-size: 10.5px;
+  }
+}
+
 .upload-generation-options [hidden] { display: none !important; }
 .upload-option-help { margin: 10px 0 0; padding: 10px 12px; border-radius: 8px; color: #5f586b; background: #f5f2fb; font-size: 13px; line-height: 1.55; }
 .danger-button { margin-right: auto; padding: 12px 17px; border: 1px solid #d94d44; border-radius: 24px; color: #b62f28; background: #fff3f1; cursor: pointer; font: 700 14px Arial,Helvetica,sans-serif; transition: .2s; }
