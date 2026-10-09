@@ -458,6 +458,8 @@ const UI_EN = Object.freeze({
   ,"留空则保留目前密码": "Leave blank to keep the current password"
   ,"删除账号": "Delete Account"
   ,"储存账号修改": "Save Account Changes"
+  ,"放大查看": "Enlarge"
+  ,"复制验证码": "Copy Code"
 });
 
 function applyLanguage(language = "zh", { persist = true } = {}) {
@@ -723,14 +725,18 @@ function enterApp(nextRole, student = null) {
 }
 
 function updateVerificationCode() {
-  $("#verification-code").textContent = getHourlyCode();
+  const code = getHourlyCode();
+  $("#verification-code").textContent = code;
+  $("#verification-code-large").textContent = code;
   const now = new Date();
   const nextHour = new Date(now);
   nextHour.setHours(now.getHours() + 1, 0, 0, 0);
   const remaining = Math.max(0, nextHour - now);
   const minutes = Math.floor(remaining / 60000);
   const seconds = Math.floor((remaining % 60000) / 1000);
-  $("#code-countdown").textContent = `${String(minutes).padStart(2, "0")}:${String(seconds).padStart(2, "0")}`;
+  const countdown = `${String(minutes).padStart(2, "0")}:${String(seconds).padStart(2, "0")}`;
+  $("#code-countdown").textContent = countdown;
+  $("#code-countdown-large").textContent = countdown;
 }
 
 function startCodeTimer() {
@@ -2382,7 +2388,7 @@ $("#password-form").addEventListener("submit", (event) => {
   showToast(localized("Password updated. Use the new password next time.", "密码已更新，下次登入请使用新密码"));
 });
 
-$("#copy-code").addEventListener("click", async () => {
+async function copyVerificationCode() {
   const code = getHourlyCode();
   try {
     await navigator.clipboard.writeText(code);
@@ -2390,6 +2396,23 @@ $("#copy-code").addEventListener("click", async () => {
   } catch {
     showToast(`${localized("Current verification code", "本小时验证码")}：${code}`);
   }
+}
+
+function openVerificationCodeDialog() {
+  updateVerificationCode();
+  $("#verification-code-dialog").showModal();
+}
+
+function closeVerificationCodeDialog() {
+  $("#verification-code-dialog").close();
+}
+
+$("#copy-code").addEventListener("click", copyVerificationCode);
+$("#copy-code-large").addEventListener("click", copyVerificationCode);
+$("#expand-code").addEventListener("click", openVerificationCodeDialog);
+$("#close-verification-code").addEventListener("click", closeVerificationCodeDialog);
+$("#verification-code-dialog").addEventListener("click", (event) => {
+  if (event.target === event.currentTarget) closeVerificationCodeDialog();
 });
 
 $("#logout-button").addEventListener("click", () => {

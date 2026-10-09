@@ -268,10 +268,13 @@
 
             <aside class="right-column">
               <section class="panel verification-card">
-                <div>
-                  <p class="section-kicker">STUDENT ACCESS</p>
-                  <h2>学生注册验证码</h2>
-                  <p>把验证码交给学生完成注册，有效期至本小时结束。</p>
+                <div class="verification-card-head">
+                  <div>
+                    <p class="section-kicker">STUDENT ACCESS</p>
+                    <h2>学生注册验证码</h2>
+                    <p>把验证码交给学生完成注册，有效期至本小时结束。</p>
+                  </div>
+                  <button class="expand-code-button" id="expand-code" type="button" aria-label="放大验证码"><span aria-hidden="true">↗</span><b>放大查看</b></button>
                 </div>
                 <div class="code-display"><strong id="verification-code">------</strong><button id="copy-code" aria-label="复制验证码">复制</button></div>
                 <div class="code-expiry"><span>自动更换倒数</span><strong id="code-countdown">--:--</strong></div>
@@ -634,6 +637,19 @@
           <button class="primary-button" type="submit">储存新密码</button>
         </div>
       </form>
+    </dialog>
+
+    <dialog id="verification-code-dialog" class="modal verification-code-modal" aria-labelledby="verification-code-dialog-title">
+      <div class="verification-code-shell">
+        <div class="modal-head verification-code-modal-head">
+          <div><p class="section-kicker">STUDENT REGISTRATION</p><h2 id="verification-code-dialog-title">学生注册验证码</h2></div>
+          <button type="button" id="close-verification-code" aria-label="关闭">×</button>
+        </div>
+        <p class="verification-code-intro">把验证码交给学生完成注册，有效期至本小时结束。</p>
+        <div class="expanded-code-display"><strong id="verification-code-large">------</strong></div>
+        <div class="expanded-code-expiry"><span>自动更换倒数</span><strong id="code-countdown-large">--:--</strong></div>
+        <button class="expanded-code-copy" id="copy-code-large" type="button"><span aria-hidden="true">⧉</span>复制验证码</button>
+      </div>
     </dialog>
 
     <div class="toast" id="toast" role="status" aria-live="polite"><span>✓</span><p></p></div>
