@@ -272,11 +272,26 @@ with check (bucket_id = 'learning-materials' and name like 'question-images/%' a
 create policy question_images_teacher_delete on storage.objects for delete to authenticated
 using (bucket_id = 'learning-materials' and name like 'question-images/%' and public.is_teacher());
 
--- Keep the requested superadmin display name consistent with the application.
-update public.profiles p
-set full_name = 'Teacher Jude'
+-- Keep the requested superadmin profile available after Auth account creation.
+-- Some existing projects make profiles.year NOT NULL, so provide a safe
+-- current-year value and a teacher class label during the bootstrap upsert.
+insert into public.profiles (id, full_name, role, class_name, year, status)
+select
+  u.id,
+  'Teacher Jude',
+  'teacher',
+  '教师',
+  extract(year from current_date)::integer,
+  'active'
 from auth.users u
-where p.id = u.id and lower(u.email) = 'wsl@chms3.edu.my';
+where lower(u.email) = 'wsl@chms3.edu.my'
+on conflict (id) do update
+set full_name = 'Teacher Jude',
+    role = 'teacher',
+    class_name = coalesce(public.profiles.class_name, excluded.class_name),
+    year = coalesce(public.profiles.year, excluded.year),
+    status = 'active',
+    updated_at = now();
 
 do $$
 declare table_name text;
