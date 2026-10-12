@@ -529,6 +529,7 @@ function applyLanguage(language = "zh", { persist = true } = {}) {
   document.title = currentLanguage === "en"
     ? "Your Personal AI Assistant · Computer Science Learning Platform"
     : "你的私人AI助理 · 电脑科互动学习平台";
+  updateAIChatResizeControl();
 }
 
 function refreshLanguage() {
@@ -1280,6 +1281,32 @@ function closeAIChat() {
 
 function toggleAIChat() {
   $("#ai-chat-popover").hidden || !$("#ai-chat-popover").classList.contains("open") ? openAIChat() : closeAIChat();
+}
+
+function updateAIChatResizeControl() {
+  const panel = $("#ai-chat-popover");
+  const button = $("#resize-ai-chat");
+  if (!panel || !button) return;
+  const maximized = panel.classList.contains("maximized");
+  const label = maximized
+    ? localized("Restore chat size", "还原聊天窗口")
+    : localized("Enlarge chat", "放大聊天窗口");
+  button.setAttribute("aria-label", label);
+  button.setAttribute("aria-pressed", String(maximized));
+  button.title = label;
+  button.querySelector("span").textContent = maximized ? "↙" : "↗";
+}
+
+function toggleAIChatSize() {
+  const panel = $("#ai-chat-popover");
+  if (!panel) return;
+  panel.classList.toggle("maximized");
+  updateAIChatResizeControl();
+  requestAnimationFrame(() => {
+    const log = $("#ai-chat-log");
+    log.scrollTop = log.scrollHeight;
+    $("#ai-question-input")?.focus();
+  });
 }
 
 function showToast(message) {
@@ -2833,6 +2860,7 @@ $("#note-form").addEventListener("submit", (event) => {
 });
 
 $("#ai-chat-launcher").addEventListener("click", toggleAIChat);
+$("#resize-ai-chat").addEventListener("click", toggleAIChatSize);
 $("#close-ai-chat").addEventListener("click", closeAIChat);
 document.addEventListener("keydown", (event) => {
   if (event.key === "Escape" && $("#ai-chat-popover")?.classList.contains("open")) closeAIChat();
