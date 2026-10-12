@@ -376,7 +376,18 @@
 
   async function uploadMaterialFile(paperId, file) {
     if (!session?.user?.id || !file) return "";
-    const safeName = String(file.name || "material").normalize("NFKC").replace(/[^\p{L}\p{N}._-]+/gu, "-").slice(-120);
+    // Supabase Storage object keys are kept ASCII-only for compatibility with
+    // S3 gateways. The original filename is still stored in materials.file_name.
+    const originalName = String(file.name || "material").normalize("NFKC");
+    const extension = originalName.match(/\.([A-Za-z0-9]{1,12})$/)?.[1]?.toLowerCase() || "bin";
+    const stem = originalName
+      .replace(/\.[^.]+$/, "")
+      .replace(/[^\x00-\x7F]/g, "-")
+      .replace(/[^A-Za-z0-9._-]+/g, "-")
+      .replace(/-+/g, "-")
+      .replace(/^[-.]+|[-.]+$/g, "")
+      .slice(0, 80) || "material";
+    const safeName = `${stem}.${extension}`;
     const path = `${session.user.id}/${paperId}/${Date.now()}-${safeName}`;
     unwrap(await requireClient().storage.from("learning-materials").upload(path, file, { cacheControl: "3600", upsert: false, contentType: file.type || undefined }), "Upload material");
     return path;
