@@ -405,6 +405,7 @@
             <section class="quiz-card">
               <div class="question-meta"><span id="question-topic">程序设计</span><span id="question-level">中等</span><span id="question-type-label">选择题</span></div>
               <h1 id="question-title"></h1>
+              <figure id="question-image-figure" class="question-image-figure" hidden><img id="question-image" alt="" /><figcaption id="question-image-caption"></figcaption></figure>
               <pre id="code-block"><code></code></pre>
               <div class="options" id="quiz-options"></div>
               <label class="fill-answer hidden" id="fill-answer">
@@ -483,6 +484,11 @@
           <small>支持 PDF、Word、PowerPoint、图片与文字档；文件不超过 25MB</small>
         </label>
         <div class="file-preview" id="file-preview"></div>
+        <label class="upload-visuals-field">补充照片或图表（可选）
+          <input id="material-extra-images" type="file" accept="image/png,image/jpeg,image/webp" multiple />
+          <small>历届试卷和讲义都可以补充照片；AI 会把照片作为资料的一部分辨识。</small>
+          <div id="material-extra-images-preview" class="upload-visuals-preview"></div>
+        </label>
         <section class="generation-progress" id="generation-progress" hidden aria-live="polite">
           <div class="generation-progress-head"><strong id="generation-status">准备读取资料</strong><span id="generation-percent">0%</span></div>
           <div class="generation-progress-bar"><i id="generation-progress-bar"></i></div>
@@ -527,6 +533,7 @@
           <label>难度<select id="manual-question-level"><option value="基础">基础</option><option value="中等" selected>中等</option><option value="进阶">进阶</option></select></label>
           <label class="full-field">题目<textarea id="manual-question-title" rows="3" maxlength="600" placeholder="请输入完整题目" required></textarea></label>
           <label class="full-field">程序代码（可选）<textarea id="manual-question-code" rows="4" spellcheck="false"></textarea></label>
+          <label class="full-field question-image-field">题目照片或图表（可选）<input id="manual-question-image" type="file" accept="image/png,image/jpeg,image/webp" /><small>历届试卷和讲义都可以添加照片；AI 识别到图表时也会自动加入。</small><div id="manual-question-image-preview" class="question-image-preview"></div><button class="text-button question-image-remove" type="button" id="remove-manual-question-image" hidden>移除照片</button></label>
         </div>
         <section id="mcq-fields" class="question-type-fields">
           <div class="option-builder-grid">

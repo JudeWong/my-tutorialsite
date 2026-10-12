@@ -14,7 +14,7 @@ function questionResponseSchema(body) {
     minItems: isTeachingMaterial ? requestedCount : 1,
     items: {
       type: "object",
-      required: ["question", "code", "options", "correct", "level", "explanation", "mistake"],
+      required: ["question", "code", "options", "correct", "level", "explanation", "mistake", "image_page", "image_bbox", "image_alt"],
       properties: {
         question: { type: "string" },
         code: { type: "string" },
@@ -22,7 +22,10 @@ function questionResponseSchema(body) {
         correct: { type: "integer", minimum: 0, maximum: 3 },
         level: { type: "string", enum: ["Basic", "Intermediate", "Advanced"] },
         explanation: { type: "string" },
-        mistake: { type: "string" }
+        mistake: { type: "string" },
+        image_page: { type: "integer", minimum: 0 },
+        image_bbox: { type: "array", minItems: 4, maxItems: 4, items: { type: "integer", minimum: 0, maximum: 1000 } },
+        image_alt: { type: "string" }
       }
     }
   };
@@ -36,7 +39,7 @@ function json(data, status = 200) {
 
 function systemPrompt(mode, language, task) {
   if (task === "question-generation") {
-    return "Produce accurate, source-grounded UEC computer science assessment questions. Every user-visible natural-language question, option, explanation, and common mistake must be in Simplified Chinese. English is allowed only for source code, identifiers, abbreviations, and unavoidable standard computing terms. Return JSON only.";
+    return "Produce accurate, source-grounded UEC computer science assessment questions. Every user-visible natural-language question, option, explanation, common mistake, and image description must be in Simplified Chinese. Inspect every supplied page image. If a question depends on a chart, table, diagram, screenshot, network layout, circuit, or other visual, return its page number and normalized bounding box [ymin,xmin,ymax,xmax] from 0 to 1000; otherwise use image_page 0 and image_bbox [0,0,0,0]. English is allowed only for source code, identifiers, abbreviations, and unavoidable standard computing terms. Return JSON only.";
   }
   const style = mode === "study"
     ? "Teach step by step, check the learner's reasoning, use concrete examples, and include a useful practice prompt when appropriate."
@@ -91,7 +94,7 @@ export async function onRequestPost({ request, env }) {
   }
 
   const message = typeof body.message === "string" ? body.message.trim() : "";
-  const messageLimit = body.task === "question-generation" ? 520000 : 6000;
+  const messageLimit = body.task === "question-generation" ? 600000 : 6000;
   if (!message || message.length > messageLimit) {
     return json({ error: `Message must contain between 1 and ${messageLimit} characters.` }, 400);
   }
@@ -110,6 +113,22 @@ export async function onRequestPost({ request, env }) {
   let response;
   let data = {};
   let usedModel = model;
+  const visuals = [];
+  let visualChars = 0;
+  if (Array.isArray(body.visuals)) {
+    for (const item of body.visuals.slice(0, 24)) {
+      if (!item || typeof item.data !== "string" || item.data.length >= 2500000) continue;
+      if (visualChars + item.data.length > 18000000) break;
+      visuals.push(item);
+      visualChars += item.data.length;
+    }
+  }
+  const modelInput = body.task === "question-generation"
+    ? [{ type: "text", text: message }, ...visuals.flatMap((item, index) => [
+      { type: "text", text: `这是供辨识的第 ${Number(item.page) || index + 1} 页图像。` },
+      { type: "image", data: item.data, mime_type: item.mime_type || "image/jpeg" }
+    ])]
+    : conversation.join("\n\n");
   for (let attempt = 0; attempt < attemptModels.length; attempt += 1) {
     usedModel = attemptModels[attempt];
     try {
@@ -118,7 +137,7 @@ export async function onRequestPost({ request, env }) {
         headers: { "Content-Type": "application/json", "x-goog-api-key": env.GEMINI_API_KEY },
         body: JSON.stringify({
           model: usedModel,
-          input: body.task === "question-generation" ? message : conversation.join("\n\n"),
+          input: modelInput,
           system_instruction: systemPrompt(body.mode, body.language, body.task),
           store: false,
           generation_config: {

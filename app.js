@@ -107,6 +107,7 @@ let activeAssignmentIndex = 0;
 let answers = [];
 let selectedOption = null;
 let pendingUploadFile = null;
+let pendingUploadVisuals = [];
 let toastTimer;
 let codeTimer;
 let activeStudent = null;
@@ -136,6 +137,9 @@ let cloudRegistrationCode = "";
 let cloudRegistrationCodeExpiresAt = "";
 let lastCloudSyncErrorAt = 0;
 let cloudSyncQueue = Promise.resolve();
+let pendingQuestionImageData = "";
+let pendingQuestionImagePath = "";
+let pendingQuestionImageAlt = "题目图表";
 const loadedScripts = new Map();
 const originalTextNodes = new WeakMap();
 const UI_EN = Object.freeze({
@@ -1670,8 +1674,11 @@ function syncUploadGenerationOptions() {
 
 function openUpload() {
   pendingUploadFile = null;
+  pendingUploadVisuals = [];
   $("#file-input").value = "";
+  $("#material-extra-images").value = "";
   $("#file-preview").innerHTML = "";
+  $("#material-extra-images-preview").innerHTML = "";
   $("#upload-material-type").value = "past-paper";
   $("#upload-question-count").value = "10";
   syncUploadGenerationOptions();
@@ -1702,6 +1709,27 @@ function loadFiles(files) {
   $("#process-upload").disabled = false;
 }
 
+async function loadSupplementalVisuals(files) {
+  if (isGeneratingQuestions) return;
+  const selected = Array.from(files || []).slice(0, 12);
+  pendingUploadVisuals = [];
+  const preview = $("#material-extra-images-preview");
+  preview.innerHTML = "";
+  for (const file of selected) {
+    if (!/^image\/(png|jpe?g|webp)$/i.test(file.type) || file.size > 8 * 1024 * 1024) continue;
+    try {
+      const data = await compressImageData(await fileToDataUrl(file), 1200, 0.62);
+      const previewData = await compressImageData(data, 180, 0.55);
+      pendingUploadVisuals.push({ data, previewData, mimeType: "image/jpeg", name: file.name });
+    } catch (error) {
+      console.warn("Unable to read supplemental image", error);
+    }
+  }
+  preview.innerHTML = pendingUploadVisuals.length
+    ? pendingUploadVisuals.map((visual) => `<span class="upload-visual-thumb"><img src="${escapeHTML(visual.previewData || visual.data)}" alt="${escapeHTML(visual.name)}"><small>${escapeHTML(visual.name)}</small></span>`).join("")
+    : "";
+}
+
 function resetGenerationUI() {
   isGeneratingQuestions = false;
   $("#generation-progress").classList.remove("success", "error");
@@ -1719,6 +1747,7 @@ function resetGenerationUI() {
   $("#close-upload").disabled = false;
   $("#cancel-upload").disabled = false;
   $("#file-input").disabled = false;
+  $("#material-extra-images").disabled = false;
   $("#upload-material-type").disabled = false;
   $("#upload-question-count").disabled = false;
 }
@@ -1754,6 +1783,48 @@ function loadExternalScript(url, globalName) {
   return promise;
 }
 
+function fileToDataUrl(file) {
+  return new Promise((resolve, reject) => {
+    const reader = new FileReader();
+    reader.onload = () => resolve(String(reader.result || ""));
+    reader.onerror = () => reject(reader.error || new Error("Unable to read image"));
+    reader.readAsDataURL(file);
+  });
+}
+
+function loadImageElement(dataUrl) {
+  return new Promise((resolve, reject) => {
+    const image = new Image();
+    image.onload = () => resolve(image);
+    image.onerror = () => reject(new Error("Unable to decode image"));
+    image.src = dataUrl;
+  });
+}
+
+async function compressImageData(dataUrl, maxWidth = 1200, quality = 0.68) {
+  const image = await loadImageElement(dataUrl);
+  const scale = Math.min(1, maxWidth / Math.max(1, image.naturalWidth || image.width));
+  const canvas = document.createElement("canvas");
+  canvas.width = Math.max(1, Math.round((image.naturalWidth || image.width) * scale));
+  canvas.height = Math.max(1, Math.round((image.naturalHeight || image.height) * scale));
+  canvas.getContext("2d").drawImage(image, 0, 0, canvas.width, canvas.height);
+  return canvas.toDataURL("image/jpeg", quality);
+}
+
+function dataUrlToBlob(dataUrl) {
+  const [header, encoded] = String(dataUrl || "").split(",");
+  if (!header || !encoded) throw new Error("Invalid image data");
+  const mimeType = header.match(/data:([^;]+)/i)?.[1] || "image/jpeg";
+  const bytes = atob(encoded);
+  const buffer = new Uint8Array(bytes.length);
+  for (let index = 0; index < bytes.length; index += 1) buffer[index] = bytes.charCodeAt(index);
+  return new Blob([buffer], { type: mimeType });
+}
+
+function visualMimeType(dataUrl) {
+  return String(dataUrl || "").match(/^data:([^;]+);/i)?.[1] || "image/jpeg";
+}
+
 async function recognizeImageText(source, startPercent = 22, span = 34) {
   setGenerationProgress(startPercent, localized("Loading image recognition…", "正在载入图片文字辨识……"), "extract");
   const Tesseract = await loadExternalScript("https://cdn.jsdelivr.net/npm/tesseract.js@5.1.1/dist/tesseract.min.js", "Tesseract");
@@ -1774,10 +1845,20 @@ async function extractPdfText(file) {
   const pdf = await pdfjsLib.getDocument({ data: new Uint8Array(await file.arrayBuffer()) }).promise;
   const pageLimit = pdf.numPages;
   const chunks = [];
+  const visuals = [];
+  let visualBytes = 0;
   for (let pageNumber = 1; pageNumber <= pageLimit; pageNumber += 1) {
     const page = await pdf.getPage(pageNumber);
     const content = await page.getTextContent();
     chunks.push(content.items.map((item) => item.str).join(" "));
+    const viewport = page.getViewport({ scale: Math.min(1.15, 1000 / Math.max(1, page.getViewport({ scale: 1 }).width)) });
+    const canvas = document.createElement("canvas");
+    canvas.width = Math.max(1, Math.round(viewport.width));
+    canvas.height = Math.max(1, Math.round(viewport.height));
+    await page.render({ canvasContext: canvas.getContext("2d"), viewport }).promise;
+    const imageData = canvas.toDataURL("image/jpeg", 0.54);
+    visualBytes += imageData.length;
+    if (visualBytes <= 16000000) visuals.push({ page: pageNumber, data: imageData, mimeType: "image/jpeg" });
     setGenerationProgress(18 + (pageNumber / pageLimit) * 35, localized(`Reading PDF page ${pageNumber} of ${pageLimit}`, `正在读取 PDF 第 ${pageNumber} / ${pageLimit} 页`), "extract");
   }
   let text = chunks.join("\n").trim();
@@ -1795,7 +1876,12 @@ async function extractPdfText(file) {
     }
     text = ocrChunks.join("\n").trim();
   }
-  return text;
+  return { text, visuals };
+}
+
+function officeMimeType(name) {
+  const extension = String(name).split(".").pop()?.toLowerCase();
+  return extension === "png" ? "image/png" : extension === "webp" ? "image/webp" : "image/jpeg";
 }
 
 async function extractOfficeText(file, extension) {
@@ -1807,6 +1893,14 @@ async function extractOfficeText(file, extension) {
       ? [/^ppt\/slides\/slide\d+\.xml$/]
       : [/^xl\/sharedStrings\.xml$/, /^xl\/worksheets\/sheet\d+\.xml$/];
   const names = Object.keys(zip.files).filter((name) => patterns.some((pattern) => pattern.test(name))).sort();
+  const visualNames = Object.keys(zip.files).filter((name) => new RegExp(`^(?:word|ppt|xl)/media/[^/]+\\.(?:png|jpe?g|webp)$`, "i").test(name)).slice(0, 12);
+  const visuals = [];
+  for (let index = 0; index < visualNames.length; index += 1) {
+    const name = visualNames[index];
+    const data = await zip.files[name].async("base64");
+    const dataUrl = `data:${officeMimeType(name)};base64,${data}`;
+    visuals.push({ page: index + 1, data: await compressImageData(dataUrl, 1050, 0.58), mimeType: "image/jpeg" });
+  }
   const chunks = [];
   for (let index = 0; index < names.length; index += 1) {
     const xml = await zip.files[names[index]].async("string");
@@ -1818,22 +1912,26 @@ async function extractOfficeText(file, extension) {
     chunks.push(textParts.length ? textParts.join(" ") : documentNode.documentElement?.textContent || "");
     setGenerationProgress(20 + ((index + 1) / Math.max(1, names.length)) * 35, localized("Extracting document content…", "正在抽取文件内容……"), "extract");
   }
-  return chunks.join("\n");
+  return { text: chunks.join("\n"), visuals };
 }
 
 async function extractMaterialText(file) {
   const extension = file.name.split(".").pop()?.toLowerCase() || "";
   setGenerationProgress(8, localized("Reading the uploaded file…", "正在读取上传文件……"), "read");
   if (extension === "pdf") return extractPdfText(file);
-  if (/^(png|jpe?g|webp)$/.test(extension)) return recognizeImageText(file);
+  if (/^(png|jpe?g|webp)$/.test(extension)) {
+    const original = await fileToDataUrl(file);
+    const visual = await compressImageData(original, 1400, 0.7);
+    return { text: await recognizeImageText(file), visuals: [{ page: 1, data: visual, mimeType: visualMimeType(visual) }] };
+  }
   if (/^(docx|pptx|xlsx)$/.test(extension)) return extractOfficeText(file, extension);
   const raw = await file.text();
   if (/^(html?|xml)$/.test(extension)) {
     const parsed = new DOMParser().parseFromString(raw, extension === "xml" ? "application/xml" : "text/html");
-    return parsed.documentElement?.textContent || raw;
+    return { text: parsed.documentElement?.textContent || raw, visuals: [] };
   }
   setGenerationProgress(52, localized("Text content extracted", "文字内容读取完成"), "extract");
-  return raw;
+  return { text: raw, visuals: [] };
 }
 
 function normalizeMaterialText(value) {
@@ -1888,8 +1986,49 @@ function normalizeGeneratedQuestion(item, index, paperId, topic) {
     explanation,
     explanationEn: explanation,
     mistake,
-    mistakeEn: mistake
+    mistakeEn: mistake,
+    imagePage: Number(item?.image_page) > 0 ? Number(item.image_page) : 0,
+    imageBbox: Array.isArray(item?.image_bbox) && item.image_bbox.length === 4
+      ? item.image_bbox.map((value) => Math.max(0, Math.min(1000, Number(value) || 0)))
+      : null,
+    imageAlt: String(item?.image_alt || "题目图表").trim()
   };
+}
+
+async function cropVisualData(visual, bbox) {
+  if (!visual?.data) return "";
+  if (!Array.isArray(bbox) || bbox.length !== 4) return visual.data;
+  try {
+    const image = await loadImageElement(visual.data);
+    const width = image.naturalWidth || image.width;
+    const height = image.naturalHeight || image.height;
+    const [ymin, xmin, ymax, xmax] = bbox.map((value) => Math.max(0, Math.min(1000, Number(value) || 0)));
+    const left = Math.floor((xmin / 1000) * width);
+    const top = Math.floor((ymin / 1000) * height);
+    const cropWidth = Math.max(1, Math.floor(((xmax - xmin) / 1000) * width));
+    const cropHeight = Math.max(1, Math.floor(((ymax - ymin) / 1000) * height));
+    if (cropWidth < 40 || cropHeight < 40) return visual.data;
+    const canvas = document.createElement("canvas");
+    canvas.width = cropWidth;
+    canvas.height = cropHeight;
+    canvas.getContext("2d").drawImage(image, left, top, cropWidth, cropHeight, 0, 0, cropWidth, cropHeight);
+    return canvas.toDataURL("image/jpeg", 0.78);
+  } catch {
+    return visual.data;
+  }
+}
+
+async function attachQuestionVisuals(questions, visuals = []) {
+  const visualByPage = new Map((visuals || []).map((visual) => [Number(visual.page), visual]));
+  return Promise.all(questions.map(async (question) => {
+    const visual = visualByPage.get(Number(question.imagePage));
+    if (!visual) return question;
+    return {
+      ...question,
+      imageData: await cropVisualData(visual, question.imageBbox),
+      imageSourcePage: visual.page
+    };
+  }));
 }
 
 function getGeminiApiKey() {
@@ -1936,7 +2075,7 @@ function buildQuestionResponseSchema(options = {}) {
     ...(maxItems ? { maxItems } : {}),
     items: {
       type: "object",
-      required: ["question", "code", "options", "correct", "level", "explanation", "mistake"],
+      required: ["question", "code", "options", "correct", "level", "explanation", "mistake", "image_page", "image_bbox", "image_alt"],
       properties: {
         question: { type: "string" },
         code: { type: "string" },
@@ -1944,7 +2083,10 @@ function buildQuestionResponseSchema(options = {}) {
         correct: { type: "integer", minimum: 0, maximum: 3 },
         level: { type: "string", enum: ["Basic", "Intermediate", "Advanced"] },
         explanation: { type: "string" },
-        mistake: { type: "string" }
+        mistake: { type: "string" },
+        image_page: { type: "integer", minimum: 0 },
+        image_bbox: { type: "array", minItems: 4, maxItems: 4, items: { type: "integer", minimum: 0, maximum: 1000 } },
+        image_alt: { type: "string" }
       }
     }
   };
@@ -1968,18 +2110,22 @@ Strict quality rules:
 6. The explanation must state why the correct option is correct. The common mistake must identify a realistic misunderstanding.
 7. ALL user-visible natural-language content must be in Simplified Chinese, even when the source is English or Malay. This includes every question, every answer option, every explanation, and every common mistake. Do not write complete English sentences. English is allowed only inside source code, identifiers, commands, protocol abbreviations, or unavoidable standard computing terms such as CPU, SQL, HTML and Python.
 8. For a past paper, solve each source question carefully and set the correct answer from the source answer key when present; otherwise determine it by sound computer-science reasoning.
-9. Return only a JSON array with this exact schema:
-[{"question":"...","code":"optional code or empty string","options":["A text","B text","C text","D text"],"correct":0,"level":"Basic|Intermediate|Advanced","explanation":"...","mistake":"..."}]
+9. When a question depends on a chart, table, diagram, screenshot, network layout, circuit, or other visual, set image_page to the supplied visual page number, image_bbox to [ymin,xmin,ymax,xmax] normalized from 0 to 1000, and image_alt to a concise Chinese description. Use image_page 0 and image_bbox [0,0,0,0] when no visual is needed. Never invent a visual that is not present.
+10. Return only a JSON array with this exact schema:
+[{"question":"...","code":"optional code or empty string","options":["A text","B text","C text","D text"],"correct":0,"level":"Basic|Intermediate|Advanced","explanation":"...","mistake":"...","image_page":0,"image_bbox":[0,0,0,0],"image_alt":""}]
 The correct value is a zero-based integer from 0 to 3.
 
 Category: ${TOPIC_EN[topic] || topic}
 Source file: ${fileName}
 
 LEARNING MATERIAL:
-${text.slice(0, 500000)}`;
+${text.slice(0, 500000)}
+
+VISUAL PAGE INDEX:
+${(options.visuals || []).map((visual) => `第 ${visual.page} 页：可供辨识的页面图像`).join("\n") || "没有可附加的页面图像。"}`;
 }
 
-function parseAIQuestionResponse(raw, paperId, topic, options = {}) {
+async function parseAIQuestionResponse(raw, paperId, topic, options = {}) {
   if (typeof raw !== "string") throw new Error("Question generation response was empty");
   const start = raw.indexOf("[");
   const end = raw.lastIndexOf("]");
@@ -1997,7 +2143,7 @@ function parseAIQuestionResponse(raw, paperId, topic, options = {}) {
   if (materialType === "past-paper" && !questions.length) {
     throw new Error(localized("No complete Chinese questions could be generated from this paper.", "无法从这份试卷生成完整的中文题目。"));
   }
-  return maxItems ? questions.slice(0, maxItems) : questions;
+  return attachQuestionVisuals(maxItems ? questions.slice(0, maxItems) : questions, options.visuals || []);
 }
 
 function isTransientGeminiError(status, message = "") {
@@ -2053,12 +2199,17 @@ function getGeminiAttemptModels(preferredModel) {
   return [preferred, preferred, ...fallbacks];
 }
 
+function imagePartFromVisual(visual) {
+  const [, encoded] = String(visual?.data || "").split(",");
+  return encoded ? { type: "image", data: encoded, mime_type: visual.mimeType || visualMimeType(visual.data) } : null;
+}
+
 async function requestQuestionsFromProxy(endpoint, prompt, paperId, topic, options, signal) {
   const response = await fetch(endpoint, {
     method: "POST",
     headers: { "Content-Type": "application/json", ...(await cloudAuthorizationHeaders()) },
     signal,
-    body: JSON.stringify({ message: prompt, messages: [{ role: "user", content: prompt }], mode: "study", task: "question-generation", language: "zh", materialType: options.materialType, questionCount: options.questionCount })
+    body: JSON.stringify({ message: prompt, messages: [{ role: "user", content: prompt }], visuals: (options.visuals || []).map((visual) => { const image = imagePartFromVisual(visual); return image ? { ...image, page: visual.page } : null; }).filter(Boolean), mode: "study", task: "question-generation", language: "zh", materialType: options.materialType, questionCount: options.questionCount })
   });
   if (!response.ok) throw new Error(`Question generation endpoint returned ${response.status}`);
   const data = await response.json();
@@ -2080,8 +2231,14 @@ async function requestQuestionsFromGemini(apiKey, model, prompt, paperId, topic,
         headers: { "Content-Type": "application/json", "x-goog-api-key": apiKey },
         body: JSON.stringify({
           model: attemptedModel,
-          input: prompt,
-          system_instruction: "Produce accurate, source-grounded UEC computer science assessment questions. All natural-language question content must be Simplified Chinese. Return JSON only.",
+          input: [
+            { type: "text", text: prompt },
+            ...(options.visuals || []).flatMap((visual) => {
+              const image = imagePartFromVisual(visual);
+              return image ? [{ type: "text", text: `这是供辨识的第 ${visual.page} 页图像。` }, image] : [];
+            })
+          ],
+          system_instruction: "Produce accurate, source-grounded UEC computer science assessment questions. Inspect supplied page images and use image_page/image_bbox/image_alt when a chart, table, diagram, screenshot, or other visual is needed. All natural-language question content must be Simplified Chinese. Return JSON only.",
           store: false,
           generation_config: {
             temperature: 0.2,
@@ -2167,7 +2324,7 @@ async function requestQuestionsFromGemini(apiKey, model, prompt, paperId, topic,
       .join("\n")
       .trim() || interaction?.output_text?.trim();
     try {
-      const questions = parseAIQuestionResponse(raw, paperId, topic, options);
+      const questions = await parseAIQuestionResponse(raw, paperId, topic, options);
       if (attemptedModel !== preferredModel) {
         showToast(localized(
           `${preferredModel} is busy. Questions were generated with backup model ${attemptedModel}.`,
@@ -2233,8 +2390,16 @@ async function requestAIQuestions(text, fileName, paperId, topic, options) {
 }
 
 async function generateQuestionsFromFile(file, paperId, topic, options) {
-  const extractedText = normalizeMaterialText(await extractMaterialText(file));
-  if (extractedText.replace(/\s/g, "").length < 30) {
+  const extracted = await extractMaterialText(file);
+  const extractedText = normalizeMaterialText(extracted?.text ?? extracted);
+  const extractedVisuals = extracted?.visuals || [];
+  const extraVisuals = Array.isArray(options.extraVisuals) ? options.extraVisuals : [];
+  const nextPage = extractedVisuals.reduce((highest, visual) => Math.max(highest, Number(visual.page) || 0), 0) + 1;
+  options.visuals = [
+    ...extractedVisuals,
+    ...extraVisuals.map((visual, index) => ({ ...visual, page: nextPage + index }))
+  ].slice(0, 24);
+  if (extractedText.replace(/\s/g, "").length < 30 && !options.visuals.length) {
     throw new Error(localized("Not enough readable text was found. Try a clearer scan or a text-based document.", "无法辨识足够文字，请尝试更清晰的扫描或含文字的文件。"));
   }
   setGenerationProgress(66, localized("Organizing key concepts…", "正在整理重点内容……"), "generate");
@@ -2258,6 +2423,15 @@ function toggleQuestionTypeFields() {
   $("#fill-fields").classList.toggle("hidden", !isFill);
   for (let index = 0; index < 4; index += 1) $("#manual-option-" + index).required = !isFill;
   $("#manual-correct-answer").required = isFill;
+}
+
+function renderManualQuestionImagePreview() {
+  const preview = $("#manual-question-image-preview");
+  const remove = $("#remove-manual-question-image");
+  if (!preview || !remove) return;
+  const source = pendingQuestionImageData || "";
+  preview.innerHTML = source ? `<img src="${escapeHTML(source)}" alt="${escapeHTML(pendingQuestionImageAlt || "题目图表")}">` : "";
+  remove.hidden = !source && !pendingQuestionImagePath;
 }
 
 function updateAIConfigStatus() {
@@ -2307,6 +2481,10 @@ function openQuestionDialog({ questionId = "", paperId = "" } = {}) {
   $("#editing-question-id").value = "";
   $("#question-return-paper-id").value = paperId;
   $("#question-form-error").textContent = "";
+  pendingQuestionImageData = "";
+  pendingQuestionImagePath = "";
+  pendingQuestionImageAlt = "题目图表";
+  $("#manual-question-image").value = "";
   populateQuestionMaterialOptions();
   $("#question-material").disabled = false;
   const question = questionId ? questionBank.find((item) => item.id === questionId) : null;
@@ -2334,6 +2512,9 @@ function openQuestionDialog({ questionId = "", paperId = "" } = {}) {
       .join(", ");
     $("#manual-explanation").value = question.explanation || "";
     $("#manual-mistake").value = question.mistake || "";
+    pendingQuestionImageData = question.imageData || question.imageUrl || "";
+    pendingQuestionImagePath = question.imagePath || "";
+    pendingQuestionImageAlt = question.imageAlt || "题目图表";
   } else {
     $("#question-dialog-title").textContent = localized("Create an Interactive Question", "建立互动题目");
     $("#question-dialog-intro").textContent = localized(
@@ -2343,6 +2524,7 @@ function openQuestionDialog({ questionId = "", paperId = "" } = {}) {
     $("#save-question-button").textContent = localized("Save and Publish", "储存并发布");
     if (paperId) $("#question-material").value = paperId;
   }
+  renderManualQuestionImagePreview();
   toggleQuestionTypeFields();
   $("#question-dialog").showModal();
   $("#manual-question-title").focus();
@@ -2374,7 +2556,7 @@ function addQuestionToAssignment(question, paper) {
   assignment.done = false;
 }
 
-function saveManualQuestion(event) {
+async function saveManualQuestion(event) {
   event.preventDefault();
   const editingId = $("#editing-question-id").value;
   const existingQuestion = editingId ? questionBank.find((item) => item.id === editingId) : null;
@@ -2436,11 +2618,31 @@ function saveManualQuestion(event) {
     explanationEn: explanation,
     mistake,
     mistakeEn: mistake,
+    imageData: pendingQuestionImageData,
+    imagePath: pendingQuestionImagePath,
+    imageAlt: pendingQuestionImageAlt || "题目图表",
     createdAt: existingQuestion?.createdAt || new Date().toISOString(),
     updatedAt: new Date().toISOString()
   };
-  if (existingQuestion) questionBank[questionBank.indexOf(existingQuestion)] = { ...existingQuestion, ...question };
-  else questionBank.push(question);
+  const saveButton = $("#save-question-button");
+  saveButton.disabled = true;
+  try {
+    if (Cloud?.enabled && cloudProfile && pendingQuestionImageData && !pendingQuestionImageData.startsWith("http")) {
+      if (existingQuestion?.imagePath) await Cloud.deleteQuestionImage(existingQuestion.imagePath);
+      question.imagePath = await Cloud.uploadQuestionImage(question.id, dataUrlToBlob(pendingQuestionImageData));
+      question.imageData = "";
+    } else if (Cloud?.enabled && cloudProfile && !pendingQuestionImageData && existingQuestion?.imagePath) {
+      await Cloud.deleteQuestionImage(existingQuestion.imagePath);
+      question.imagePath = "";
+    }
+    if (existingQuestion) questionBank[questionBank.indexOf(existingQuestion)] = { ...existingQuestion, ...question };
+    else questionBank.push(question);
+  } catch (uploadError) {
+    console.error("Unable to save question image", uploadError);
+    error.textContent = localized("The question image could not be uploaded. Try again.", "题目照片无法上传，请重新尝试。");
+    saveButton.disabled = false;
+    return;
+  }
   if (paper) paper.count = questionBank.filter((item) => item.paperId === paper.id).length;
   if (!existingQuestion) addQuestionToAssignment(question, paper);
   saveQuestions();
@@ -2456,6 +2658,7 @@ function saveManualQuestion(event) {
     existingQuestion ? "题目修改已储存。" : `${type === "fill" ? "填充" : "选择"}题已发布到学生练习。`
   ));
   if (existingQuestion && returnPaperId) openQuestionManager(returnPaperId);
+  saveButton.disabled = false;
 }
 
 function openQuestionManager(paperId) {
@@ -2511,6 +2714,7 @@ async function deletePaper(paperId) {
   if (Cloud?.enabled) {
     try {
       await flushCloudSync();
+      await Promise.all(questionBank.filter((question) => question.paperId === paperId && question.imagePath).map((question) => Cloud.deleteQuestionImage(question.imagePath)));
       await Cloud.deleteMaterial(paper);
     } catch (error) {
       console.error("Unable to delete cloud material", error);
@@ -2708,6 +2912,19 @@ function renderQuestion() {
   $("#question-level").textContent = level;
   $("#question-type-label").textContent = isFill ? localized("Fill in the Answer", "填充题") : localized("Multiple Choice", "选择题");
   $("#question-title").textContent = currentLanguage === "en" ? question.titleEn : question.title;
+  const questionImage = $("#question-image");
+  const questionImageFigure = $("#question-image-figure");
+  const imageSource = question.imageUrl || question.imageData || "";
+  questionImageFigure.hidden = !imageSource;
+  if (imageSource) {
+    questionImage.src = imageSource;
+    questionImage.alt = question.imageAlt || localized("Question diagram", "题目图表");
+    $("#question-image-caption").textContent = question.imageAlt || localized("Question diagram", "题目图表");
+  } else {
+    questionImage.removeAttribute("src");
+    questionImage.alt = "";
+    $("#question-image-caption").textContent = "";
+  }
   $("#code-block code").textContent = question.code;
   $("#code-block").style.display = question.code ? "block" : "none";
   $("#quiz-options").innerHTML = isFill ? "" : options.map((option, index) => `
@@ -3210,6 +3427,7 @@ $("#open-ai-settings").addEventListener("click", () => openAISettings());
 $("#quick-upload").addEventListener("click", openUpload);
 $("#mobile-add").addEventListener("click", () => role === "teacher" ? openUpload() : startQuiz());
 $("#file-input").addEventListener("change", (event) => loadFiles(event.target.files));
+$("#material-extra-images").addEventListener("change", (event) => loadSupplementalVisuals(event.target.files));
 $("#upload-material-type").addEventListener("change", syncUploadGenerationOptions);
 $("#upload-question-count").addEventListener("change", syncUploadGenerationOptions);
 $("#upload-dialog").addEventListener("cancel", (event) => { if (isGeneratingQuestions) event.preventDefault(); });
@@ -3227,8 +3445,11 @@ $("#process-upload").addEventListener("click", async (event) => {
   if (actionButton.dataset.complete === "true") {
     $("#upload-dialog").close();
     pendingUploadFile = null;
+    pendingUploadVisuals = [];
     $("#file-input").value = "";
+    $("#material-extra-images").value = "";
     $("#file-preview").innerHTML = "";
+    $("#material-extra-images-preview").innerHTML = "";
     resetGenerationUI();
     return;
   }
@@ -3243,12 +3464,14 @@ $("#process-upload").addEventListener("click", async (event) => {
   $("#close-upload").disabled = true;
   $("#cancel-upload").disabled = true;
   $("#file-input").disabled = true;
+  $("#material-extra-images").disabled = true;
   $("#upload-material-type").disabled = true;
   $("#upload-question-count").disabled = true;
   $("#generation-progress").classList.remove("success", "error");
   const year = $("#upload-year").value;
   const topic = $("#upload-topic").value;
   const generationOptions = getUploadGenerationOptions();
+  generationOptions.extraVisuals = pendingUploadVisuals.slice();
   const sourceFile = pendingUploadFile;
   const title = sourceFile.name.replace(/\.[^.]+$/, "").trim() || `${year} 学习资料`;
   const now = new Date();
@@ -3277,6 +3500,13 @@ $("#process-upload").addEventListener("click", async (event) => {
     if (Cloud?.enabled && cloudProfile) {
       setGenerationProgress(90, localized("Uploading the source file securely…", "正在安全上传原始文件……"), "save");
       paper.storagePath = await Cloud.uploadMaterialFile(paperId, sourceFile);
+      const visualQuestions = generated.questions.filter((question) => question.imageData);
+      for (let index = 0; index < visualQuestions.length; index += 1) {
+        const question = visualQuestions[index];
+        setGenerationProgress(90 + ((index + 1) / Math.max(1, visualQuestions.length)) * 3, localized("Saving question diagrams…", "正在储存题目图表……"), "save");
+        question.imagePath = await Cloud.uploadQuestionImage(question.id, dataUrlToBlob(question.imageData));
+        question.imageData = "";
+      }
     }
     papers.unshift(paper);
     questionBank.push(...generated.questions);
@@ -3403,6 +3633,31 @@ function closeQuestionEditor() {
 $("#close-question-dialog").addEventListener("click", closeQuestionEditor);
 $("#cancel-question-dialog").addEventListener("click", closeQuestionEditor);
 $("#question-type").addEventListener("change", toggleQuestionTypeFields);
+$("#manual-question-image").addEventListener("change", async (event) => {
+  const file = event.target.files?.[0];
+  if (!file) return;
+  if (file.size > 8 * 1024 * 1024) {
+    $("#question-form-error").textContent = localized("Choose an image smaller than 8 MB.", "请选择小于 8MB 的照片。");
+    event.target.value = "";
+    return;
+  }
+  try {
+    pendingQuestionImageData = await compressImageData(await fileToDataUrl(file), 1400, 0.76);
+    pendingQuestionImagePath = "";
+    pendingQuestionImageAlt = file.name.replace(/\.[^.]+$/, "") || "题目图表";
+    $("#question-form-error").textContent = "";
+    renderManualQuestionImagePreview();
+  } catch (error) {
+    console.error("Unable to read question image", error);
+    $("#question-form-error").textContent = localized("The image could not be read.", "照片无法读取。");
+  }
+});
+$("#remove-manual-question-image").addEventListener("click", () => {
+  pendingQuestionImageData = "";
+  pendingQuestionImagePath = "";
+  $("#manual-question-image").value = "";
+  renderManualQuestionImagePreview();
+});
 $("#question-material").addEventListener("change", (event) => {
   const paper = papers.find((item) => item.id === event.target.value);
   if (paper) $("#manual-question-topic").value = paper.topic;

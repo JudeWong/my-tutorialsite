@@ -57,6 +57,8 @@ alter table public.questions add column if not exists correct_index integer;
 alter table public.questions add column if not exists accepted_answers jsonb not null default '[]'::jsonb;
 alter table public.questions add column if not exists explanation_en text;
 alter table public.questions add column if not exists common_mistakes_en text;
+alter table public.questions add column if not exists image_path text;
+alter table public.questions add column if not exists image_alt text;
 alter table public.questions add column if not exists updated_at timestamptz not null default now();
 
 alter table public.notes add column if not exists updated_at timestamptz not null default now();
@@ -255,6 +257,20 @@ using (bucket_id = 'learning-materials' and public.is_teacher())
 with check (bucket_id = 'learning-materials' and public.is_teacher());
 create policy material_files_teacher_delete on storage.objects for delete to authenticated
 using (bucket_id = 'learning-materials' and public.is_teacher());
+
+drop policy if exists question_images_authenticated_read on storage.objects;
+drop policy if exists question_images_teacher_insert on storage.objects;
+drop policy if exists question_images_teacher_update on storage.objects;
+drop policy if exists question_images_teacher_delete on storage.objects;
+create policy question_images_authenticated_read on storage.objects for select to authenticated
+using (bucket_id = 'learning-materials' and name like 'question-images/%');
+create policy question_images_teacher_insert on storage.objects for insert to authenticated
+with check (bucket_id = 'learning-materials' and name like 'question-images/%' and public.is_teacher());
+create policy question_images_teacher_update on storage.objects for update to authenticated
+using (bucket_id = 'learning-materials' and name like 'question-images/%' and public.is_teacher())
+with check (bucket_id = 'learning-materials' and name like 'question-images/%' and public.is_teacher());
+create policy question_images_teacher_delete on storage.objects for delete to authenticated
+using (bucket_id = 'learning-materials' and name like 'question-images/%' and public.is_teacher());
 
 -- Keep the requested superadmin display name consistent with the application.
 update public.profiles p

@@ -187,6 +187,9 @@
       explanationEn: row.explanation_en || row.explanation || "",
       mistake: row.common_mistakes || "",
       mistakeEn: row.common_mistakes_en || row.common_mistakes || "",
+      imagePath: row.image_path || "",
+      imageAlt: row.image_alt || "题目图表",
+      imageUrl: "",
       createdAt: row.created_at || new Date().toISOString(),
       updatedAt: row.updated_at || row.created_at || new Date().toISOString()
     };
@@ -229,6 +232,12 @@
       if (!questionIdsByAssignment.has(link.assignment_id)) questionIdsByAssignment.set(link.assignment_id, []);
       questionIdsByAssignment.get(link.assignment_id).push(link.question_id);
     }
+    const mappedQuestions = (questions || []).map(mapQuestion);
+    await Promise.all(mappedQuestions.map(async (question) => {
+      if (!question.imagePath) return;
+      const signed = await db.storage.from("learning-materials").createSignedUrl(question.imagePath, 3600);
+      if (!signed.error) question.imageUrl = signed.data?.signedUrl || "";
+    }));
     const completed = new Set((submissions || [])
       .filter((item) => profile.role === "student" && item.student_id === profile.id && item.status === "completed")
       .map((item) => item.assignment_id));
@@ -236,7 +245,7 @@
       students: (profiles || []).filter((item) => item.role === "student").map(normalizeProfile),
       classes: (classes || []).map((item) => ({ id: item.id, name: item.class_name || item.name || "", year: item.year || "", active: item.active !== false })),
       papers: (materials || []).map(mapMaterial),
-      questions: (questions || []).map(mapQuestion),
+      questions: mappedQuestions,
       notes: (notes || []).map((item) => ({ id: item.id, title: item.title || "", content: item.content || "", createdAt: item.created_at, updatedAt: item.updated_at || item.created_at })),
       assignments: (assignments || []).map((item) => mapAssignment(item, questionIdsByAssignment.get(item.id) || [], completed))
     };
@@ -294,6 +303,8 @@
       explanation_en: question.explanationEn || question.explanation || "",
       common_mistakes: question.mistake || "",
       common_mistakes_en: question.mistakeEn || question.mistake || "",
+      image_path: question.imagePath || "",
+      image_alt: question.imageAlt || "题目图表",
       updated_at: question.updatedAt || new Date().toISOString()
     };
   }
@@ -371,6 +382,21 @@
     return path;
   }
 
+  async function uploadQuestionImage(questionId, blob) {
+    if (!session?.user?.id || !blob) return "";
+    const path = `question-images/${session.user.id}/${questionId}-${Date.now()}.jpg`;
+    unwrap(await requireClient().storage.from("learning-materials").upload(path, blob, {
+      cacheControl: "3600",
+      upsert: false,
+      contentType: "image/jpeg"
+    }), "Upload question image");
+    return path;
+  }
+
+  async function deleteQuestionImage(path) {
+    if (path) await requireClient().storage.from("learning-materials").remove([path]);
+  }
+
   async function deleteMaterial(paper) {
     if (paper?.storagePath) await requireClient().storage.from("learning-materials").remove([paper.storagePath]);
     unwrap(await requireClient().from("materials").delete().eq("id", paper.id), "Delete material");
@@ -426,7 +452,7 @@
     if (!client) return false;
     const checks = await Promise.all([
       client.from("materials").select("id,storage_path,material_type,updated_at").limit(0),
-      client.from("questions").select("id,question_type,correct_index,updated_at").limit(0),
+      client.from("questions").select("id,question_type,correct_index,image_path,updated_at").limit(0),
       client.from("assignments").select("id,material_id,published,updated_at").limit(0),
       client.from("profiles").select("id,class_id,updated_at").limit(0)
     ]);
@@ -467,6 +493,8 @@
     updateStudent,
     deleteStudent,
     uploadMaterialFile,
+    uploadQuestionImage,
+    deleteQuestionImage,
     deleteMaterial,
     deleteNote,
     saveSubmission,
