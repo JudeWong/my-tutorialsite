@@ -233,6 +233,18 @@
       questionIdsByAssignment.get(link.assignment_id).push(link.question_id);
     }
     const mappedQuestions = (questions || []).map(mapQuestion);
+    const questionCounts = mappedQuestions.reduce((counts, question) => {
+      if (question.paperId && question.paperId !== "manual") {
+        counts.set(question.paperId, (counts.get(question.paperId) || 0) + 1);
+      }
+      return counts;
+    }, new Map());
+    const mappedMaterials = (materials || []).map(mapMaterial).map((paper) => ({
+      ...paper,
+      // Some existing Supabase projects do not have a material count column.
+      // Derive it from the question rows so the UI stays correct after reload.
+      count: questionCounts.get(paper.id) || paper.count || 0
+    }));
     await Promise.all(mappedQuestions.map(async (question) => {
       if (!question.imagePath) return;
       const signed = await db.storage.from("learning-materials").createSignedUrl(question.imagePath, 3600);
@@ -244,7 +256,7 @@
     return {
       students: (profiles || []).filter((item) => item.role === "student").map(normalizeProfile),
       classes: (classes || []).map((item) => ({ id: item.id, name: item.class_name || item.name || "", year: item.year || "", active: item.active !== false })),
-      papers: (materials || []).map(mapMaterial),
+      papers: mappedMaterials,
       questions: mappedQuestions,
       notes: (notes || []).map((item) => ({ id: item.id, title: item.title || "", content: item.content || "", createdAt: item.created_at, updatedAt: item.updated_at || item.created_at })),
       assignments: (assignments || []).map((item) => mapAssignment(item, questionIdsByAssignment.get(item.id) || [], completed))
@@ -273,7 +285,6 @@
       source_type: paper.sourceType || "Document",
       material_type: paper.materialType || "past-paper",
       requested_question_count: Number(paper.requestedQuestionCount) || 0,
-      count: Number(paper.count) || 0,
       status: paper.status || "待校对",
       status_en: paper.statusEn || "Needs review",
       generation_mode: paper.generationMode || "cloud",
@@ -456,7 +467,32 @@
   }
 
   async function getRegistrationCode() {
-    return apiRequest("/api/registration-code");
+    try {
+      return await apiRequest("/api/registration-code");
+    } catch (apiError) {
+      // GitHub Pages is static and cannot run the registration-code Function.
+      // Fall back to the authenticated teacher's Supabase session so the code
+      // still exists in registration_codes and remains visible to the teacher.
+      if (!session?.user?.id) throw apiError;
+      const db = requireClient();
+      const now = new Date().toISOString();
+      const active = unwrap(await db.from("registration_codes")
+        .select("id,code,expires_at")
+        .gt("expires_at", now)
+        .order("expires_at", { ascending: false })
+        .limit(1), "Load registration code") || [];
+      if (active[0]?.code) return { code: String(active[0].code), expiresAt: active[0].expires_at };
+      const values = new Uint32Array(1);
+      crypto.getRandomValues(values);
+      const code = String(100000 + (values[0] % 900000));
+      const expires = new Date();
+      expires.setMinutes(60, 0, 0);
+      const row = unwrap(await db.from("registration_codes")
+        .insert({ code, class_name: "全校", expires_at: expires.toISOString(), created_by: session.user.id })
+        .select("id,code,expires_at")
+        .single(), "Create registration code");
+      return { code: String(row.code), expiresAt: row.expires_at };
+    }
   }
 
   async function checkSchema() {

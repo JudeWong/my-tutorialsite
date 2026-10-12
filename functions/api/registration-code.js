@@ -21,7 +21,7 @@ export async function onRequestGet({ request, env }) {
       rows = await supabaseFetch(env, "/rest/v1/registration_codes", {
         method: "POST",
         prefer: "return=representation",
-        body: { code: randomSixDigitCode(), expires_at: endOfCurrentHour(), created_by: user.id }
+        body: { code: randomSixDigitCode(), class_name: "全校", expires_at: endOfCurrentHour(), created_by: user.id }
       });
     }
     return json(request, env, { code: rows[0].code, expiresAt: rows[0].expires_at });

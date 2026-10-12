@@ -136,6 +136,7 @@ let cloudDataLoaded = false;
 let cloudRegistrationCode = "";
 let cloudRegistrationCodeExpiresAt = "";
 let lastCloudSyncErrorAt = 0;
+let lastCloudSyncError = null;
 let cloudSyncQueue = Promise.resolve();
 let pendingQuestionImageData = "";
 let pendingQuestionImagePath = "";
@@ -688,6 +689,7 @@ function saveClasses(classes) {
 function syncCloud(action, label) {
   if (!Cloud?.enabled || !cloudProfile) return;
   cloudSyncQueue = cloudSyncQueue.then(action).catch((error) => {
+    lastCloudSyncError = { error, label };
     console.error(`Unable to sync ${label} to Supabase`, error);
     if (Date.now() - lastCloudSyncErrorAt > 5000) {
       lastCloudSyncErrorAt = Date.now();
@@ -696,8 +698,15 @@ function syncCloud(action, label) {
   });
 }
 
-async function flushCloudSync() {
+async function flushCloudSync({ throwOnError = false } = {}) {
   if (Cloud?.enabled) await cloudSyncQueue;
+  if (throwOnError && lastCloudSyncError) {
+    const failure = lastCloudSyncError;
+    lastCloudSyncError = null;
+    const error = failure.error instanceof Error ? failure.error : new Error(String(failure.error || "Cloud sync failed."));
+    error.cloudLabel = failure.label;
+    throw error;
+  }
 }
 
 function readLocalCloudMigrationSnapshot() {
@@ -3500,6 +3509,7 @@ $("#process-upload").addEventListener("click", async (event) => {
   const title = sourceFile.name.replace(/\.[^.]+$/, "").trim() || `${year} 学习资料`;
   const now = new Date();
   const paperId = createRecordId("material");
+  lastCloudSyncError = null;
   try {
     const generated = await generateQuestionsFromFile(sourceFile, paperId, topic, generationOptions);
     setGenerationProgress(93, localized("Saving the question set…", "正在储存题目练习……"), "save");
@@ -3551,6 +3561,7 @@ $("#process-upload").addEventListener("click", async (event) => {
     savePapers();
     saveQuestions();
     saveAssignments();
+    await flushCloudSync({ throwOnError: true });
     renderPapers();
     renderAssignments();
     if (activeWorkspaceView === "library") renderWorkspaceView("library");

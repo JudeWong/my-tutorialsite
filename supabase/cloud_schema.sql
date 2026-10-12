@@ -30,6 +30,9 @@ create unique index if not exists classes_class_name_key on public.classes(class
 
 alter table public.registration_codes add column if not exists created_by uuid references auth.users(id) on delete cascade;
 alter table public.registration_codes add column if not exists updated_at timestamptz not null default now();
+-- Existing projects may require a class_name for every registration code.
+-- The current code is shared by all classes, so use a safe school-wide label.
+alter table public.registration_codes alter column class_name set default '全校';
 
 alter table public.materials add column if not exists title_en text;
 alter table public.materials add column if not exists year integer;
