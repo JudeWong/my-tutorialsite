@@ -1662,7 +1662,7 @@ function getUploadGenerationOptions() {
   const requested = Number.parseInt($("#upload-question-count").value, 10);
   return {
     materialType,
-    questionCount: materialType === "teaching-material" ? Math.max(10, Math.min(50, requested || 10)) : 0
+    questionCount: materialType === "teaching-material" ? Math.max(10, Math.min(50, requested || 10)) : 40
   };
 }
 
@@ -1676,8 +1676,8 @@ function syncUploadGenerationOptions() {
       `Gemini 会理解教学内容，并生成 ${questionCount} 道中文题目（最少 10 题）。`
     )
     : localized(
-      "The system will identify every complete question in the paper and generate them in the original order.",
-      "系统会辨识试卷里的所有完整题目，并依原顺序生成。"
+      "The system will identify every question and sub-question in the paper and generate at least 40 in the original order.",
+      "系统会辨识试卷里的所有题目和分题，并依原顺序生成至少 40 题。"
     );
 }
 
@@ -2076,10 +2076,12 @@ function createAISetupError(message) {
 
 function getQuestionGenerationLimits(options = {}) {
   const materialType = options.materialType === "teaching-material" ? "teaching-material" : "past-paper";
-  const requestedCount = Math.max(10, Math.min(50, Number(options.questionCount) || 10));
+  const requestedCount = materialType === "teaching-material"
+    ? Math.max(10, Math.min(50, Number(options.questionCount) || 10))
+    : Math.max(40, Math.min(100, Number(options.questionCount) || 40));
   return materialType === "teaching-material"
     ? { materialType, requestedCount, minItems: requestedCount, maxItems: requestedCount }
-    : { materialType, requestedCount: 0, minItems: 1, maxItems: null };
+    : { materialType, requestedCount, minItems: 40, maxItems: 100 };
 }
 
 function buildQuestionResponseSchema(options = {}) {
@@ -2110,7 +2112,7 @@ function buildQuestionResponseSchema(options = {}) {
 function buildQuestionGenerationPrompt(text, fileName, topic, options = {}) {
   const { materialType, requestedCount } = getQuestionGenerationLimits(options);
   const generationTask = materialType === "past-paper"
-    ? `This is a past-year examination paper. Identify EVERY complete numbered question and separately numbered sub-question visible in the supplied document. Return one output item for each source question, in exactly the original order. Do not stop after a sample and do not silently omit later questions. Preserve the original meaning and choices when they exist; if an item is not already multiple-choice, convert it into one logically equivalent single-best-answer question without losing the tested concept.`
+    ? `This is a past-year examination paper. Generate AT LEAST ${requestedCount} complete questions. Identify EVERY top-level question AND EVERY separately numbered sub-question or part (such as 1(a), 1(b), 1(c), Section A items, table/diagram items) visible in the supplied document. Return one output item for each source question or sub-question, in exactly the original order. Never return only the first few top-level questions. If there are fewer than ${requestedCount} top-level numbers, expand all visible sub-parts into separate items until at least ${requestedCount}; do not invent facts outside the document. Preserve the original meaning and choices when they exist; if an item is not already multiple-choice, convert it into one logically equivalent single-best-answer question without losing the tested concept.`
     : `This is a handout or teaching resource. Create exactly ${requestedCount} distinct single-best-answer multiple-choice questions that cover the material broadly and proportionally.`;
   return `You are an experienced Malaysian Independent Chinese Secondary School computer science teacher and UEC examination setter. Read and understand the supplied learning material before writing any question.
 
@@ -2128,7 +2130,7 @@ Strict quality rules:
 9. When a question depends on a chart, table, diagram, screenshot, network layout, circuit, or other visual, set image_page to the supplied visual page number, image_bbox to [ymin,xmin,ymax,xmax] normalized from 0 to 1000, and image_alt to a concise Chinese description. Use image_page 0 and image_bbox [0,0,0,0] when no visual is needed. Never invent a visual that is not present.
 10. Return only a JSON array with this exact schema:
 [{"question":"...","code":"optional code or empty string","options":["选项文字 1","选项文字 2"],"correct":0,"level":"Basic|Intermediate|Advanced","explanation":"...","mistake":"...","image_page":0,"image_bbox":[0,0,0,0],"image_alt":""}]
-The correct value is a zero-based integer from 0 to 3.
+The correct value is a zero-based integer from 0 to one less than the number of options (maximum 5).
 
 Category: ${TOPIC_EN[topic] || topic}
 Source file: ${fileName}
@@ -2155,8 +2157,11 @@ async function parseAIQuestionResponse(raw, paperId, topic, options = {}) {
       `Gemini 返回了 ${questions.length} 道有效中文题目，没有达到所选的 ${requestedCount} 题，请重新尝试。`
     ));
   }
-  if (materialType === "past-paper" && !questions.length) {
-    throw new Error(localized("No complete Chinese questions could be generated from this paper.", "无法从这份试卷生成完整的中文题目。"));
+  if (materialType === "past-paper" && questions.length < requestedCount) {
+    throw new Error(localized(
+      `Gemini returned ${questions.length} questions, but a past-year paper requires at least ${requestedCount}. Please try again.`,
+      `Gemini 只返回了 ${questions.length} 道题，历届试卷至少需要 ${requestedCount} 道，请重新尝试。`
+    ));
   }
   return attachQuestionVisuals(maxItems ? questions.slice(0, maxItems) : questions, options.visuals || []);
 }
@@ -2257,7 +2262,7 @@ async function requestQuestionsFromGemini(apiKey, model, prompt, paperId, topic,
           store: false,
           generation_config: {
             temperature: 0.2,
-            max_output_tokens: options.materialType === "past-paper" ? 32768 : Math.min(24000, Math.max(10000, options.questionCount * 700)),
+            max_output_tokens: options.materialType === "past-paper" ? 49152 : Math.min(24000, Math.max(10000, options.questionCount * 700)),
             thinking_level: "medium"
           },
           response_format: {
@@ -2419,7 +2424,7 @@ async function generateQuestionsFromFile(file, paperId, topic, options) {
   }
   setGenerationProgress(66, localized("Organizing key concepts…", "正在整理重点内容……"), "generate");
   setGenerationProgress(76, options.materialType === "past-paper"
-    ? localized("Gemini is identifying every question in the paper…", "Gemini 正在辨识试卷中的所有题目……")
+    ? localized("Gemini is extracting at least 40 questions and sub-questions from the paper…", "Gemini 正在从试卷整理至少 40 道题目和分题……")
     : localized(`Gemini is understanding the material and writing ${options.questionCount} questions…`, `Gemini 正在理解资料并编写 ${options.questionCount} 道题目……`), "generate");
   const aiQuestions = await requestAIQuestions(extractedText, file.name, paperId, topic, options);
   return { questions: aiQuestions, mode: "ai" };

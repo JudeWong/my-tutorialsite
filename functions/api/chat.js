@@ -8,10 +8,12 @@ const JSON_HEADERS = {
 };
 function questionResponseSchema(body) {
   const isTeachingMaterial = body.materialType === "teaching-material";
-  const requestedCount = Math.max(10, Math.min(50, Number(body.questionCount) || 10));
+  const requestedCount = isTeachingMaterial
+    ? Math.max(10, Math.min(50, Number(body.questionCount) || 10))
+    : Math.max(40, Math.min(100, Number(body.questionCount) || 40));
   const schema = {
     type: "array",
-    minItems: isTeachingMaterial ? requestedCount : 1,
+    minItems: requestedCount,
     items: {
       type: "object",
       required: ["question", "code", "options", "correct", "level", "explanation", "mistake", "image_page", "image_bbox", "image_alt"],
@@ -29,7 +31,7 @@ function questionResponseSchema(body) {
       }
     }
   };
-  if (isTeachingMaterial) schema.maxItems = requestedCount;
+  schema.maxItems = isTeachingMaterial ? requestedCount : 100;
   return schema;
 }
 
@@ -39,7 +41,7 @@ function json(data, status = 200) {
 
 function systemPrompt(mode, language, task) {
   if (task === "question-generation") {
-    return "Produce accurate, source-grounded UEC computer science assessment questions. Every user-visible natural-language question, option, explanation, common mistake, and image description must be in Simplified Chinese. Inspect every supplied page image. If a question depends on a chart, table, diagram, screenshot, network layout, circuit, or other visual, return its page number and normalized bounding box [ymin,xmin,ymax,xmax] from 0 to 1000; otherwise use image_page 0 and image_bbox [0,0,0,0]. Preserve combination choices and Roman-numeral choices such as I, II, III, IV, V, ①, and ② exactly; do not skip a question because an option uses these symbols. English is allowed only for source code, identifiers, abbreviations, and unavoidable standard computing terms. Return JSON only.";
+    return "Produce accurate, source-grounded UEC computer science assessment questions. For a past-year paper, return at least 40 items by including every top-level question and separately numbered sub-question or part; never return only a short sample. Every user-visible natural-language question, option, explanation, common mistake, and image description must be in Simplified Chinese. Inspect every supplied page image. If a question depends on a chart, table, diagram, screenshot, network layout, circuit, or other visual, return its page number and normalized bounding box [ymin,xmin,ymax,xmax] from 0 to 1000; otherwise use image_page 0 and image_bbox [0,0,0,0]. Preserve combination choices and Roman-numeral choices such as I, II, III, IV, V, ①, and ② exactly; do not skip a question because an option uses these symbols. English is allowed only for source code, identifiers, abbreviations, and unavoidable standard computing terms. Return JSON only.";
   }
   const style = mode === "study"
     ? "Teach step by step, check the learner's reasoning, use concrete examples, and include a useful practice prompt when appropriate."
@@ -143,7 +145,7 @@ export async function onRequestPost({ request, env }) {
           generation_config: {
             temperature: body.task === "question-generation" ? 0.3 : body.mode === "creative" ? 0.9 : 0.55,
             max_output_tokens: body.task === "question-generation"
-              ? body.materialType === "past-paper" ? 32768 : Math.min(24000, Math.max(10000, (Number(body.questionCount) || 10) * 700))
+              ? body.materialType === "past-paper" ? 49152 : Math.min(24000, Math.max(10000, (Number(body.questionCount) || 10) * 700))
               : 4096,
             thinking_level: body.task === "question-generation" ? "medium" : "medium"
           },
