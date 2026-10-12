@@ -135,6 +135,7 @@ let cloudClasses = [];
 let cloudDataLoaded = false;
 let cloudRegistrationCode = "";
 let cloudRegistrationCodeExpiresAt = "";
+let cloudChatThreadId = "";
 let lastCloudSyncErrorAt = 0;
 let lastCloudSyncError = null;
 let cloudSyncQueue = Promise.resolve();
@@ -1385,6 +1386,12 @@ async function askAI(question, { repeatUser = true } = {}) {
     typingMessage.remove();
     aiConversation.push({ role: "assistant", content: data.reply });
     appendChatMessage("ai", data.reply);
+    if (Cloud?.enabled && cloudProfile) {
+      syncCloud(
+        async () => { cloudChatThreadId = await Cloud.saveChatConversation(cloudChatThreadId, aiConversation, "学生 AI 对话"); },
+        "AI chat"
+      );
+    }
     const status = $("#ai-connection-status");
     if (status) {
       status.classList.remove("offline");
@@ -1398,6 +1405,12 @@ async function askAI(question, { repeatUser = true } = {}) {
     );
     aiConversation.push({ role: "assistant", content: unavailable });
     appendChatMessage("ai", unavailable);
+    if (Cloud?.enabled && cloudProfile) {
+      syncCloud(
+        async () => { cloudChatThreadId = await Cloud.saveChatConversation(cloudChatThreadId, aiConversation, "学生 AI 对话"); },
+        "AI chat"
+      );
+    }
     const status = $("#ai-connection-status");
     if (status) {
       status.classList.add("offline");
@@ -1414,6 +1427,7 @@ function resetAIChat() {
   clearTimeout(aiReplyTimer);
   lastAIQuestion = "";
   aiConversation = [];
+  cloudChatThreadId = "";
   $("#ai-chat-log").innerHTML = "";
   appendChatMessage("ai", localized(
     "Hello! I am your generative AI assistant. Ask me anything, request an explanation, rewrite text, compare ideas, or create something new.",

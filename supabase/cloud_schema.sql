@@ -87,6 +87,17 @@ alter table public.submissions add column if not exists updated_at timestamptz n
 
 alter table public.student_answers add column if not exists created_at timestamptz not null default now();
 
+-- Chat tables are kept compatible with the existing database names used by
+-- the application. Existing projects may already have these columns; the
+-- guards make this safe to run again.
+alter table public.chat_threads add column if not exists user_id uuid references auth.users(id) on delete cascade;
+alter table public.chat_threads add column if not exists title text not null default 'AI 对话';
+alter table public.chat_threads add column if not exists created_at timestamptz not null default now();
+alter table public.chat_messages add column if not exists thread_id uuid references public.chat_threads(id) on delete cascade;
+alter table public.chat_messages add column if not exists sender text not null default 'user';
+alter table public.chat_messages add column if not exists message text not null default '';
+alter table public.chat_messages add column if not exists created_at timestamptz not null default now();
+
 create or replace function public.is_teacher()
 returns boolean
 language sql

@@ -436,6 +436,25 @@
     if (rows.length) unwrap(await requireClient().from("student_answers").insert(rows), "Save student answers");
   }
 
+  async function saveChatConversation(threadId, messages, title = "AI 对话") {
+    if (!session?.user?.id || !Array.isArray(messages) || !messages.length) return threadId || "";
+    const id = isUuid(threadId) ? threadId : newUuid();
+    const db = requireClient();
+    unwrap(await db.from("chat_threads").upsert({ id, user_id: session.user.id, title: String(title || "AI 对话").slice(0, 120) }, { onConflict: "id" }), "Save chat thread");
+    unwrap(await db.from("chat_messages").delete().eq("thread_id", id), "Replace chat messages");
+    const rows = messages
+      .filter((item) => item && typeof item.content === "string" && ["user", "assistant"].includes(item.role))
+      .map((item, index) => ({
+        id: newUuid(),
+        thread_id: id,
+        sender: item.role === "assistant" ? "assistant" : "user",
+        message: item.content,
+        created_at: new Date(Date.now() + index).toISOString()
+      }));
+    if (rows.length) unwrap(await db.from("chat_messages").insert(rows), "Save chat messages");
+    return id;
+  }
+
   function isCorrectAnswer(question, answer) {
     if (question.type === "fill") {
       const normalize = (value) => String(value ?? "").normalize("NFKC").trim().replace(/\s+/g, " ").toLocaleLowerCase();
@@ -498,12 +517,21 @@
   async function checkSchema() {
     if (!client) return false;
     const checks = await Promise.all([
-      client.from("materials").select("id,storage_path,material_type,updated_at").limit(0),
-      client.from("questions").select("id,question_type,correct_index,image_path,updated_at").limit(0),
-      client.from("assignments").select("id,material_id,published,updated_at").limit(0),
-      client.from("profiles").select("id,class_id,updated_at").limit(0)
+      client.from("profiles").select("id,class_id,updated_at").limit(0),
+      client.from("classes").select("id,teacher_id,class_name,active,updated_at").limit(0),
+      client.from("registration_codes").select("id,code,class_name,expires_at,created_by").limit(0),
+      client.from("materials").select("id,storage_path,material_type,requested_question_count,updated_at").limit(0),
+      client.from("questions").select("id,material_id,question_type,correct_index,image_path,updated_at").limit(0),
+      client.from("notes").select("id,title,content,updated_at").limit(0),
+      client.from("assignments").select("id,material_id,class_id,published,updated_at").limit(0),
+      client.from("assignment_questions").select("id,assignment_id,question_id,position").limit(0),
+      client.from("submissions").select("id,assignment_id,student_id,status,submitted_at").limit(0),
+      client.from("student_answers").select("id,submission_id,question_id,student_answer,is_correct").limit(0),
+      client.from("chat_threads").select("id,user_id,title,created_at").limit(0),
+      client.from("chat_messages").select("id,thread_id,sender,message,created_at").limit(0)
     ]);
-    return checks.every((result) => !result.error);
+    const storageCheck = await client.storage.from("learning-materials").list("", { limit: 1 });
+    return [...checks, storageCheck].every((result) => !result.error);
   }
 
   async function updateOwnPassword(password) {
@@ -545,6 +573,7 @@
     deleteMaterial,
     deleteNote,
     saveSubmission,
+    saveChatConversation,
     getRegistrationCode,
     checkSchema,
     updateOwnPassword
