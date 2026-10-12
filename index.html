@@ -179,6 +179,9 @@
           <button class="nav-item" data-view="library">
             <span class="nav-icon" aria-hidden="true">▤</span><span>学习资料</span>
           </button>
+          <button class="nav-item" data-view="notes">
+            <span class="nav-icon" aria-hidden="true">✎</span><span>教师笔记</span>
+          </button>
           <button class="nav-item" data-view="classes">
             <span class="nav-icon" aria-hidden="true">◎</span><span>班级进度</span>
           </button>
@@ -338,31 +341,7 @@
             <article><span class="metric-icon">↗</span><div><small>班级排名</small><strong id="student-rank">—</strong></div></article>
           </div>
 
-          <div class="student-tools-grid">
-            <section class="panel ai-tutor" id="ai-tutor">
-              <div class="tool-heading">
-                <div><p class="section-kicker ai-general-label">生成式 <span lang="en">AI</span></p><h2>你的 AI 对话助理</h2><p>像 ChatGPT 与 Gemini 一样，以连续对话协助学习、创作和解决问题。</p></div>
-                <button class="new-chat-button" id="new-ai-chat" type="button"><span>＋</span> 新对话</button>
-              </div>
-              <div class="ai-model-bar">
-                <label><span>模型</span><select id="ai-model-select"><option value="general">AI General</option><option value="study">AI Study</option><option value="creative">AI Creative</option></select></label>
-                <span class="ai-online" id="ai-connection-status"><i></i> 在线</span>
-              </div>
-              <div class="ai-chat-log" id="ai-chat-log" aria-live="polite">
-                <div class="chat-message ai-message"><span>AI</span><div class="message-body"><p>你好！我是你的生成式 AI 助理。你可以连续提问、要求我解释、改写、比较或产生新点子。</p><div class="message-actions"><button type="button" data-copy-message>复制</button></div></div></div>
-              </div>
-              <div class="suggested-prompts">
-                <button data-prompt="解释 Python 循环题的解法">Python 循环</button>
-                <button data-prompt="帮我拟定今天的温习计划">温习计划</button>
-                <button data-prompt="用简单方式解释人工智能">认识 AI</button>
-              </div>
-              <form class="ai-input-row" id="ai-question-form">
-                <textarea id="ai-question-input" rows="1" placeholder="输入消息，按 Enter 发送……" autocomplete="off" required></textarea>
-                <button type="submit" aria-label="发送问题">↑</button>
-              </form>
-              <small class="ai-source">AI 可能会出错，请检查重要信息。</small>
-            </section>
-
+          <div class="student-tools-grid student-progress-focus">
             <section class="panel student-progress-card">
               <div class="tool-heading">
                 <div><p class="section-kicker" lang="en">MY PROGRESS</p><h2>我的学习成长</h2><p>完成练习、累积能力，持续看见自己的进步。</p></div>
@@ -380,6 +359,14 @@
               </div>
             </section>
           </div>
+
+          <section class="panel student-notes-panel">
+            <div class="panel-heading">
+              <div><p class="section-kicker">TEACHER NOTES</p><h2>老师笔记</h2><p>查看老师发布的重点、提醒与学习补充。</p></div>
+              <button class="text-button" data-view-link="notes">查看全部笔记 <span>→</span></button>
+            </div>
+            <div class="teacher-notes-grid preview" id="student-notes-preview"></div>
+          </section>
 
           <div class="student-layout">
             <section class="panel assignment-panel">
@@ -446,9 +433,39 @@
         <button class="active" data-view="dashboard"><span>⌂</span>总览</button>
         <button data-view="library"><span>▤</span>题库</button>
         <button id="mobile-add" class="mobile-add" aria-label="上传学习资料">＋</button>
+        <button data-view="notes"><span>✎</span>笔记</button>
         <button data-view="classes"><span>◎</span>班级</button>
         <button data-view="insights"><span>↗</span>分析</button>
       </nav>
+
+      <button class="ai-chat-launcher" id="ai-chat-launcher" type="button" aria-controls="ai-chat-popover" aria-expanded="false" hidden>
+        <span class="ai-launcher-mark">AI</span><span class="ai-launcher-copy"><strong>问 AI</strong><small>随时提问</small></span>
+      </button>
+      <aside class="ai-chat-popover" id="ai-chat-popover" aria-label="生成式 AI 对话" hidden>
+        <section class="ai-tutor" id="ai-tutor">
+          <div class="tool-heading ai-popover-heading">
+            <div><p class="section-kicker ai-general-label">生成式 <span lang="en">AI</span></p><h2>你的 AI 对话助理</h2></div>
+            <div class="ai-heading-actions"><button class="new-chat-button" id="new-ai-chat" type="button"><span>＋</span> 新对话</button><button class="ai-chat-close" id="close-ai-chat" type="button" aria-label="关闭 AI 对话">×</button></div>
+          </div>
+          <div class="ai-model-bar">
+            <label><span>模式</span><select id="ai-model-select"><option value="general">AI General</option><option value="study">AI Study</option><option value="creative">AI Creative</option></select></label>
+            <span class="ai-online" id="ai-connection-status"><i></i> 在线</span>
+          </div>
+          <div class="ai-chat-log" id="ai-chat-log" aria-live="polite">
+            <div class="chat-message ai-message"><span>AI</span><div class="message-body"><p>你好！我是你的生成式 AI 助理。你可以问我任何问题，也可以要求解释、写作、计算、翻译或编程协助。</p><div class="message-actions"><button type="button" data-copy-message>复制</button></div></div></div>
+          </div>
+          <div class="suggested-prompts">
+            <button data-prompt="解释 Python 循环题的解法">Python 循环</button>
+            <button data-prompt="帮我拟定今天的温习计划">温习计划</button>
+            <button data-prompt="用简单方式解释人工智能">认识 AI</button>
+          </div>
+          <form class="ai-input-row" id="ai-question-form">
+            <textarea id="ai-question-input" rows="1" placeholder="输入消息，按 Enter 发送……" autocomplete="off" required></textarea>
+            <button type="submit" aria-label="发送问题">↑</button>
+          </form>
+          <small class="ai-source">AI 可能会出错，请检查重要信息。</small>
+        </section>
+      </aside>
     </div>
 
     <dialog id="upload-dialog" class="modal">
@@ -598,13 +615,33 @@
       </div>
     </dialog>
 
+    <dialog id="note-dialog" class="modal note-modal">
+      <form id="note-form">
+        <div class="modal-head">
+          <div><p class="section-kicker">TEACHER NOTE</p><h2 id="note-dialog-title">新增笔记</h2></div>
+          <button type="button" id="close-note" aria-label="关闭">×</button>
+        </div>
+        <p class="modal-intro">发布后学生即可在学生端查看。</p>
+        <input id="edit-note-id" type="hidden" />
+        <div class="note-fields">
+          <label>笔记标题<input id="note-title" type="text" maxlength="120" placeholder="请输入清楚的笔记标题" required /></label>
+          <label>笔记内容<textarea id="note-content" rows="10" maxlength="12000" placeholder="输入重点、说明、提醒或补充资料……" required></textarea></label>
+        </div>
+        <p class="form-error" id="note-error"></p>
+        <div class="modal-actions">
+          <button class="secondary-button" type="button" id="cancel-note">取消</button>
+          <button class="primary-button" type="submit">发布笔记</button>
+        </div>
+      </form>
+    </dialog>
+
     <dialog id="ai-settings-dialog" class="modal password-modal">
       <form id="ai-settings-form">
         <div class="modal-head">
-          <div><p class="section-kicker">AI CONNECTION</p><h2>AI 题目生成设置</h2></div>
+          <div><p class="section-kicker">AI CONNECTION</p><h2>生成式 AI 设置</h2></div>
           <button type="button" id="close-ai-settings" aria-label="关闭">×</button>
         </div>
-        <p class="modal-intro">GitHub Pages 没有 AI 后端。请输入自己的 Gemini API Key，让浏览器直接调用 Gemini；密钥只储存在这台装置的浏览器，不会写入网站代码库。</p>
+        <p class="modal-intro">这个连接同时用于学生的通用 AI 对话与老师的 AI 题目生成。GitHub Pages 没有 AI 后端时，可输入 Gemini API Key 直接连接；密钥只储存在这台装置的浏览器。</p>
         <div class="password-fields">
           <label>Gemini API Key<input id="gemini-api-key" type="password" autocomplete="off" placeholder="输入 Google AI Studio API Key" /></label>
           <label>Gemini 模型<input id="gemini-model" type="text" value="gemini-3.8-flash" required /></label>

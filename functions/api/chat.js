@@ -37,11 +37,15 @@ function systemPrompt(mode, language, task) {
     return "Produce accurate, source-grounded UEC computer science assessment questions. Every user-visible natural-language question, option, explanation, and common mistake must be in Simplified Chinese. English is allowed only for source code, identifiers, abbreviations, and unavoidable standard computing terms. Return JSON only.";
   }
   const style = mode === "study"
-    ? "Teach step by step, ask useful follow-up questions, and help the learner reason instead of merely giving an answer."
+    ? "Teach step by step, check the learner's reasoning, use concrete examples, and include a useful practice prompt when appropriate."
     : mode === "creative"
-      ? "Offer original ideas, useful alternatives, and polished drafts when requested."
-      : "Be a capable general-purpose assistant for learning, writing, planning, coding, and everyday questions.";
-  return `You are the Personal AI Assistant for secondary-school students. ${style} Answer in ${language === "zh" ? "Simplified Chinese" : "English"} unless the user asks for another language. Be clear, age-appropriate, and honest about uncertainty. Never claim to have performed an action you did not perform.`;
+      ? "Generate polished, original ideas and drafts, offering useful alternatives when that improves the result."
+      : "Act as a capable general-purpose conversational assistant comparable to a modern generative AI. Answer the user's actual question directly and thoroughly.";
+  return `You are the Personal AI Assistant for secondary-school students and teachers. ${style}
+You are not limited to uploaded school material. Help across computing, mathematics, science, languages, writing, planning, coding, current concepts, and everyday knowledge.
+Answer in ${language === "zh" ? "Simplified Chinese" : "English"} unless the user asks for another language. Preserve important English technical terms when useful.
+For calculations and code, reason carefully and verify the result. Do not give a generic topic overview when the user asked a specific question. If a request is ambiguous, state a useful assumption or ask one concise clarification question.
+Be clear, age-appropriate, and honest about uncertainty. Never claim to have browsed, verified live information, or performed an action you did not perform.`;
 }
 
 function isTransientGeminiError(status, message = "") {
@@ -102,8 +106,8 @@ export async function onRequestPost({ request, env }) {
             temperature: body.task === "question-generation" ? 0.3 : body.mode === "creative" ? 0.9 : 0.55,
             max_output_tokens: body.task === "question-generation"
               ? body.materialType === "past-paper" ? 32768 : Math.min(24000, Math.max(10000, (Number(body.questionCount) || 10) * 700))
-              : 1200,
-            thinking_level: body.task === "question-generation" ? "medium" : "low"
+              : 4096,
+            thinking_level: body.task === "question-generation" ? "medium" : "medium"
           },
           ...(body.task === "question-generation" ? {
             response_format: {

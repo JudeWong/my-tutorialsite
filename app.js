@@ -1,6 +1,7 @@
 const PAPERS_KEY = "tixi_papers_v1";
 const ASSIGNMENTS_KEY = "tixi_assignments_v1";
 const QUESTIONS_KEY = "tixi_questions_v1";
+const NOTES_KEY = "tixi_teacher_notes_v1";
 const SESSION_KEY = "tixi_session_v1";
 
 function readStoredArray(key) {
@@ -15,6 +16,7 @@ function readStoredArray(key) {
 let papers = readStoredArray(PAPERS_KEY);
 let assignments = readStoredArray(ASSIGNMENTS_KEY);
 let questionBank = readStoredArray(QUESTIONS_KEY);
+let teacherNotes = readStoredArray(NOTES_KEY);
 let questions = [];
 
 const TOPIC_EN = Object.freeze({
@@ -51,6 +53,17 @@ papers = papers.map((paper, index) => ({
   requestedQuestionCount: Number(paper.requestedQuestionCount) || 0,
   createdAt: paper.createdAt || new Date().toISOString()
 }));
+
+teacherNotes = teacherNotes
+  .filter((note) => note && typeof note === "object" && String(note.title || "").trim() && String(note.content || "").trim())
+  .map((note, index) => ({
+    id: String(note.id || `note-${note.createdAt || Date.now()}-${index}`),
+    title: String(note.title || "").trim(),
+    content: String(note.content || "").trim(),
+    createdAt: note.createdAt || new Date().toISOString(),
+    updatedAt: note.updatedAt || note.createdAt || new Date().toISOString()
+  }))
+  .sort((a, b) => new Date(b.updatedAt) - new Date(a.updatedAt));
 
 questionBank = questionBank.filter((question) => {
   if (!question || typeof question.title !== "string") return false;
@@ -460,6 +473,28 @@ const UI_EN = Object.freeze({
   ,"储存账号修改": "Save Account Changes"
   ,"放大查看": "Enlarge"
   ,"复制验证码": "Copy Code"
+  ,"教师笔记": "Teacher Notes"
+  ,"老师笔记": "Teacher Notes"
+  ,"笔记": "Notes"
+  ,"查看老师发布的重点、提醒与学习补充。": "Read key points, reminders, and learning supplements published by your teacher."
+  ,"查看全部笔记": "View All Notes"
+  ,"新增笔记": "New Note"
+  ,"编辑笔记": "Edit Note"
+  ,"发布后学生即可在学生端查看。": "Students can read this note immediately after it is published."
+  ,"笔记标题": "Note Title"
+  ,"笔记内容": "Note Content"
+  ,"请输入清楚的笔记标题": "Enter a clear note title"
+  ,"输入重点、说明、提醒或补充资料……": "Write key points, explanations, reminders, or supplementary material…"
+  ,"发布笔记": "Publish Note"
+  ,"关闭 AI 对话": "Close AI Chat"
+  ,"问 AI": "Ask AI"
+  ,"随时提问": "Ask anything"
+  ,"生成式 AI 设置": "Generative AI Settings"
+  ,"这个连接同时用于学生的通用 AI 对话与老师的 AI 题目生成。GitHub Pages 没有 AI 后端时，可输入 Gemini API Key 直接连接；密钥只储存在这台装置的浏览器。": "This connection powers both students' general AI chat and teachers' AI question generation. When GitHub Pages has no AI backend, enter a Gemini API key for a direct connection; the key is stored only in this browser."
+  ,"模式": "Mode"
+  ,"你好！我是你的生成式 AI 助理。你可以问我任何问题，也可以要求解释、写作、计算、翻译或编程协助。": "Hi! I'm your generative AI assistant. Ask me anything or request help with explanations, writing, calculations, translation, or programming."
+  ,"老师尚未发布笔记": "No teacher notes yet"
+  ,"老师发布笔记后会显示在这里。": "Notes published by your teacher will appear here."
 });
 
 function applyLanguage(language = "zh", { persist = true } = {}) {
@@ -564,6 +599,12 @@ function saveAssignments() {
 
 function saveQuestions() {
   localStorage.setItem(QUESTIONS_KEY, JSON.stringify(questionBank));
+}
+
+function saveTeacherNotes() {
+  localStorage.setItem(NOTES_KEY, JSON.stringify(teacherNotes));
+  renderStudentNotesPreview();
+  if (activeWorkspaceView === "notes") renderWorkspaceView("notes");
 }
 
 function saveSession() {
@@ -684,6 +725,7 @@ function renderClassPerformance() {
 }
 
 function showPublicScreen(screen) {
+  closeAIChat();
   $("#landing-page").classList.toggle("screen-hidden", screen !== "landing");
   $("#auth-screen").classList.toggle("screen-hidden", screen !== "auth");
   $("#learning-app").classList.add("screen-hidden");
@@ -718,6 +760,7 @@ function enterApp(nextRole, student = null) {
   $("#learning-app").classList.remove("screen-hidden");
   document.body.classList.add("app-active");
   updateAccountUI();
+  $("#ai-chat-launcher").hidden = nextRole !== "student";
   setRole(nextRole);
   if (nextRole === "teacher") startCodeTimer();
   else clearInterval(codeTimer);
@@ -924,6 +967,84 @@ function appendChatMessage(type, message, { typing = false } = {}) {
   return wrapper;
 }
 
+function getChatSystemInstruction(mode) {
+  const modeInstruction = mode === "study"
+    ? "Teach step by step, check the learner's reasoning, use concrete examples, and end with one useful practice prompt when appropriate."
+    : mode === "creative"
+      ? "Generate polished, original ideas and drafts. Offer alternatives when that improves the result."
+      : "Act as a capable general-purpose assistant comparable to a modern conversational AI. Answer the actual question directly and thoroughly.";
+  return `You are the Personal AI Assistant for secondary-school students and teachers. ${modeInstruction}
+You are not limited to uploaded school material: answer questions across computing, mathematics, science, languages, writing, planning, current concepts, and everyday knowledge.
+Use the user's language unless they request another language. Preserve important English technical terms when helpful.
+For calculations and code, reason carefully and verify the result. If the request is ambiguous, state the most useful assumption or ask one concise clarification question.
+Do not give a canned topic overview when the user asked a specific question. Be honest about uncertainty and never claim to have browsed or performed actions you did not perform.`;
+}
+
+function extractGeminiChatReply(data) {
+  const interaction = data?.interaction || data;
+  return interaction?.steps
+    ?.filter((step) => step?.type === "model_output")
+    .flatMap((step) => Array.isArray(step.content) ? step.content : [])
+    .filter((content) => content?.type === "text")
+    .map((content) => content.text || "")
+    .join("\n")
+    .trim() || interaction?.output_text?.trim() || "";
+}
+
+async function requestChatFromGemini(apiKey, question) {
+  const endpoint = "https://generativelanguage.googleapis.com/v1beta/interactions";
+  const mode = $("#ai-model-select")?.value || "general";
+  const conversation = aiConversation.slice(-16).map((item) => `${item.role === "assistant" ? "Assistant" : "User"}: ${item.content}`).join("\n\n");
+  const input = conversation || `User: ${question}`;
+  const attemptModels = getGeminiAttemptModels(getGeminiModel());
+  let lastError;
+
+  for (let attempt = 0; attempt < attemptModels.length; attempt += 1) {
+    const attemptedModel = attemptModels[attempt];
+    try {
+      const response = await fetchWithGeminiAttemptTimeout(endpoint, {
+        method: "POST",
+        headers: { "Content-Type": "application/json", "x-goog-api-key": apiKey },
+        body: JSON.stringify({
+          model: attemptedModel,
+          input,
+          system_instruction: getChatSystemInstruction(mode),
+          store: false,
+          generation_config: {
+            temperature: mode === "creative" ? 0.9 : mode === "study" ? 0.45 : 0.65,
+            max_output_tokens: 4096,
+            thinking_level: "medium"
+          }
+        })
+      }, null, 60000);
+      const data = await response.json().catch(() => ({}));
+      if (!response.ok) {
+        const providerMessage = data?.error?.message || `Gemini returned ${response.status}`;
+        const error = new Error(providerMessage);
+        error.httpStatus = response.status;
+        if (isTransientGeminiError(response.status, providerMessage) && attempt < attemptModels.length - 1) {
+          await waitForGeminiRetry(650 * (2 ** attempt));
+          continue;
+        }
+        throw error;
+      }
+      const reply = extractGeminiChatReply(data);
+      if (!reply) throw new Error("Gemini returned an empty response");
+      localStorage.setItem(GEMINI_KEY_STATUS_KEY, "valid");
+      updateAIConfigStatus();
+      return { reply, model: attemptedModel };
+    } catch (error) {
+      lastError = error;
+      if (attempt < attemptModels.length - 1 && (["TimeoutError", "AbortError", "GeminiAttemptTimeout"].includes(error?.name) || !error?.httpStatus || isTransientGeminiError(error.httpStatus, error.message))) {
+        await waitForGeminiRetry(650 * (2 ** attempt));
+        continue;
+      }
+      break;
+    }
+  }
+  throw lastError || new Error("Gemini chat failed");
+}
+
 async function askAI(question, { repeatUser = true } = {}) {
   const trimmed = question.trim();
   if (!trimmed) return;
@@ -940,19 +1061,35 @@ async function askAI(question, { repeatUser = true } = {}) {
   submitButton.disabled = true;
   try {
     const configuredEndpoint = globalThis.PERSONAL_AI_CONFIG?.aiEndpoint?.trim();
-    const response = await fetch(configuredEndpoint || "./api/chat", {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({
-        message: trimmed,
-        messages: aiConversation.slice(-12),
-        mode: $("#ai-model-select")?.value || "general",
-        language: currentLanguage
-      })
-    });
-    if (!response.ok) throw new Error(`AI endpoint returned ${response.status}`);
-    const data = await response.json();
-    if (!data.reply || typeof data.reply !== "string") throw new Error("AI response was empty");
+    const canTrySameOrigin = !location.hostname.endsWith("github.io") && !globalThis.Capacitor?.isNativePlatform?.();
+    let data;
+    let endpointError;
+
+    if (configuredEndpoint || canTrySameOrigin) {
+      try {
+        const response = await fetch(configuredEndpoint || "./api/chat", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            message: trimmed,
+            messages: aiConversation.slice(-16),
+            mode: $("#ai-model-select")?.value || "general",
+            language: currentLanguage
+          })
+        });
+        if (!response.ok) throw new Error(`AI endpoint returned ${response.status}`);
+        data = await response.json();
+        if (!data.reply || typeof data.reply !== "string") throw new Error("AI response was empty");
+      } catch (error) {
+        endpointError = error;
+      }
+    }
+
+    if (!data?.reply && getGeminiApiKey()) data = await requestChatFromGemini(getGeminiApiKey(), trimmed);
+    if (!data?.reply) throw endpointError || createAISetupError(localized(
+      "AI is not connected. Configure the Gemini backend or API key in the teacher portal.",
+      "AI 尚未连接，请先在老师端设置 Gemini 后端或 API Key。"
+    ));
     typingMessage.remove();
     aiConversation.push({ role: "assistant", content: data.reply });
     appendChatMessage("ai", data.reply);
@@ -963,15 +1100,18 @@ async function askAI(question, { repeatUser = true } = {}) {
     }
   } catch (error) {
     typingMessage.remove();
-    const fallback = getAIAnswer(trimmed);
-    aiConversation.push({ role: "assistant", content: fallback });
-    appendChatMessage("ai", fallback);
+    const unavailable = localized(
+      "I could not connect to the generative AI service. Ask your teacher to check the Gemini connection, API key, and model, then try again. Your question was not answered by a scripted demo.",
+      "目前无法连接生成式 AI 服务。请老师检查 Gemini 连接、API Key 与模型后再试。系统不会再用固定示范答案代替真正的 AI 回答。"
+    );
+    aiConversation.push({ role: "assistant", content: unavailable });
+    appendChatMessage("ai", unavailable);
     const status = $("#ai-connection-status");
     if (status) {
       status.classList.add("offline");
-      status.innerHTML = `<i></i> ${localized("Offline Demo", "离线示范")}`;
+      status.innerHTML = `<i></i> ${localized("Connection needed", "需要连接")}`;
     }
-    console.info("Using the offline AI demo response", error);
+    console.warn("Generative AI connection failed", error);
   } finally {
     submitButton.disabled = false;
     $("#ai-question-input").focus();
@@ -990,6 +1130,42 @@ function resetAIChat() {
   $("#ai-question-form button[type='submit']").disabled = false;
 }
 
+function openAIChat() {
+  if (role !== "student" || $("#learning-app").classList.contains("screen-hidden")) return;
+  const panel = $("#ai-chat-popover");
+  const status = $("#ai-connection-status");
+  const configuredEndpoint = globalThis.PERSONAL_AI_CONFIG?.aiEndpoint?.trim();
+  const hasSameOriginBackend = !location.hostname.endsWith("github.io")
+    && !globalThis.Capacitor?.isNativePlatform?.()
+    && !["127.0.0.1", "localhost"].includes(location.hostname);
+  const connected = Boolean(configuredEndpoint || getGeminiApiKey() || hasSameOriginBackend);
+  status?.classList.toggle("offline", !connected);
+  if (status) status.innerHTML = connected
+    ? `<i></i> ${localized("Ready", "已就绪")}`
+    : `<i></i> ${localized("Connection needed", "需要连接")}`;
+  panel.hidden = false;
+  requestAnimationFrame(() => panel.classList.add("open"));
+  $("#ai-chat-launcher").classList.add("active");
+  $("#ai-chat-launcher").setAttribute("aria-expanded", "true");
+  setTimeout(() => $("#ai-question-input")?.focus(), 180);
+}
+
+function closeAIChat() {
+  const panel = $("#ai-chat-popover");
+  const launcher = $("#ai-chat-launcher");
+  if (!panel || !launcher) return;
+  panel.classList.remove("open");
+  launcher.classList.remove("active");
+  launcher.setAttribute("aria-expanded", "false");
+  setTimeout(() => {
+    if (!panel.classList.contains("open")) panel.hidden = true;
+  }, 180);
+}
+
+function toggleAIChat() {
+  $("#ai-chat-popover").hidden || !$("#ai-chat-popover").classList.contains("open") ? openAIChat() : closeAIChat();
+}
+
 function showToast(message) {
   clearTimeout(toastTimer);
   $("#toast p").textContent = message;
@@ -1005,6 +1181,58 @@ function escapeHTML(value) {
   return String(value ?? "").replace(/[&<>'"]/g, (character) => ({
     "&": "&amp;", "<": "&lt;", ">": "&gt;", "'": "&#39;", '"': "&quot;"
   })[character]);
+}
+
+function formatNoteDate(value) {
+  const date = new Date(value);
+  if (Number.isNaN(date.getTime())) return "";
+  return new Intl.DateTimeFormat(currentLanguage === "en" ? "en-MY" : "zh-CN", {
+    year: "numeric",
+    month: "short",
+    day: "numeric",
+    hour: "2-digit",
+    minute: "2-digit"
+  }).format(date);
+}
+
+function noteCardsMarkup({ editable = false, limit = teacherNotes.length } = {}) {
+  const visibleNotes = teacherNotes.slice(0, limit);
+  if (!visibleNotes.length) {
+    return `<div class="data-empty"><strong>${localized("No teacher notes yet", "老师尚未发布笔记")}</strong><p>${editable
+      ? localized("Create a note to share key points, reminders, or supplementary learning material with students.", "新增笔记，把重点、提醒或补充学习资料分享给学生。")
+      : localized("Notes published by your teacher will appear here.", "老师发布笔记后会显示在这里。")}</p></div>`;
+  }
+  return visibleNotes.map((note) => `
+    <article class="teacher-note-card" data-note-id="${escapeHTML(note.id)}">
+      <div class="teacher-note-meta"><span>${localized("TEACHER NOTE", "教师笔记")}</span><time>${escapeHTML(formatNoteDate(note.updatedAt))}</time></div>
+      <h2>${escapeHTML(note.title)}</h2>
+      <p>${escapeHTML(note.content)}</p>
+      ${editable ? `<div class="teacher-note-actions"><button type="button" data-edit-note="${escapeHTML(note.id)}">${localized("Edit", "编辑")}</button><button type="button" class="note-delete-button" data-delete-note="${escapeHTML(note.id)}">${localized("Delete", "删除")}</button></div>` : ""}
+    </article>`).join("");
+}
+
+function renderStudentNotesPreview() {
+  const container = $("#student-notes-preview");
+  if (!container) return;
+  container.innerHTML = noteCardsMarkup({ limit: 3 });
+}
+
+function openNoteDialog(noteId = "") {
+  if (role !== "teacher") return;
+  const note = teacherNotes.find((item) => item.id === noteId);
+  $("#note-form").reset();
+  $("#edit-note-id").value = note?.id || "";
+  $("#note-dialog-title").textContent = note ? localized("Edit Note", "编辑笔记") : localized("New Note", "新增笔记");
+  $("#note-title").value = note?.title || "";
+  $("#note-content").value = note?.content || "";
+  $("#note-error").textContent = "";
+  $("#note-dialog").showModal();
+  $("#note-title").focus();
+}
+
+function closeNoteDialog() {
+  $("#note-dialog").close();
+  $("#note-error").textContent = "";
 }
 
 function renderWorkspaceView(name) {
@@ -1033,6 +1261,15 @@ function renderWorkspaceView(name) {
       <div class="practice-grid">
         ${assignments.length ? assignments.map((item, index) => `<article class="panel practice-card"><span>${escapeHTML(item.icon)}</span><small>${item.done ? localized("COMPLETED", "已完成") : localized("READY", "可开始")}</small><h2>${escapeHTML(currentLanguage === "en" ? item.titleEn : item.title)}</h2><p>${escapeHTML(currentLanguage === "en" ? item.detailEn : item.detail)}</p><button type="button" data-start-assignment="${index}">${item.done ? localized("Review Answers", "查看解析") : localized("Start Practice", "开始练习")}</button></article>`).join("") : `<div class="data-empty"><strong>${localized("No assignments yet", "尚未布置练习")}</strong><p>${localized("Teacher assignments will appear here.", "老师建立练习后会显示在这里。")}</p></div>`}
       </div>`;
+  } else if (name === "notes") {
+    title.textContent = localized("Teacher Notes", "教师笔记");
+    description.textContent = role === "teacher"
+      ? localized("Publish explanations, reminders, and supplementary material for every student.", "发布重点说明、学习提醒与补充资料，让所有学生都能查看。")
+      : localized("Read key points, reminders, and learning supplements published by your teacher.", "查看老师发布的重点、提醒与学习补充。");
+    action.hidden = role !== "teacher";
+    action.textContent = localized("＋ New Note", "＋ 新增笔记");
+    action.dataset.action = role === "teacher" ? "new-note" : "";
+    content.innerHTML = `<div class="teacher-notes-grid">${noteCardsMarkup({ editable: role === "teacher" })}</div>`;
   } else if (name === "classes") {
     title.textContent = role === "teacher" ? localized("Class Progress", "班级进度") : localized("My Progress", "我的进度");
     description.textContent = role === "teacher"
@@ -1103,11 +1340,11 @@ function setRole(nextRole) {
 function updateNavigationLabels() {
   $$(".nav-item span:last-child").forEach((span, index) => {
     if (role === "student") span.textContent = currentLanguage === "en"
-      ? ["Learning Home", "Practice Library", "My Progress", "Learning Report"][index]
-      : ["学习首页", "练习题库", "我的进度", "学习报告"][index];
+      ? ["Learning Home", "Practice Library", "Teacher Notes", "My Progress", "Learning Report"][index]
+      : ["学习首页", "练习题库", "老师笔记", "我的进度", "学习报告"][index];
     else span.textContent = currentLanguage === "en"
-      ? ["Overview", "Learning Materials", "Class Progress", "Learning Analytics"][index]
-      : ["总览", "学习资料", "班级进度", "学习分析"][index];
+      ? ["Overview", "Learning Materials", "Teacher Notes", "Class Progress", "Learning Analytics"][index]
+      : ["总览", "学习资料", "教师笔记", "班级进度", "学习分析"][index];
   });
 }
 
@@ -2207,10 +2444,12 @@ function submitAnswer() {
 
 renderPapers();
 renderAssignments();
+renderStudentNotesPreview();
 populateYears();
 renderClassOptions();
 renderTeacherClasses();
 applyLanguage(localStorage.getItem(LANGUAGE_KEY) || "en", { persist: false });
+renderStudentNotesPreview();
 renderTeacherMetrics();
 renderClassPerformance();
 updateStudentProgress();
@@ -2220,6 +2459,7 @@ $$(".language-select").forEach((select) => select.addEventListener("change", (ev
   applyLanguage(event.target.value);
   renderPapers(activePaperFilter);
   renderAssignments();
+  renderStudentNotesPreview();
   renderTeacherClasses();
   renderTeacherMetrics();
   renderClassPerformance();
@@ -2448,6 +2688,38 @@ $("#class-list").addEventListener("click", (event) => {
   const classes = getClasses().filter((className) => className !== button.dataset.removeClass);
   saveClasses(classes);
   showToast(`${button.dataset.removeClass} ${localized("was removed", "已从列表移除")}`);
+});
+
+$("#close-note").addEventListener("click", closeNoteDialog);
+$("#cancel-note").addEventListener("click", closeNoteDialog);
+$("#note-form").addEventListener("submit", (event) => {
+  event.preventDefault();
+  const noteId = $("#edit-note-id").value;
+  const title = $("#note-title").value.trim();
+  const content = $("#note-content").value.trim();
+  if (!title || !content) {
+    $("#note-error").textContent = localized("Enter both a title and note content.", "请输入笔记标题与内容。");
+    return;
+  }
+  const now = new Date().toISOString();
+  const existing = teacherNotes.find((note) => note.id === noteId);
+  if (existing) {
+    existing.title = title;
+    existing.content = content;
+    existing.updatedAt = now;
+  } else {
+    teacherNotes.unshift({ id: `note-${Date.now()}-${Math.random().toString(36).slice(2, 7)}`, title, content, createdAt: now, updatedAt: now });
+  }
+  teacherNotes.sort((a, b) => new Date(b.updatedAt) - new Date(a.updatedAt));
+  saveTeacherNotes();
+  closeNoteDialog();
+  showToast(existing ? localized("Note updated.", "笔记已更新。") : localized("Note published for students.", "笔记已发布给学生。"));
+});
+
+$("#ai-chat-launcher").addEventListener("click", toggleAIChat);
+$("#close-ai-chat").addEventListener("click", closeAIChat);
+document.addEventListener("keydown", (event) => {
+  if (event.key === "Escape" && $("#ai-chat-popover")?.classList.contains("open")) closeAIChat();
 });
 
 $("#ai-question-form").addEventListener("submit", (event) => {
@@ -2763,12 +3035,27 @@ $("#workspace-primary-action").addEventListener("click", (event) => {
   if (action === "upload") openUpload();
   else if (action === "start-practice") startQuiz(0);
   else if (action === "export") downloadReport();
+  else if (action === "new-note") openNoteDialog();
   else if (action === "dashboard-classes") {
     showView("dashboard");
     $("#new-class-name")?.focus();
   }
 });
 $("#workspace-content").addEventListener("click", (event) => {
+  const editNoteButton = event.target.closest("[data-edit-note]");
+  if (editNoteButton) {
+    openNoteDialog(editNoteButton.dataset.editNote);
+    return;
+  }
+  const deleteNoteButton = event.target.closest("[data-delete-note]");
+  if (deleteNoteButton) {
+    const note = teacherNotes.find((item) => item.id === deleteNoteButton.dataset.deleteNote);
+    if (!note || !window.confirm(localized(`Delete “${note.title}”?`, `确定删除“${note.title}”吗？`))) return;
+    teacherNotes = teacherNotes.filter((item) => item.id !== note.id);
+    saveTeacherNotes();
+    showToast(localized("Note deleted.", "笔记已删除。"));
+    return;
+  }
   const studentButton = event.target.closest("[data-manage-student-id]");
   if (studentButton) {
     openStudentAccountEditor(studentButton.dataset.manageStudentId);
