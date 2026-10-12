@@ -12,26 +12,32 @@ function questionResponseSchema(body) {
     ? Math.max(10, Math.min(50, Number(body.questionCount) || 10))
     : Math.max(40, Math.min(100, Number(body.questionCount) || 40));
   const schema = {
-    type: "array",
-    minItems: requestedCount,
-    items: {
-      type: "object",
-      required: ["question", "code", "options", "correct", "level", "explanation", "mistake", "image_page", "image_bbox", "image_alt"],
-      properties: {
-        question: { type: "string" },
-        code: { type: "string" },
-        options: { type: "array", minItems: 2, maxItems: 6, items: { type: "string" } },
-        correct: { type: "integer", minimum: 0, maximum: 5 },
-        level: { type: "string", enum: ["Basic", "Intermediate", "Advanced"] },
-        explanation: { type: "string" },
-        mistake: { type: "string" },
-        image_page: { type: "integer", minimum: 0 },
-        image_bbox: { type: "array", minItems: 4, maxItems: 4, items: { type: "integer", minimum: 0, maximum: 1000 } },
-        image_alt: { type: "string" }
+    type: "object",
+    properties: {
+      questions: {
+        type: "array",
+        minItems: requestedCount,
+        items: {
+          type: "object",
+          required: ["question", "code", "options", "correct", "level", "explanation", "mistake", "image_page", "image_bbox", "image_alt"],
+          properties: {
+            question: { type: "string" },
+            code: { type: "string" },
+            options: { type: "array", minItems: 2, maxItems: 6, items: { type: "string" } },
+            correct: { type: "integer", minimum: 0, maximum: 5 },
+            level: { type: "string", enum: ["Basic", "Intermediate", "Advanced"] },
+            explanation: { type: "string" },
+            mistake: { type: "string" },
+            image_page: { type: "integer", minimum: 0 },
+            image_bbox: { type: "array", minItems: 4, maxItems: 4, items: { type: "integer", minimum: 0, maximum: 1000 } },
+            image_alt: { type: "string" }
+          }
+        }
       }
-    }
+    },
+    required: ["questions"]
   };
-  schema.maxItems = isTeachingMaterial ? requestedCount : 100;
+  schema.properties.questions.maxItems = isTeachingMaterial ? requestedCount : 100;
   return schema;
 }
 

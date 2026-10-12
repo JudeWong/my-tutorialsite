@@ -2110,25 +2110,31 @@ function getQuestionGenerationLimits(options = {}) {
 function buildQuestionResponseSchema(options = {}) {
   const { minItems, maxItems } = getQuestionGenerationLimits(options);
   return {
-    type: "array",
-    minItems,
-    ...(maxItems ? { maxItems } : {}),
-    items: {
-      type: "object",
-      required: ["question", "code", "options", "correct", "level", "explanation", "mistake", "image_page", "image_bbox", "image_alt"],
-      properties: {
-        question: { type: "string" },
-        code: { type: "string" },
-        options: { type: "array", minItems: 2, maxItems: 6, items: { type: "string" } },
-        correct: { type: "integer", minimum: 0, maximum: 5 },
-        level: { type: "string", enum: ["Basic", "Intermediate", "Advanced"] },
-        explanation: { type: "string" },
-        mistake: { type: "string" },
-        image_page: { type: "integer", minimum: 0 },
-        image_bbox: { type: "array", minItems: 4, maxItems: 4, items: { type: "integer", minimum: 0, maximum: 1000 } },
-        image_alt: { type: "string" }
+    type: "object",
+    properties: {
+      questions: {
+        type: "array",
+        minItems,
+        ...(maxItems ? { maxItems } : {}),
+        items: {
+          type: "object",
+          required: ["question", "code", "options", "correct", "level", "explanation", "mistake", "image_page", "image_bbox", "image_alt"],
+          properties: {
+            question: { type: "string" },
+            code: { type: "string" },
+            options: { type: "array", minItems: 2, maxItems: 6, items: { type: "string" } },
+            correct: { type: "integer", minimum: 0, maximum: 5 },
+            level: { type: "string", enum: ["Basic", "Intermediate", "Advanced"] },
+            explanation: { type: "string" },
+            mistake: { type: "string" },
+            image_page: { type: "integer", minimum: 0 },
+            image_bbox: { type: "array", minItems: 4, maxItems: 4, items: { type: "integer", minimum: 0, maximum: 1000 } },
+            image_alt: { type: "string" }
+          }
+        }
       }
-    }
+    },
+    required: ["questions"]
   };
 }
 
@@ -2151,8 +2157,8 @@ Strict quality rules:
 7. ALL user-visible natural-language content must be in Simplified Chinese, even when the source is English or Malay. This includes every question, every answer option, every explanation, and every common mistake. Do not write complete English sentences. English is allowed only inside source code, identifiers, commands, protocol abbreviations, or unavoidable standard computing terms such as CPU, SQL, HTML and Python.
 8. For a past paper, solve each source question carefully and set the correct answer from the source answer key when present; otherwise determine it by sound computer-science reasoning. A question containing a picture, table, combination option, or Roman-numeral option is still a complete question and must be returned.
 9. When a question depends on a chart, table, diagram, screenshot, network layout, circuit, or other visual, set image_page to the supplied visual page number, image_bbox to [ymin,xmin,ymax,xmax] normalized from 0 to 1000, and image_alt to a concise Chinese description. Use image_page 0 and image_bbox [0,0,0,0] when no visual is needed. Never invent a visual that is not present.
-10. Return only a JSON array with this exact schema:
-[{"question":"...","code":"optional code or empty string","options":["选项文字 1","选项文字 2"],"correct":0,"level":"Basic|Intermediate|Advanced","explanation":"...","mistake":"...","image_page":0,"image_bbox":[0,0,0,0],"image_alt":""}]
+  10. Return only a JSON object with a "questions" array using this exact schema:
+{"questions":[{"question":"...","code":"optional code or empty string","options":["选项文字 1","选项文字 2"],"correct":0,"level":"Basic|Intermediate|Advanced","explanation":"...","mistake":"...","image_page":0,"image_bbox":[0,0,0,0],"image_alt":""}]}
 The correct value is a zero-based integer from 0 to one less than the number of options (maximum 5).
 
 Category: ${TOPIC_EN[topic] || topic}
@@ -2167,12 +2173,22 @@ ${(options.visuals || []).map((visual) => `第 ${visual.page} 页：可供辨识
 
 async function parseAIQuestionResponse(raw, paperId, topic, options = {}) {
   if (typeof raw !== "string") throw new Error("Question generation response was empty");
-  const start = raw.indexOf("[");
-  const end = raw.lastIndexOf("]");
-  if (start < 0 || end <= start) throw new Error("Question generation response did not contain JSON");
-  const parsed = JSON.parse(raw.slice(start, end + 1));
-  if (!Array.isArray(parsed)) throw new Error("Question generation response was not an array");
-  const questions = parsed.map((item, index) => normalizeGeneratedQuestion(item, index, paperId, topic)).filter(Boolean);
+  const cleaned = raw.replace(/^```(?:json)?\s*/i, "").replace(/\s*```$/i, "").trim();
+  let parsed;
+  try {
+    parsed = JSON.parse(cleaned);
+  } catch {
+    const objectStart = raw.indexOf("{");
+    const objectEnd = raw.lastIndexOf("}");
+    const arrayStart = raw.indexOf("[");
+    const arrayEnd = raw.lastIndexOf("]");
+    if (objectStart >= 0 && objectEnd > objectStart) parsed = JSON.parse(raw.slice(objectStart, objectEnd + 1));
+    else if (arrayStart >= 0 && arrayEnd > arrayStart) parsed = JSON.parse(raw.slice(arrayStart, arrayEnd + 1));
+    else throw new Error("Question generation response did not contain JSON");
+  }
+  const items = Array.isArray(parsed) ? parsed : parsed?.questions;
+  if (!Array.isArray(items)) throw new Error("Question generation response did not contain a questions array");
+  const questions = items.map((item, index) => normalizeGeneratedQuestion(item, index, paperId, topic)).filter(Boolean);
   const { materialType, requestedCount, maxItems } = getQuestionGenerationLimits(options);
   if (materialType === "teaching-material" && questions.length !== requestedCount) {
     throw new Error(localized(
