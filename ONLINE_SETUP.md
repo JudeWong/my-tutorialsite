@@ -1,5 +1,25 @@
 # 免费上线与 APK 设置
 
+## Supabase 云端资料（目前的正式迁移流程）
+
+项目已内建 Supabase Auth、Postgres、Storage 和 Cloudflare API 连接层。为了避免半完成配置影响现有网站，`config.js` 的 `cloudEnabled` 会在数据库与服务器密钥完成前保持 `false`。
+
+1. 在 Supabase Dashboard 打开 **SQL Editor**。
+2. 完整执行 [`supabase/cloud_schema.sql`](supabase/cloud_schema.sql)。这个升级会保留现有资料、加入网站需要的栏位、建立私人 `learning-materials` bucket，并以安全的 RLS 规则取代原型规则。
+3. 在 Cloudflare Pages 的 **Settings → Variables and Secrets** 新增以下加密变量：
+   - `SUPABASE_SECRET_KEY`：Supabase 的 Secret key；也可暂时使用旧版 `service_role` key。绝对不能写进前端或 GitHub。
+   - `GEMINI_API_KEY`：Gemini API key。
+   - `GEMINI_MODEL`：可选，只填写该 Gemini 账号目前可用的模型。
+   - `ALLOWED_ORIGINS`：建议填写正式网站与 APK 会使用的来源，以逗号分隔。
+4. Cloudflare Pages 的普通环境变量可选填写：
+   - `SUPABASE_URL=https://hwnqqwnqfivykwrmcnml.supabase.co`
+   - `SUPABASE_PUBLISHABLE_KEY=sb_publishable_1BpJAI1lQu9099mENDRT1Q_L2iCTOpK`
+5. 部署 Cloudflare Pages 后，把 `config.js` 的 `cloudApiEndpoint`、`aiEndpoint` 和 `generationEndpoint` 指向该 `pages.dev` 网站，再把 `cloudEnabled` 改为 `true`。
+6. 重新部署网站并构建 APK。老师第一次云端登入时，系统会在云端尚无学习资料的情况下，把这台装置现有的试卷、题目、作业、笔记和班级迁移到 Supabase。旧的本机学生密码不会上传；学生需要使用云端注册流程重新建立安全账号。
+
+前端只能使用 Publishable key。`SUPABASE_SECRET_KEY` 和 `GEMINI_API_KEY` 必须只存在于 Cloudflare Secret。
+新版 `sb_secret_...` key 会作为 `apikey` 发送；旧版 `service_role` JWT 仍受兼容支持。请优先使用 Supabase 建议的新版 Secret key。
+
 ## 推荐：Cloudflare Pages（包含真正的生成式 AI）
 
 1. 把此项目推送到一个 GitHub 仓库。

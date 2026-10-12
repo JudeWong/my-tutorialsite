@@ -1,7 +1,9 @@
+import { cloudConfig } from "./_cloud.js";
+
 const JSON_HEADERS = {
   "Content-Type": "application/json; charset=utf-8",
   "Access-Control-Allow-Origin": "*",
-  "Access-Control-Allow-Headers": "Content-Type",
+  "Access-Control-Allow-Headers": "Authorization, Content-Type",
   "Access-Control-Allow-Methods": "GET, POST, OPTIONS"
 };
 function questionResponseSchema(body) {
@@ -62,6 +64,23 @@ function waitForRetry(delay) {
 export async function onRequestPost({ request, env }) {
   if (!env.GEMINI_API_KEY) {
     return json({ error: "AI is not configured. Add the GEMINI_API_KEY secret in Cloudflare Pages." }, 503);
+  }
+
+  const authorization = request.headers.get("Authorization") || "";
+  const accessToken = authorization.replace(/^Bearer\s+/i, "").trim();
+  if (!accessToken) return json({ error: "Sign in before using the AI service." }, 401);
+  const supabase = cloudConfig(env);
+  const authResponse = await fetch(`${supabase.url}/auth/v1/user`, {
+    headers: { apikey: supabase.publishableKey, Authorization: `Bearer ${accessToken}` }
+  });
+  if (!authResponse.ok) return json({ error: "Your cloud session is invalid or expired. Sign in again." }, 401);
+  const authUser = await authResponse.json().catch(() => ({}));
+  const profileResponse = await fetch(`${supabase.url}/rest/v1/profiles?id=eq.${encodeURIComponent(authUser.id || "")}&select=status&limit=1`, {
+    headers: { apikey: supabase.publishableKey, Authorization: `Bearer ${accessToken}` }
+  });
+  const profiles = await profileResponse.json().catch(() => []);
+  if (!profileResponse.ok || profiles[0]?.status === "disabled") {
+    return json({ error: "This cloud account is disabled or unavailable." }, 403);
   }
 
   let body;

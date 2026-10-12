@@ -6,7 +6,7 @@
   "type": "module",
   "description": "Your Personal AI Assistant computer science learning platform",
   "scripts": {
-    "serve": "node scripts/serve.mjs",
+    "serve": "pnpm run prepare:web && node scripts/serve.mjs",
     "prepare:web": "node scripts/sync-web.mjs",
     "prepare:android": "node scripts/sync-web.mjs --android",
     "android:add": "cap add android",
@@ -16,7 +16,8 @@
   },
   "dependencies": {
     "@capacitor/android": "^6.2.1",
-    "@capacitor/core": "^6.2.1"
+    "@capacitor/core": "^6.2.1",
+    "@supabase/supabase-js": "2.117.3"
   },
   "devDependencies": {
     "@capacitor/cli": "^6.2.1"

@@ -3,6 +3,11 @@ const ASSIGNMENTS_KEY = "tixi_assignments_v1";
 const QUESTIONS_KEY = "tixi_questions_v1";
 const NOTES_KEY = "tixi_teacher_notes_v1";
 const SESSION_KEY = "tixi_session_v1";
+const Cloud = globalThis.personalAICloud;
+
+function createRecordId(prefix = "record") {
+  return Cloud?.enabled && crypto?.randomUUID ? crypto.randomUUID() : `${prefix}-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
+}
 
 function readStoredArray(key) {
   try {
@@ -38,7 +43,7 @@ const TOPIC_ZH = Object.freeze({
 const LEVEL_ZH = Object.freeze({ Basic: "基础", Intermediate: "中等", Advanced: "进阶" });
 
 papers = papers.map((paper, index) => ({
-  id: paper.id || `paper-${paper.createdAt || Date.now()}-${index}`,
+  id: paper.id || createRecordId("paper"),
   title: paper.title || paper.fileName || "Untitled Paper",
   titleEn: paper.titleEn || paper.title || paper.fileName || "Untitled Paper",
   year: String(paper.year || new Date().getFullYear()),
@@ -57,7 +62,7 @@ papers = papers.map((paper, index) => ({
 teacherNotes = teacherNotes
   .filter((note) => note && typeof note === "object" && String(note.title || "").trim() && String(note.content || "").trim())
   .map((note, index) => ({
-    id: String(note.id || `note-${note.createdAt || Date.now()}-${index}`),
+    id: String(note.id || createRecordId("note")),
     title: String(note.title || "").trim(),
     content: String(note.content || "").trim(),
     createdAt: note.createdAt || new Date().toISOString(),
@@ -79,7 +84,7 @@ questionBank = questionBank.filter((question) => {
   return {
     ...question,
     type,
-    id: question.id || `question-${Date.now()}-${index}`,
+    id: question.id || createRecordId("question"),
     paperId: question.paperId || "",
     topic: TOPIC_ZH[question.topic] || question.topic || "综合试卷",
     level: LEVEL_ZH[question.level] || question.level || "中等",
@@ -123,6 +128,14 @@ let activeWorkspaceView = null;
 let activePaperFilter = "全部";
 let isGeneratingQuestions = false;
 let resumeUploadAfterAISetup = false;
+let cloudProfile = null;
+let cloudStudents = [];
+let cloudClasses = [];
+let cloudDataLoaded = false;
+let cloudRegistrationCode = "";
+let cloudRegistrationCodeExpiresAt = "";
+let lastCloudSyncErrorAt = 0;
+let cloudSyncQueue = Promise.resolve();
 const loadedScripts = new Map();
 const originalTextNodes = new WeakMap();
 const UI_EN = Object.freeze({
@@ -551,6 +564,7 @@ function createStudentId(student) {
 }
 
 function getStudents() {
+  if (Cloud?.enabled && cloudDataLoaded) return cloudStudents;
   try {
     const stored = JSON.parse(localStorage.getItem(STUDENTS_KEY) || "[]");
     if (!Array.isArray(stored)) return [];
@@ -576,12 +590,16 @@ function getStudents() {
 }
 
 function saveStudents(students) {
-  localStorage.setItem(STUDENTS_KEY, JSON.stringify(students));
+  if (Cloud?.enabled && cloudDataLoaded) cloudStudents = students;
+  const cachedStudents = Cloud?.enabled ? students.map(({ password: _password, ...student }) => student) : students;
+  localStorage.setItem(STUDENTS_KEY, JSON.stringify(cachedStudents));
+  syncCloud(() => Cloud.updateStudents(students), "student accounts");
   renderTeacherMetrics();
   if (activeWorkspaceView === "classes") renderWorkspaceView("classes");
 }
 
 function getClasses() {
+  if (Cloud?.enabled && cloudDataLoaded) return cloudClasses.map((item) => item.name);
   try {
     const stored = JSON.parse(localStorage.getItem(CLASSES_KEY) || "[]");
     return Array.isArray(stored) ? stored : [];
@@ -592,23 +610,28 @@ function getClasses() {
 
 function savePapers() {
   localStorage.setItem(PAPERS_KEY, JSON.stringify(papers));
+  syncCloud(() => Cloud.upsertPapers(papers), "learning materials");
 }
 
 function saveAssignments() {
   localStorage.setItem(ASSIGNMENTS_KEY, JSON.stringify(assignments));
+  syncCloud(() => Cloud.upsertAssignments(assignments), "assignments");
 }
 
 function saveQuestions() {
   localStorage.setItem(QUESTIONS_KEY, JSON.stringify(questionBank));
+  syncCloud(() => Cloud.upsertQuestions(questionBank), "questions");
 }
 
 function saveTeacherNotes() {
   localStorage.setItem(NOTES_KEY, JSON.stringify(teacherNotes));
+  syncCloud(() => Cloud.upsertNotes(teacherNotes), "teacher notes");
   renderStudentNotesPreview();
   if (activeWorkspaceView === "notes") renderWorkspaceView("notes");
 }
 
 function saveSession() {
+  if (Cloud?.enabled) return;
   localStorage.setItem(SESSION_KEY, JSON.stringify({
     role,
     student: role === "student" && activeStudent ? {
@@ -621,6 +644,7 @@ function saveSession() {
 }
 
 function restoreSession() {
+  if (Cloud?.enabled) return false;
   try {
     const session = JSON.parse(localStorage.getItem(SESSION_KEY) || "null");
     if (session?.role === "teacher") {
@@ -648,10 +672,114 @@ function restoreSession() {
 
 function saveClasses(classes) {
   localStorage.setItem(CLASSES_KEY, JSON.stringify(classes));
+  if (Cloud?.enabled && cloudDataLoaded) {
+    cloudClasses = classes.map((name) => cloudClasses.find((item) => item.name === name) || { id: "", name, active: true });
+  }
   renderClassOptions();
   renderTeacherClasses();
   renderTeacherMetrics();
   renderClassPerformance();
+}
+
+function syncCloud(action, label) {
+  if (!Cloud?.enabled || !cloudProfile) return;
+  cloudSyncQueue = cloudSyncQueue.then(action).catch((error) => {
+    console.error(`Unable to sync ${label} to Supabase`, error);
+    if (Date.now() - lastCloudSyncErrorAt > 5000) {
+      lastCloudSyncErrorAt = Date.now();
+      showToast(localized("Cloud sync failed. Check the Supabase schema and connection.", "云端同步失败，请检查 Supabase 资料表与连接。"));
+    }
+  });
+}
+
+async function flushCloudSync() {
+  if (Cloud?.enabled) await cloudSyncQueue;
+}
+
+function readLocalCloudMigrationSnapshot() {
+  return {
+    papers: [...papers],
+    questions: [...questionBank],
+    assignments: [...assignments],
+    notes: [...teacherNotes],
+    classes: readStoredArray(CLASSES_KEY),
+    students: readStoredArray(STUDENTS_KEY)
+  };
+}
+
+function applyCloudSnapshot(snapshot) {
+  papers = snapshot.papers || [];
+  questionBank = snapshot.questions || [];
+  assignments = snapshot.assignments || [];
+  teacherNotes = snapshot.notes || [];
+  cloudStudents = snapshot.students || [];
+  cloudClasses = snapshot.classes || [];
+  cloudDataLoaded = true;
+  localStorage.setItem(PAPERS_KEY, JSON.stringify(papers));
+  localStorage.setItem(QUESTIONS_KEY, JSON.stringify(questionBank));
+  localStorage.setItem(ASSIGNMENTS_KEY, JSON.stringify(assignments));
+  localStorage.setItem(NOTES_KEY, JSON.stringify(teacherNotes));
+  localStorage.setItem(CLASSES_KEY, JSON.stringify(cloudClasses.map((item) => item.name)));
+  localStorage.setItem(STUDENTS_KEY, JSON.stringify(cloudStudents));
+}
+
+async function activateCloudProfile(profile, { migrateLocal = true } = {}) {
+  if (!Cloud?.enabled || !profile) return false;
+  const schemaReady = await Cloud.checkSchema();
+  if (!schemaReady) {
+    const error = new Error(localized(
+      "The Supabase tables need the cloud schema upgrade before this app can connect.",
+      "Supabase 资料表需要先执行云端结构升级，系统才能连接。"
+    ));
+    error.code = "CLOUD_SCHEMA_REQUIRED";
+    throw error;
+  }
+  cloudProfile = profile;
+  const localSnapshot = readLocalCloudMigrationSnapshot();
+  let snapshot = await Cloud.loadSnapshot(profile);
+  const cloudHasLearningData = snapshot.papers.length || snapshot.questions.length || snapshot.assignments.length || snapshot.notes.length;
+  const localHasLearningData = localSnapshot.papers.length || localSnapshot.questions.length || localSnapshot.assignments.length || localSnapshot.notes.length || localSnapshot.classes.length;
+  if (migrateLocal && profile.role === "teacher" && !cloudHasLearningData && localHasLearningData) {
+    const result = await Cloud.migrateLocalSnapshot(localSnapshot);
+    snapshot = await Cloud.loadSnapshot(profile);
+    if (result?.skippedStudents) {
+      showToast(localized(
+        `${result.skippedStudents} local student accounts need to register again securely in the cloud.`,
+        `${result.skippedStudents} 个本机学生账号需要在云端重新安全注册。`
+      ));
+    }
+  }
+  applyCloudSnapshot(snapshot);
+  return true;
+}
+
+async function initializeAppSession() {
+  if (!Cloud?.enabled) {
+    restoreSession();
+    return;
+  }
+  try {
+    const session = await Cloud.getSession();
+    if (!session?.user?.id) {
+      cloudClasses = await Cloud.loadPublicClasses().catch(() => []);
+      cloudDataLoaded = true;
+      renderClassOptions();
+      return;
+    }
+    const profile = Cloud.normalizeProfile(await Cloud.getProfile(session.user.id));
+    if (!profile || profile.status === "disabled") {
+      await Cloud.signOut();
+      return;
+    }
+    await activateCloudProfile(profile);
+    enterApp(profile.role, profile.role === "student" ? profile : null);
+  } catch (error) {
+    console.error("Unable to restore cloud session", error);
+    await Cloud.signOut().catch(() => {});
+    cloudProfile = null;
+    cloudDataLoaded = false;
+    showToast(error?.message || localized("Cloud sign-in could not be restored.", "无法恢复云端登入状态。"));
+  }
 }
 
 function getHourKey(date = new Date()) {
@@ -734,8 +862,17 @@ function showPublicScreen(screen) {
   window.scrollTo({ top: 0, behavior: "auto" });
 }
 
-function openAuth() {
+async function openAuth() {
   showPublicScreen("auth");
+  if (Cloud?.enabled && !cloudDataLoaded) {
+    try {
+      cloudClasses = await Cloud.loadPublicClasses();
+      cloudDataLoaded = true;
+      renderClassOptions();
+    } catch (error) {
+      console.error("Unable to load public cloud classes", error);
+    }
+  }
   $("#teacher-password").focus();
 }
 
@@ -769,12 +906,12 @@ function enterApp(nextRole, student = null) {
 }
 
 function updateVerificationCode() {
-  const code = getHourlyCode();
+  const code = Cloud?.enabled ? (cloudRegistrationCode || "------") : getHourlyCode();
   $("#verification-code").textContent = code;
   $("#verification-code-large").textContent = code;
   const now = new Date();
-  const nextHour = new Date(now);
-  nextHour.setHours(now.getHours() + 1, 0, 0, 0);
+  const nextHour = Cloud?.enabled && cloudRegistrationCodeExpiresAt ? new Date(cloudRegistrationCodeExpiresAt) : new Date(now);
+  if (!Cloud?.enabled || !cloudRegistrationCodeExpiresAt) nextHour.setHours(now.getHours() + 1, 0, 0, 0);
   const remaining = Math.max(0, nextHour - now);
   const minutes = Math.floor(remaining / 60000);
   const seconds = Math.floor((remaining % 60000) / 1000);
@@ -786,6 +923,16 @@ function updateVerificationCode() {
 function startCodeTimer() {
   clearInterval(codeTimer);
   updateVerificationCode();
+  if (Cloud?.enabled && cloudProfile?.role === "teacher") {
+    Cloud.getRegistrationCode().then((result) => {
+      cloudRegistrationCode = result.code;
+      cloudRegistrationCodeExpiresAt = result.expiresAt;
+      updateVerificationCode();
+    }).catch((error) => {
+      console.error("Unable to load cloud registration code", error);
+      showToast(localized("Cloud registration code is unavailable. Configure the Cloudflare secret.", "无法取得云端验证码，请设置 Cloudflare 密钥。"));
+    });
+  }
   codeTimer = setInterval(updateVerificationCode, 1000);
 }
 
@@ -1162,6 +1309,12 @@ async function requestChatFromGemini(apiKey, question) {
   throw lastError || new Error("Gemini chat failed");
 }
 
+async function cloudAuthorizationHeaders() {
+  if (!Cloud?.enabled) return {};
+  const session = await Cloud.getSession();
+  return session?.access_token ? { Authorization: `Bearer ${session.access_token}` } : {};
+}
+
 async function askAI(question, { repeatUser = true } = {}) {
   const trimmed = question.trim();
   if (!trimmed) return;
@@ -1186,7 +1339,7 @@ async function askAI(question, { repeatUser = true } = {}) {
       try {
         const response = await fetch(configuredEndpoint || "./api/chat", {
           method: "POST",
-          headers: { "Content-Type": "application/json" },
+          headers: { "Content-Type": "application/json", ...(await cloudAuthorizationHeaders()) },
           body: JSON.stringify({
             message: trimmed,
             messages: aiConversation.slice(-16),
@@ -1721,7 +1874,7 @@ function normalizeGeneratedQuestion(item, index, paperId, topic) {
   correct = Math.max(0, Math.min(Number.isInteger(correct) ? correct : 0, options.length - 1));
   const levelMap = { Basic: "基础", Intermediate: "中等", Advanced: "进阶", "基础": "基础", "中等": "中等", "进阶": "进阶" };
   return {
-    id: `question-${Date.now()}-${index}-${Math.random().toString(36).slice(2, 6)}`,
+    id: createRecordId("question"),
     type: "mcq",
     paperId,
     topic,
@@ -1903,7 +2056,7 @@ function getGeminiAttemptModels(preferredModel) {
 async function requestQuestionsFromProxy(endpoint, prompt, paperId, topic, options, signal) {
   const response = await fetch(endpoint, {
     method: "POST",
-    headers: { "Content-Type": "application/json" },
+    headers: { "Content-Type": "application/json", ...(await cloudAuthorizationHeaders()) },
     signal,
     body: JSON.stringify({ message: prompt, messages: [{ role: "user", content: prompt }], mode: "study", task: "question-generation", language: "zh", materialType: options.materialType, questionCount: options.questionCount })
   });
@@ -2196,13 +2349,12 @@ function openQuestionDialog({ questionId = "", paperId = "" } = {}) {
 }
 
 function addQuestionToAssignment(question, paper) {
-  const assignmentId = paper ? `material-assignment-${paper.id}` : "manual-question-set";
   let assignment = paper
     ? assignments.find((item) => item.paperId === paper.id)
-    : assignments.find((item) => item.id === assignmentId || item.paperId === "manual");
+    : assignments.find((item) => item.paperId === "manual");
   if (!assignment) {
     assignment = {
-      id: assignmentId,
+      id: createRecordId("assignment"),
       paperId: paper?.id || "manual",
       questionIds: [],
       icon: paper ? "✦" : "✎",
@@ -2267,7 +2419,7 @@ function saveManualQuestion(event) {
     ? [...new Set([correctAnswer, ...$("#manual-accepted-answers").value.split(/[,，;；\n]/u)].map((answer) => answer.trim()).filter(Boolean))]
     : [];
   const question = {
-    id: existingQuestion?.id || `manual-question-${Date.now()}-${Math.random().toString(36).slice(2, 7)}`,
+    id: existingQuestion?.id || createRecordId("question"),
     type,
     paperId: existingQuestion?.paperId || paper?.id || "manual",
     topic: $("#manual-question-topic").value,
@@ -2348,7 +2500,7 @@ function openPaperEditor(paperId) {
   $("#edit-paper-dialog").showModal();
 }
 
-function deletePaper(paperId) {
+async function deletePaper(paperId) {
   const paper = papers.find((item) => item.id === paperId);
   if (!paper) return;
   const confirmed = window.confirm(localized(
@@ -2356,6 +2508,16 @@ function deletePaper(paperId) {
     `确定删除“${paper.title}”及其所有题目与练习吗？此操作无法复原。`
   ));
   if (!confirmed) return;
+  if (Cloud?.enabled) {
+    try {
+      await flushCloudSync();
+      await Cloud.deleteMaterial(paper);
+    } catch (error) {
+      console.error("Unable to delete cloud material", error);
+      showToast(localized("The material could not be deleted from the cloud.", "无法从云端删除学习资料。"));
+      return;
+    }
+  }
   const deletedQuestionCount = questionBank.filter((question) => question.paperId === paperId).length;
   papers = papers.filter((item) => item.id !== paperId);
   questionBank = questionBank.filter((question) => question.paperId !== paperId);
@@ -2406,7 +2568,7 @@ function openStudentAccountEditor(studentId) {
   $("#student-account-dialog").showModal();
 }
 
-function saveStudentAccount(event) {
+async function saveStudentAccount(event) {
   event.preventDefault();
   const students = getStudents();
   const student = students.find((item) => item.id === $("#edit-student-id").value);
@@ -2437,16 +2599,26 @@ function saveStudentAccount(event) {
   }
   student.name = name;
   student.className = className;
+  student.classId = cloudClasses.find((item) => item.name === className)?.id || student.classId || "";
   student.year = year;
   student.status = $("#edit-student-status").value === "disabled" ? "disabled" : "active";
-  if (newPassword) student.password = newPassword;
   student.updatedAt = new Date().toISOString();
+  if (Cloud?.enabled) {
+    try {
+      await flushCloudSync();
+      await Cloud.updateStudent(student, newPassword);
+    } catch (cloudError) {
+      console.error("Unable to update cloud student", cloudError);
+      error.textContent = cloudError?.message || localized("The student account could not be updated in the cloud.", "学生账号无法在云端更新。 ");
+      return;
+    }
+  } else if (newPassword) student.password = newPassword;
   saveStudents(students);
   closeStudentAccountEditor();
   showToast(localized("Student account changes saved.", "学生账号修改已储存。"));
 }
 
-function deleteStudentAccount() {
+async function deleteStudentAccount() {
   const studentId = $("#edit-student-id").value;
   const students = getStudents();
   const student = students.find((item) => item.id === studentId);
@@ -2456,6 +2628,16 @@ function deleteStudentAccount() {
     `确定删除学生“${student.name}”的账号吗？此操作无法复原。`
   ));
   if (!confirmed) return;
+  if (Cloud?.enabled) {
+    try {
+      await flushCloudSync();
+      await Cloud.deleteStudent(studentId);
+    } catch (error) {
+      console.error("Unable to delete cloud student", error);
+      showToast(localized("The student account could not be deleted from the cloud.", "无法从云端删除学生账号。"));
+      return;
+    }
+  }
   saveStudents(students.filter((item) => item.id !== studentId));
   closeStudentAccountEditor();
   showToast(localized("Student account deleted.", "学生账号已删除。"));
@@ -2653,10 +2835,31 @@ $$('[data-student-mode]').forEach((button) => button.addEventListener("click", (
   $("#student-register-form").classList.toggle("screen-hidden", isLogin);
 }));
 
-$("#teacher-login-form").addEventListener("submit", (event) => {
+$("#teacher-login-form").addEventListener("submit", async (event) => {
   event.preventDefault();
   const email = $("#teacher-email").value.trim().toLowerCase();
   const password = $("#teacher-password").value;
+  const submitButton = event.currentTarget.querySelector("button[type='submit']");
+  if (Cloud?.enabled) {
+    submitButton.disabled = true;
+    try {
+      const profile = await Cloud.signInTeacher(email, password);
+      await activateCloudProfile(profile);
+      $("#teacher-login-error").textContent = "";
+      enterApp("teacher");
+      showToast(localized("Welcome back, Teacher Jude", "欢迎回来，Teacher Jude"));
+    } catch (error) {
+      console.error("Teacher cloud sign-in failed", error);
+      await Cloud.signOut().catch(() => {});
+      cloudProfile = null;
+      $("#teacher-login-error").textContent = error?.code === "CLOUD_SCHEMA_REQUIRED"
+        ? error.message
+        : localized("The cloud email or password is incorrect, or the account is not a teacher.", "云端账号或密码不正确，或此账号不是老师账号。");
+    } finally {
+      submitButton.disabled = false;
+    }
+    return;
+  }
   if (email !== SUPERADMIN_EMAIL || password !== getTeacherPassword()) {
     $("#teacher-login-error").textContent = localized("The email or password is incorrect.", "账号或密码不正确，请重新检查。");
     return;
@@ -2666,7 +2869,7 @@ $("#teacher-login-form").addEventListener("submit", (event) => {
   showToast(localized("Welcome back, Teacher Jude", "欢迎回来，Teacher Jude"));
 });
 
-$("#student-register-form").addEventListener("submit", (event) => {
+$("#student-register-form").addEventListener("submit", async (event) => {
   event.preventDefault();
   const name = $("#register-name").value.trim();
   const className = $("#register-class").value.trim();
@@ -2691,13 +2894,30 @@ $("#student-register-form").addEventListener("submit", (event) => {
     error.textContent = localized("The passwords do not match.", "两次输入的密码不一致。");
     return;
   }
-  if (code !== getHourlyCode()) {
+  if (!Cloud?.enabled && code !== getHourlyCode()) {
     error.textContent = localized("The verification code is incorrect or expired. Ask your teacher for the current code.", "验证码不正确或已过期，请向老师索取本小时验证码。");
     return;
   }
   const students = getStudents();
-  if (students.some((student) => student.name === name && student.className === className && student.year === year)) {
+  if (!Cloud?.enabled && students.some((student) => student.name === name && student.className === className && student.year === year)) {
     error.textContent = localized("This student account already exists. Switch to Existing Account to sign in.", "此学生账号已注册，请切换至“已有账号”登入。");
+    return;
+  }
+  if (Cloud?.enabled) {
+    const submitButton = event.currentTarget.querySelector("button[type='submit']");
+    submitButton.disabled = true;
+    try {
+      const student = await Cloud.registerStudent({ name, className, year, password, code });
+      await activateCloudProfile(student, { migrateLocal: false });
+      error.textContent = "";
+      enterApp("student", student);
+      showToast(localized("Registration successful. Welcome!", "注册成功，欢迎开始学习"));
+    } catch (cloudError) {
+      console.error("Student cloud registration failed", cloudError);
+      error.textContent = cloudError?.message || localized("Cloud registration failed. Ask your teacher to check the connection.", "云端注册失败，请老师检查连接。 ");
+    } finally {
+      submitButton.disabled = false;
+    }
     return;
   }
   const student = { id: "", name, className, year, password, status: "active", createdAt: new Date().toISOString() };
@@ -2709,12 +2929,35 @@ $("#student-register-form").addEventListener("submit", (event) => {
   showToast(localized("Registration successful. Welcome!", "注册成功，欢迎开始学习"));
 });
 
-$("#student-login-form").addEventListener("submit", (event) => {
+$("#student-login-form").addEventListener("submit", async (event) => {
   event.preventDefault();
   const name = $("#student-login-name").value.trim();
   const className = $("#student-login-class").value.trim();
   const year = $("#student-login-year").value;
   const password = $("#student-login-password").value;
+  if (Cloud?.enabled) {
+    const submitButton = event.currentTarget.querySelector("button[type='submit']");
+    submitButton.disabled = true;
+    try {
+      const student = await Cloud.signInStudent(name, className, year, password);
+      await activateCloudProfile(student, { migrateLocal: false });
+      $("#student-login-error").textContent = "";
+      enterApp("student", student);
+      showToast(`${localized("Welcome back", "欢迎回来")}，${student.name}`);
+    } catch (error) {
+      console.error("Student cloud sign-in failed", error);
+      await Cloud.signOut().catch(() => {});
+      cloudProfile = null;
+      $("#student-login-error").textContent = error?.code === "ACCOUNT_DISABLED"
+        ? localized("This account has been disabled. Contact your teacher.", "此账号已停用，请联系老师。")
+        : error?.code === "CLOUD_SCHEMA_REQUIRED"
+          ? error.message
+          : localized("Student account details or password are incorrect.", "学生账号资料或密码不正确。");
+    } finally {
+      submitButton.disabled = false;
+    }
+    return;
+  }
   const student = getStudents().find((item) => item.name === name && item.className === className && item.year === year);
   if (!student) {
     $("#student-login-error").textContent = localized("Student account not found. Check the details or register first.", "找不到这个学生账号，请检查资料或先完成注册。");
@@ -2748,13 +2991,13 @@ $("#account-button").addEventListener("click", openPasswordDialog);
 $("#sidebar-account").addEventListener("click", openPasswordDialog);
 $("#close-password").addEventListener("click", () => $("#password-dialog").close());
 $("#cancel-password").addEventListener("click", () => $("#password-dialog").close());
-$("#password-form").addEventListener("submit", (event) => {
+$("#password-form").addEventListener("submit", async (event) => {
   event.preventDefault();
   const current = $("#current-password").value;
   const next = $("#new-password").value;
   const confirmation = $("#confirm-password").value;
   const error = $("#password-error");
-  if (current !== getTeacherPassword()) {
+  if (!Cloud?.enabled && current !== getTeacherPassword()) {
     error.textContent = localized("The current password is incorrect.", "目前密码不正确。");
     return;
   }
@@ -2766,13 +3009,32 @@ $("#password-form").addEventListener("submit", (event) => {
     error.textContent = localized("The new passwords do not match.", "两次输入的新密码不一致。");
     return;
   }
+  if (Cloud?.enabled) {
+    const submitButton = event.currentTarget.querySelector("button[type='submit']");
+    submitButton.disabled = true;
+    try {
+      await Cloud.signInTeacher(SUPERADMIN_EMAIL, current);
+      await Cloud.updateOwnPassword(next);
+      $("#password-dialog").close();
+      showToast(localized("Cloud password updated. Use the new password next time.", "云端密码已更新，下次登入请使用新密码。"));
+    } catch (cloudError) {
+      error.textContent = localized("The current cloud password is incorrect.", "目前的云端密码不正确。 ");
+    } finally {
+      submitButton.disabled = false;
+    }
+    return;
+  }
   localStorage.setItem(PASSWORD_KEY, next);
   $("#password-dialog").close();
   showToast(localized("Password updated. Use the new password next time.", "密码已更新，下次登入请使用新密码"));
 });
 
 async function copyVerificationCode() {
-  const code = getHourlyCode();
+  const code = Cloud?.enabled ? cloudRegistrationCode : getHourlyCode();
+  if (!code) {
+    showToast(localized("The cloud registration code is still loading.", "云端验证码仍在载入中。"));
+    return;
+  }
   try {
     await navigator.clipboard.writeText(code);
     showToast(`${localized("Verification code", "验证码")} ${code} ${localized("copied", "已复制")}`);
@@ -2798,15 +3060,23 @@ $("#verification-code-dialog").addEventListener("click", (event) => {
   if (event.target === event.currentTarget) closeVerificationCodeDialog();
 });
 
-$("#logout-button").addEventListener("click", () => {
+$("#logout-button").addEventListener("click", async () => {
   clearInterval(codeTimer);
+  if (Cloud?.enabled) {
+    await flushCloudSync();
+    await Cloud.signOut().catch(() => {});
+  }
+  cloudProfile = null;
+  cloudDataLoaded = false;
+  cloudRegistrationCode = "";
+  cloudRegistrationCodeExpiresAt = "";
   activeStudent = null;
   localStorage.removeItem(SESSION_KEY);
   $("#teacher-password").value = "";
   showPublicScreen("landing");
 });
 
-$("#class-form").addEventListener("submit", (event) => {
+$("#class-form").addEventListener("submit", async (event) => {
   event.preventDefault();
   const input = $("#new-class-name");
   const className = input.value.trim();
@@ -2819,15 +3089,33 @@ $("#class-form").addEventListener("submit", (event) => {
     showToast(localized("This class is already in the list", "这个班级已经在列表中"));
     return;
   }
+  if (Cloud?.enabled) {
+    try {
+      await Cloud.addClass(className);
+    } catch (error) {
+      console.error("Unable to add cloud class", error);
+      showToast(localized("The class could not be saved to the cloud.", "班级无法储存到云端。"));
+      return;
+    }
+  }
   classes.push(className);
   saveClasses(classes);
   input.value = "";
   showToast(`${className} ${localized("was added to the registration list", "已加入学生注册列表")}`);
 });
 
-$("#class-list").addEventListener("click", (event) => {
+$("#class-list").addEventListener("click", async (event) => {
   const button = event.target.closest("[data-remove-class]");
   if (!button) return;
+  if (Cloud?.enabled) {
+    try {
+      await Cloud.deleteClass(button.dataset.removeClass);
+    } catch (error) {
+      console.error("Unable to remove cloud class", error);
+      showToast(localized("The class could not be removed from the cloud.", "无法从云端移除班级。"));
+      return;
+    }
+  }
   const classes = getClasses().filter((className) => className !== button.dataset.removeClass);
   saveClasses(classes);
   showToast(`${button.dataset.removeClass} ${localized("was removed", "已从列表移除")}`);
@@ -2851,7 +3139,7 @@ $("#note-form").addEventListener("submit", (event) => {
     existing.content = content;
     existing.updatedAt = now;
   } else {
-    teacherNotes.unshift({ id: `note-${Date.now()}-${Math.random().toString(36).slice(2, 7)}`, title, content, createdAt: now, updatedAt: now });
+    teacherNotes.unshift({ id: createRecordId("note"), title, content, createdAt: now, updatedAt: now });
   }
   teacherNotes.sort((a, b) => new Date(b.updatedAt) - new Date(a.updatedAt));
   saveTeacherNotes();
@@ -2964,7 +3252,7 @@ $("#process-upload").addEventListener("click", async (event) => {
   const sourceFile = pendingUploadFile;
   const title = sourceFile.name.replace(/\.[^.]+$/, "").trim() || `${year} 学习资料`;
   const now = new Date();
-  const paperId = `material-${now.getTime()}-${Math.random().toString(36).slice(2, 8)}`;
+  const paperId = createRecordId("material");
   try {
     const generated = await generateQuestionsFromFile(sourceFile, paperId, topic, generationOptions);
     setGenerationProgress(93, localized("Saving the question set…", "正在储存题目练习……"), "save");
@@ -2986,10 +3274,14 @@ $("#process-upload").addEventListener("click", async (event) => {
       requestedQuestionCount: generationOptions.questionCount,
       createdAt: now.toISOString()
     };
+    if (Cloud?.enabled && cloudProfile) {
+      setGenerationProgress(90, localized("Uploading the source file securely…", "正在安全上传原始文件……"), "save");
+      paper.storagePath = await Cloud.uploadMaterialFile(paperId, sourceFile);
+    }
     papers.unshift(paper);
     questionBank.push(...generated.questions);
     assignments.unshift({
-      id: `assignment-${now.getTime()}`,
+      id: createRecordId("assignment"),
       paperId,
       questionIds: generated.questions.map((question) => question.id),
       questionCount: generated.questions.length,
@@ -3169,7 +3461,11 @@ $("#ai-settings-form").addEventListener("submit", (event) => {
   }
 });
 $("#invite-students").addEventListener("click", () => {
-  const code = getHourlyCode();
+  const code = Cloud?.enabled ? cloudRegistrationCode : getHourlyCode();
+  if (!code) {
+    showToast(localized("The cloud registration code is still loading.", "云端验证码仍在载入中。"));
+    return;
+  }
   navigator.clipboard?.writeText(code).catch(() => {});
   showToast(`${localized("Student verification code", "学生注册验证码")} ${code} ${localized("copied", "已复制")}`);
 });
@@ -3186,7 +3482,7 @@ $("#workspace-primary-action").addEventListener("click", (event) => {
     $("#new-class-name")?.focus();
   }
 });
-$("#workspace-content").addEventListener("click", (event) => {
+$("#workspace-content").addEventListener("click", async (event) => {
   const editNoteButton = event.target.closest("[data-edit-note]");
   if (editNoteButton) {
     openNoteDialog(editNoteButton.dataset.editNote);
@@ -3196,6 +3492,16 @@ $("#workspace-content").addEventListener("click", (event) => {
   if (deleteNoteButton) {
     const note = teacherNotes.find((item) => item.id === deleteNoteButton.dataset.deleteNote);
     if (!note || !window.confirm(localized(`Delete “${note.title}”?`, `确定删除“${note.title}”吗？`))) return;
+    if (Cloud?.enabled) {
+      try {
+        await flushCloudSync();
+        await Cloud.deleteNote(note.id);
+      } catch (error) {
+        console.error("Unable to delete cloud note", error);
+        showToast(localized("The note could not be deleted from the cloud.", "无法从云端删除笔记。"));
+        return;
+      }
+    }
     teacherNotes = teacherNotes.filter((item) => item.id !== note.id);
     saveTeacherNotes();
     showToast(localized("Note deleted.", "笔记已删除。"));
@@ -3253,7 +3559,12 @@ $("#next-question").addEventListener("click", () => {
     assignment.actionEn = "Review Answers";
     assignment.detail = `${questions.length} 题 · 已完成`;
     assignment.detailEn = `${questions.length} questions · Completed`;
-    saveAssignments();
+    if (Cloud?.enabled) {
+      localStorage.setItem(ASSIGNMENTS_KEY, JSON.stringify(assignments));
+      syncCloud(() => Cloud.saveSubmission(assignment, questions, answers), "student answers");
+    } else {
+      saveAssignments();
+    }
     renderAssignments();
     showView("dashboard");
     showToast(localized(
@@ -3275,7 +3586,7 @@ window.addEventListener("keydown", (event) => {
   }
 });
 
-restoreSession();
+initializeAppSession();
 
 const revealTargets = $$(".landing-vision .lined-copy, .vision-model, .services-intro, .service-row, .highlight-card, .landing-numbers > *, .advantage-strip article, .landing-footer > *");
 revealTargets.forEach((element) => element.classList.add("reveal-on-scroll"));

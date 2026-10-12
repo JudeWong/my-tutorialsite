@@ -10,6 +10,7 @@
 - 上传试卷、讲义、图片、Word、PowerPoint 或文字档，显示整理进度并自动建立互动题目
 - 老师可查看并逐题修改 AI 生成的题干、选项、答案、解析与常见错误
 - 老师与学生登入状态保留，刷新页面不会自动登出
+- Supabase 云端 Auth、数据库、RLS、私人文件 Storage 与本机资料一次性迁移层（完成 `ONLINE_SETUP.md` 的密钥设置后启用）
 - 学习资料筛选、练习建立、班级进度与 CSV 报告
 - 互动题目、即时批改、解释与常见错误
 - 类 ChatGPT／Gemini 的连续 AI 对话；通过 Gemini 3.8 Flash 与 Interactions API 理解上传资料并生成题目，不以本机规则拼接假题目
@@ -46,4 +47,4 @@ pnpm run android:build
 
 ## 上线前须知
 
-目前老师密码、班级、学生账号和练习状态保存在浏览器 `localStorage`，适合原型与单机试用，但不会在不同装置间同步。学校正式使用时应接入数据库、服务器端身份验证、文件储存、权限规则与速率限制。正式部署时建议把 AI 密钥放在 serverless 环境变量中；GitHub Pages 原型也可由老师在页面内输入并仅保存在该浏览器，但切勿把密钥写入 `config.js` 或 APK。
+项目已加入 Supabase 云端连接代码，但在完成数据库升级与 Cloudflare Secret 设置前，`config.js` 的 `cloudEnabled` 会保持关闭，现有网站继续使用本机资料。请按 [ONLINE_SETUP.md](ONLINE_SETUP.md) 执行 `supabase/cloud_schema.sql` 并设置服务器密钥；正式启用后，账号、班级、学习资料、题目、笔记与作答记录会由 Supabase 管理。`SUPABASE_SECRET_KEY` 与 Gemini 密钥绝不能写入 `config.js`、GitHub 或 APK。
