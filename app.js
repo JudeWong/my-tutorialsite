@@ -744,13 +744,22 @@ async function activateCloudProfile(profile, { migrateLocal = true } = {}) {
   const cloudHasLearningData = snapshot.papers.length || snapshot.questions.length || snapshot.assignments.length || snapshot.notes.length;
   const localHasLearningData = localSnapshot.papers.length || localSnapshot.questions.length || localSnapshot.assignments.length || localSnapshot.notes.length || localSnapshot.classes.length;
   if (migrateLocal && profile.role === "teacher" && !cloudHasLearningData && localHasLearningData) {
-    const result = await Cloud.migrateLocalSnapshot(localSnapshot);
-    snapshot = await Cloud.loadSnapshot(profile);
-    if (result?.skippedStudents) {
+    try {
+      const result = await Cloud.migrateLocalSnapshot(localSnapshot);
+      snapshot = await Cloud.loadSnapshot(profile);
+      if (result?.skippedStudents) {
+        showToast(localized(
+          `${result.skippedStudents} local student accounts need to register again securely in the cloud.`,
+          `${result.skippedStudents} 个本机学生账号需要在云端重新安全注册。`
+        ));
+      }
+    } catch (migrationError) {
+      console.error("Unable to migrate local learning data to Supabase", migrationError);
       showToast(localized(
-        `${result.skippedStudents} local student accounts need to register again securely in the cloud.`,
-        `${result.skippedStudents} 个本机学生账号需要在云端重新安全注册。`
+        "Teacher login succeeded. Some old browser data was not migrated; the cloud workspace is still available.",
+        "老师登入成功，但部分旧浏览器资料未能迁移；云端学习空间仍然可以使用。"
       ));
+      snapshot = await Cloud.loadSnapshot(profile);
     }
   }
   applyCloudSnapshot(snapshot);
@@ -3071,7 +3080,11 @@ $("#teacher-login-form").addEventListener("submit", async (event) => {
       cloudProfile = null;
       $("#teacher-login-error").textContent = error?.code === "CLOUD_SCHEMA_REQUIRED"
         ? error.message
-        : localized("The cloud email or password is incorrect, or the account is not a teacher.", "云端账号或密码不正确，或此账号不是老师账号。");
+      : error?.code === "ROLE_MISMATCH"
+        ? localized("This account is not assigned to the teacher portal. Ask the administrator to set role=teacher.", "这个账号尚未分配老师端权限，请确认 profiles.role 是 teacher。")
+        : error?.message && !/invalid login credentials/i.test(error.message)
+          ? error.message
+          : localized("The cloud email or password is incorrect.", "云端账号或密码不正确，请重新检查。");
     } finally {
       submitButton.disabled = false;
     }
