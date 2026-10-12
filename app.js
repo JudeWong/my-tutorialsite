@@ -1964,18 +1964,24 @@ function isAcceptableChineseOption(value) {
 
 function normalizeGeneratedQuestion(item, index, paperId, topic) {
   const title = String(item?.question || item?.title || "").trim();
-  const options = Array.isArray(item?.options) ? item.options.map((option) => String(option).trim()).filter(Boolean).slice(0, 4) : [];
+  const optionSource = item?.options ?? item?.choices ?? item?.answers;
+  const rawOptions = Array.isArray(optionSource)
+    ? optionSource
+    : typeof optionSource === "string"
+      ? optionSource.split(/\n|(?=\b[A-D][.)、:：])|(?=\b(?:I|II|III|IV|V)\s*(?:和|与|及|、))/u)
+      : optionSource && typeof optionSource === "object"
+        ? Object.values(optionSource)
+        : [];
+  const options = rawOptions.map((option) => String(option).trim().replace(/^[A-D][.)、:：]\s*/iu, "")).filter(Boolean).slice(0, 6);
   const clozePattern = /_{2,}|填(?:入|写).{0,8}(?:空格|横线)|(?:fill|complete).{0,12}(?:blank|gap)|missing\s+(?:word|term)/iu;
   const explanation = String(item?.explanation || "请对照原始资料中的重点内容理解正确答案。").trim();
   const mistake = String(item?.mistake || "常见错误：没有检查题目中的全部条件就作答。").trim();
   if (!title
-    || !containsChineseText(title)
-    || !containsChineseText(explanation)
-    || !containsChineseText(mistake)
-    || options.length !== 4
-    || options.some((option) => !isAcceptableChineseOption(option))
+    || !explanation
+    || !mistake
+    || options.length < 2
     || clozePattern.test(title)
-    || new Set(options.map((option) => option.toLocaleLowerCase())).size !== 4) return null;
+    || new Set(options.map((option) => option.toLocaleLowerCase())).size !== options.length) return null;
   let correct = Number(item.correct);
   if (!Number.isInteger(correct) && typeof item.correct === "string") correct = Math.max(0, "ABCD".indexOf(item.correct.toUpperCase()));
   correct = Math.max(0, Math.min(Number.isInteger(correct) ? correct : 0, options.length - 1));
@@ -2088,8 +2094,8 @@ function buildQuestionResponseSchema(options = {}) {
       properties: {
         question: { type: "string" },
         code: { type: "string" },
-        options: { type: "array", minItems: 4, maxItems: 4, items: { type: "string" } },
-        correct: { type: "integer", minimum: 0, maximum: 3 },
+        options: { type: "array", minItems: 2, maxItems: 6, items: { type: "string" } },
+        correct: { type: "integer", minimum: 0, maximum: 5 },
         level: { type: "string", enum: ["Basic", "Intermediate", "Advanced"] },
         explanation: { type: "string" },
         mistake: { type: "string" },
@@ -2113,15 +2119,15 @@ ${generationTask}
 Strict quality rules:
 1. Every correct answer must be directly supported by the supplied material. Do not invent facts, definitions, numbers, program output, or technical requirements.
 2. Each question must be logically complete and answerable without seeing this instruction. Use a clear scenario, program fragment, table, network situation, database situation, or concept comparison when the material supports it.
-3. Provide exactly four concise and plausible options. There must be one and only one correct answer. Distractors must reflect realistic student misconceptions, not absurd claims or generic statements.
+3. Provide the same number of options as the source question when it is clear (normally four, but two to six are allowed). There must be one and only one correct answer. Preserve combination choices and Roman-numeral choices exactly, including I, II, III, IV, V, ①, ② and connectors such as “I 和 II”；do not skip or simplify these options. Distractors must reflect realistic student misconceptions, not absurd claims or generic statements.
 4. Never create cloze, missing-word, fill-in-the-blank, underscore, or simple sentence-copy questions.
 5. Avoid repeatedly asking “according to the material”. Test understanding, application, output tracing, comparison, or reasoning instead.
 6. The explanation must state why the correct option is correct. The common mistake must identify a realistic misunderstanding.
 7. ALL user-visible natural-language content must be in Simplified Chinese, even when the source is English or Malay. This includes every question, every answer option, every explanation, and every common mistake. Do not write complete English sentences. English is allowed only inside source code, identifiers, commands, protocol abbreviations, or unavoidable standard computing terms such as CPU, SQL, HTML and Python.
-8. For a past paper, solve each source question carefully and set the correct answer from the source answer key when present; otherwise determine it by sound computer-science reasoning.
+8. For a past paper, solve each source question carefully and set the correct answer from the source answer key when present; otherwise determine it by sound computer-science reasoning. A question containing a picture, table, combination option, or Roman-numeral option is still a complete question and must be returned.
 9. When a question depends on a chart, table, diagram, screenshot, network layout, circuit, or other visual, set image_page to the supplied visual page number, image_bbox to [ymin,xmin,ymax,xmax] normalized from 0 to 1000, and image_alt to a concise Chinese description. Use image_page 0 and image_bbox [0,0,0,0] when no visual is needed. Never invent a visual that is not present.
 10. Return only a JSON array with this exact schema:
-[{"question":"...","code":"optional code or empty string","options":["A text","B text","C text","D text"],"correct":0,"level":"Basic|Intermediate|Advanced","explanation":"...","mistake":"...","image_page":0,"image_bbox":[0,0,0,0],"image_alt":""}]
+[{"question":"...","code":"optional code or empty string","options":["选项文字 1","选项文字 2"],"correct":0,"level":"Basic|Intermediate|Advanced","explanation":"...","mistake":"...","image_page":0,"image_bbox":[0,0,0,0],"image_alt":""}]
 The correct value is a zero-based integer from 0 to 3.
 
 Category: ${TOPIC_EN[topic] || topic}

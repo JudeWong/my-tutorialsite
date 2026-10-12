@@ -18,8 +18,8 @@ function questionResponseSchema(body) {
       properties: {
         question: { type: "string" },
         code: { type: "string" },
-        options: { type: "array", minItems: 4, maxItems: 4, items: { type: "string" } },
-        correct: { type: "integer", minimum: 0, maximum: 3 },
+        options: { type: "array", minItems: 2, maxItems: 6, items: { type: "string" } },
+        correct: { type: "integer", minimum: 0, maximum: 5 },
         level: { type: "string", enum: ["Basic", "Intermediate", "Advanced"] },
         explanation: { type: "string" },
         mistake: { type: "string" },
@@ -39,7 +39,7 @@ function json(data, status = 200) {
 
 function systemPrompt(mode, language, task) {
   if (task === "question-generation") {
-    return "Produce accurate, source-grounded UEC computer science assessment questions. Every user-visible natural-language question, option, explanation, common mistake, and image description must be in Simplified Chinese. Inspect every supplied page image. If a question depends on a chart, table, diagram, screenshot, network layout, circuit, or other visual, return its page number and normalized bounding box [ymin,xmin,ymax,xmax] from 0 to 1000; otherwise use image_page 0 and image_bbox [0,0,0,0]. English is allowed only for source code, identifiers, abbreviations, and unavoidable standard computing terms. Return JSON only.";
+    return "Produce accurate, source-grounded UEC computer science assessment questions. Every user-visible natural-language question, option, explanation, common mistake, and image description must be in Simplified Chinese. Inspect every supplied page image. If a question depends on a chart, table, diagram, screenshot, network layout, circuit, or other visual, return its page number and normalized bounding box [ymin,xmin,ymax,xmax] from 0 to 1000; otherwise use image_page 0 and image_bbox [0,0,0,0]. Preserve combination choices and Roman-numeral choices such as I, II, III, IV, V, ①, and ② exactly; do not skip a question because an option uses these symbols. English is allowed only for source code, identifiers, abbreviations, and unavoidable standard computing terms. Return JSON only.";
   }
   const style = mode === "study"
     ? "Teach step by step, check the learner's reasoning, use concrete examples, and include a useful practice prompt when appropriate."
