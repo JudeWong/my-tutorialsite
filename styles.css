@@ -890,6 +890,49 @@ html[lang="en"] .landing-section-label, html[lang="en"] .section-kicker { font-f
 .ai-chat-popover .ai-model-bar { flex: 0 0 auto; margin-top: 14px; }
 .ai-chat-popover .ai-chat-log { flex: 1 1 auto; height: auto; min-height: 150px; overflow-y: auto; }
 .ai-chat-popover .chat-message .message-body > p { white-space: pre-wrap; overflow-wrap: anywhere; }
+.ai-chat-popover .message-markdown {
+  max-width: none;
+  padding: 14px 15px;
+  border-radius: 4px 14px 14px 14px;
+  color: #3e3754;
+  background: #f4f1fb;
+  font-size: 15px;
+  line-height: 1.72;
+  overflow-wrap: anywhere;
+}
+.ai-chat-popover .message-markdown > :first-child { margin-top: 0; }
+.ai-chat-popover .message-markdown > :last-child { margin-bottom: 0; }
+.ai-chat-popover .message-markdown p {
+  max-width: none;
+  margin: 0 0 11px;
+  padding: 0;
+  border-radius: 0;
+  color: inherit;
+  background: transparent;
+  font-size: inherit;
+  line-height: inherit;
+}
+.ai-chat-popover .message-markdown h3,
+.ai-chat-popover .message-markdown h4,
+.ai-chat-popover .message-markdown h5 {
+  margin: 18px 0 8px;
+  color: #211b39;
+  font-family: KaiTi, STKaiti, "楷体", serif;
+  line-height: 1.4;
+}
+.ai-chat-popover .message-markdown h3 { font-size: 20px; }
+.ai-chat-popover .message-markdown h4 { font-size: 18px; }
+.ai-chat-popover .message-markdown h5 { font-size: 16px; }
+.ai-chat-popover .message-markdown strong { color: #2e2362; font-weight: 700; }
+.ai-chat-popover .message-markdown ul,
+.ai-chat-popover .message-markdown ol { margin: 7px 0 13px; padding-left: 24px; }
+.ai-chat-popover .message-markdown li { margin: 6px 0; padding-left: 2px; }
+.ai-chat-popover .message-markdown hr { height: 1px; margin: 16px 0; border: 0; background: #ddd5ec; }
+.ai-chat-popover .message-markdown blockquote { margin: 12px 0; padding: 9px 12px; border-left: 3px solid #8b69f5; color: #5f5773; background: #fff; }
+.ai-chat-popover .message-markdown code { padding: 2px 5px; border-radius: 5px; color: #583fc6; background: #e9e3ff; font: 13px/1.5 Consolas, "Courier New", monospace; }
+.ai-chat-popover .message-markdown pre { position: relative; margin: 12px 0; padding: 14px; overflow-x: auto; border-radius: 10px; color: #eeebff; background: #211b39; }
+.ai-chat-popover .message-markdown pre[data-language]::before { content: attr(data-language); display: block; margin-bottom: 7px; color: #aea4ce; font: 700 10px Arial, Helvetica, sans-serif; text-transform: uppercase; }
+.ai-chat-popover .message-markdown pre code { padding: 0; color: inherit; background: transparent; font-size: 13px; white-space: pre; }
 .ai-chat-popover .suggested-prompts, .ai-chat-popover .ai-input-row, .ai-chat-popover .ai-source { flex: 0 0 auto; }
 
 @media (max-width: 980px) {
@@ -913,6 +956,10 @@ html[lang="en"] .landing-section-label, html[lang="en"] .section-kicker { font-f
   .ai-heading-actions .new-chat-button span { display: inline; font-size: 18px; }
   .ai-chat-popover .ai-model-bar { margin-top: 10px; padding: 7px 9px; }
   .ai-chat-popover .ai-chat-log { margin: 9px 0; }
+  .ai-chat-popover .message-markdown { padding: 12px; font-size: 14px; }
+  .ai-chat-popover .message-markdown h3 { font-size: 18px; }
+  .ai-chat-popover .message-markdown h4 { font-size: 17px; }
+  .ai-chat-popover .message-markdown h5 { font-size: 15px; }
 }
 
 /* Compact homepage navigation for phones. Keep both language labels fully visible. */

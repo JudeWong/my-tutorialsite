@@ -939,6 +939,118 @@ function getAIAnswer(question) {
   );
 }
 
+function formatAIInlineMarkdown(value) {
+  const codeTokens = [];
+  let text = escapeHTML(value);
+  text = text.replace(/`([^`\n]+)`/g, (_, code) => {
+    const token = `\uE000${codeTokens.length}\uE001`;
+    codeTokens.push(`<code>${code}</code>`);
+    return token;
+  });
+  text = text
+    .replace(/\*\*([^*\n]+)\*\*/g, "<strong>$1</strong>")
+    .replace(/__([^_\n]+)__/g, "<strong>$1</strong>")
+    .replace(/(^|[\s（(])\*([^*\n]+)\*(?=$|[\s，。；：、！？,.!?:;)）])/g, "$1<em>$2</em>")
+    .replace(/(^|[\s（(])_([^_\n]+)_(?=$|[\s，。；：、！？,.!?:;)）])/g, "$1<em>$2</em>");
+  return text.replace(/\uE000(\d+)\uE001/g, (_, index) => codeTokens[Number(index)] || "");
+}
+
+function renderAIMessageMarkdown(value) {
+  const lines = String(value || "").replace(/\r\n?/g, "\n").split("\n");
+  const output = [];
+  let paragraph = [];
+  let listType = "";
+  let codeLines = null;
+  let codeLanguage = "";
+
+  const closeParagraph = () => {
+    if (!paragraph.length) return;
+    output.push(`<p>${paragraph.map(formatAIInlineMarkdown).join("<br>")}</p>`);
+    paragraph = [];
+  };
+  const closeList = () => {
+    if (!listType) return;
+    output.push(`</${listType}>`);
+    listType = "";
+  };
+  const openList = (type) => {
+    closeParagraph();
+    if (listType === type) return;
+    closeList();
+    listType = type;
+    output.push(`<${type}>`);
+  };
+  const closeCode = () => {
+    if (!codeLines) return;
+    const language = /^[a-z0-9_+-]{1,24}$/i.test(codeLanguage) ? ` data-language="${codeLanguage}"` : "";
+    output.push(`<pre${language}><code>${escapeHTML(codeLines.join("\n"))}</code></pre>`);
+    codeLines = null;
+    codeLanguage = "";
+  };
+
+  lines.forEach((line) => {
+    const fence = line.match(/^\s*```\s*([a-z0-9_+-]*)\s*$/i);
+    if (fence) {
+      if (codeLines) closeCode();
+      else {
+        closeParagraph();
+        closeList();
+        codeLines = [];
+        codeLanguage = fence[1] || "";
+      }
+      return;
+    }
+    if (codeLines) {
+      codeLines.push(line);
+      return;
+    }
+    if (!line.trim()) {
+      closeParagraph();
+      closeList();
+      return;
+    }
+    const heading = line.match(/^\s*(#{1,4})\s+(.+)$/);
+    if (heading) {
+      closeParagraph();
+      closeList();
+      const level = Math.min(5, heading[1].length + 2);
+      output.push(`<h${level}>${formatAIInlineMarkdown(heading[2])}</h${level}>`);
+      return;
+    }
+    if (/^\s*[-*_]{3,}\s*$/.test(line)) {
+      closeParagraph();
+      closeList();
+      output.push("<hr>");
+      return;
+    }
+    const unorderedItem = line.match(/^\s*[-*+]\s+(.+)$/);
+    if (unorderedItem) {
+      openList("ul");
+      output.push(`<li>${formatAIInlineMarkdown(unorderedItem[1])}</li>`);
+      return;
+    }
+    const orderedItem = line.match(/^\s*\d+[.)]\s+(.+)$/);
+    if (orderedItem) {
+      openList("ol");
+      output.push(`<li>${formatAIInlineMarkdown(orderedItem[1])}</li>`);
+      return;
+    }
+    const quote = line.match(/^\s*>\s?(.+)$/);
+    if (quote) {
+      closeParagraph();
+      closeList();
+      output.push(`<blockquote>${formatAIInlineMarkdown(quote[1])}</blockquote>`);
+      return;
+    }
+    closeList();
+    paragraph.push(line.trim());
+  });
+  closeParagraph();
+  closeList();
+  closeCode();
+  return output.join("");
+}
+
 function appendChatMessage(type, message, { typing = false } = {}) {
   const wrapper = document.createElement("div");
   wrapper.className = `chat-message ${type === "user" ? "user-message" : "ai-message"}${typing ? " typing-message" : ""}`;
@@ -946,10 +1058,14 @@ function appendChatMessage(type, message, { typing = false } = {}) {
   avatar.textContent = type === "user" ? localized("You", "你") : "AI";
   const body = document.createElement("div");
   body.className = "message-body";
-  const text = document.createElement("p");
+  body.dataset.rawMessage = message;
+  const text = document.createElement(type === "ai" && !typing ? "div" : "p");
   if (typing) {
     text.className = "typing-dots";
     text.innerHTML = "<i></i><i></i><i></i>";
+  } else if (type === "ai") {
+    text.className = "message-markdown";
+    text.innerHTML = renderAIMessageMarkdown(message);
   } else {
     text.textContent = message;
   }
@@ -2751,7 +2867,8 @@ $("#ai-model-select").addEventListener("change", (event) => {
 $("#ai-chat-log").addEventListener("click", async (event) => {
   const copyButton = event.target.closest("[data-copy-message]");
   if (copyButton) {
-    const message = copyButton.closest(".message-body")?.querySelector("p")?.textContent || "";
+    const messageBody = copyButton.closest(".message-body");
+    const message = messageBody?.dataset.rawMessage || messageBody?.querySelector(".message-markdown, p")?.textContent || "";
     try {
       await navigator.clipboard.writeText(message);
       showToast(localized("Response copied", "回答已复制"));
