@@ -1309,7 +1309,7 @@ async function requestChatFromGemini(apiKey, question) {
         const providerMessage = data?.error?.message || `Gemini returned ${response.status}`;
         const error = new Error(providerMessage);
         error.httpStatus = response.status;
-        if (isTransientGeminiError(response.status, providerMessage) && attempt < attemptModels.length - 1) {
+        if ((isTransientGeminiError(response.status, providerMessage) || isGeminiModelError(response.status, providerMessage)) && attempt < attemptModels.length - 1) {
           await waitForGeminiRetry(650 * (2 ** attempt));
           continue;
         }
@@ -1322,7 +1322,7 @@ async function requestChatFromGemini(apiKey, question) {
       return { reply, model: attemptedModel };
     } catch (error) {
       lastError = error;
-      if (attempt < attemptModels.length - 1 && (["TimeoutError", "AbortError", "GeminiAttemptTimeout"].includes(error?.name) || !error?.httpStatus || isTransientGeminiError(error.httpStatus, error.message))) {
+      if (attempt < attemptModels.length - 1 && (["TimeoutError", "AbortError", "GeminiAttemptTimeout"].includes(error?.name) || !error?.httpStatus || isTransientGeminiError(error.httpStatus, error.message) || isGeminiModelError(error.httpStatus, error.message))) {
         await waitForGeminiRetry(650 * (2 ** attempt));
         continue;
       }
@@ -2196,6 +2196,11 @@ function isTransientGeminiError(status, message = "") {
     || /high demand|temporar|overload|unavailable|try again|deadline|timeout/i.test(message);
 }
 
+function isGeminiModelError(status, message = "") {
+  return (status === 400 || status === 404)
+    && /model|not found|not supported|not available|unknown model|invalid.*model/i.test(message);
+}
+
 function waitForGeminiRetry(delay, signal) {
   return new Promise((resolve, reject) => {
     const timer = setTimeout(resolve, delay);
@@ -2238,7 +2243,7 @@ async function fetchWithGeminiAttemptTimeout(endpoint, options, parentSignal, ti
 
 function getGeminiAttemptModels(preferredModel) {
   const preferred = normalizeGeminiModel(preferredModel);
-  const fallbacks = ["gemini-3.7-flash", "gemini-3.1-flash-lite"].filter((model) => model !== preferred);
+  const fallbacks = ["gemini-3.6-flash", "gemini-3.1-flash-lite", "gemini-2.5-flash"].filter((model) => model !== preferred);
   return [preferred, preferred, ...fallbacks];
 }
 
@@ -2319,29 +2324,36 @@ async function requestQuestionsFromGemini(apiKey, model, prompt, paperId, topic,
 
     if (!response.ok) {
       const providerMessage = data?.error?.message || "";
-      if (isTransientGeminiError(response.status, providerMessage)) {
+      const modelRejected = isGeminiModelError(response.status, providerMessage);
+      if (isTransientGeminiError(response.status, providerMessage) || modelRejected) {
         if (attempt < attemptModels.length - 1) {
           const nextModel = attemptModels[attempt + 1];
           setGenerationProgress(
             Math.min(88, 78 + (attempt * 3)),
-            localized(`Gemini is busy. Retrying with ${nextModel}…`, `Gemini 目前繁忙，正在使用 ${nextModel} 重试……`),
+            modelRejected
+              ? localized(`The model was rejected. Retrying with ${nextModel}…`, `当前模型被拒绝，正在使用 ${nextModel} 重试……`)
+              : localized(`Gemini is busy. Retrying with ${nextModel}…`, `Gemini 目前繁忙，正在使用 ${nextModel} 重试……`),
             "generate"
           );
           await waitForGeminiRetry(700 * (2 ** attempt), signal);
           continue;
         }
-        const transientError = new Error(localized("Gemini is temporarily busy. Automatic retries and backup models were unsuccessful. Please try again shortly.", "Gemini 目前繁忙，自动重试及备用模型仍未成功，请稍后再试。"));
-        transientError.code = "GEMINI_TEMPORARILY_UNAVAILABLE";
-        transientError.source = "gemini-transient";
-        transientError.httpStatus = response.status;
-        throw transientError;
+        if (isTransientGeminiError(response.status, providerMessage)) {
+          const transientError = new Error(localized("Gemini is temporarily busy. Automatic retries and backup models were unsuccessful. Please try again shortly.", "Gemini 目前繁忙，自动重试及备用模型仍未成功，请稍后再试。"));
+          transientError.code = "GEMINI_TEMPORARILY_UNAVAILABLE";
+          transientError.source = "gemini-transient";
+          transientError.httpStatus = response.status;
+          throw transientError;
+        }
       }
       const messages = {
-        400: localized("The API key or Gemini model was rejected. Replace the key or check the model name.", "API Key 或 Gemini 模型被拒绝，请更换 Key 或检查模型名称。"),
+        400: localized("Gemini rejected the request. Check the API key, model name, and request details.", "Gemini 拒绝了请求，请检查 API Key、模型名称及请求内容。"),
         401: localized("The Gemini API key is invalid. Please replace it with a new key.", "Gemini API Key 无效，请更换新的 Key。"),
         403: localized("This Gemini API key is not authorized. Please replace it with another key.", "这个 Gemini API Key 没有使用权限，请更换其他 Key。")
       };
-      const error = new Error(messages[response.status] || providerMessage || `Gemini returned ${response.status}`);
+      const providerDetail = String(providerMessage || "").replace(/AIza[\w-]+/gi, "[redacted]").replace(/\s+/g, " ").trim().slice(0, 360);
+      const baseMessage = messages[response.status] || `Gemini returned ${response.status}`;
+      const error = new Error(providerDetail ? `${baseMessage} (${providerDetail})` : baseMessage);
       error.code = "GEMINI_DIRECT_FAILED";
       error.source = "gemini-direct";
       error.httpStatus = response.status;

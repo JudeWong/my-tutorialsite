@@ -62,6 +62,11 @@ function isTransientGeminiError(status, message = "") {
     || /high demand|temporar|overload|unavailable|try again|deadline|timeout/i.test(message);
 }
 
+function isGeminiModelError(status, message = "") {
+  return (status === 400 || status === 404)
+    && /model|not found|not supported|not available|unknown model|invalid.*model/i.test(message);
+}
+
 function waitForRetry(delay) {
   return new Promise((resolve) => setTimeout(resolve, delay));
 }
@@ -110,7 +115,7 @@ export async function onRequestPost({ request, env }) {
   const configuredModel = String(env.GEMINI_MODEL || "").trim().replace(/^models\//i, "");
   const model = !configuredModel || configuredModel === "gemini-2.5-flash" ? "gemini-3.8-flash" : configuredModel;
   const endpoint = "https://generativelanguage.googleapis.com/v1beta/interactions";
-  const fallbackModels = ["gemini-3.7-flash", "gemini-3.1-flash-lite"].filter((item) => item !== model);
+  const fallbackModels = ["gemini-3.6-flash", "gemini-3.1-flash-lite", "gemini-2.5-flash"].filter((item) => item !== model);
   const attemptModels = [model, model, ...fallbackModels];
   let response;
   let data = {};
@@ -170,14 +175,16 @@ export async function onRequestPost({ request, env }) {
     if (response.ok) break;
     const providerMessage = data?.error?.message || "Unknown error";
     console.error("Gemini API error", response.status, providerMessage, usedModel);
-    if (isTransientGeminiError(response.status, providerMessage) && attempt < attemptModels.length - 1) {
+    const modelRejected = isGeminiModelError(response.status, providerMessage);
+    if ((isTransientGeminiError(response.status, providerMessage) || modelRejected) && attempt < attemptModels.length - 1) {
       await waitForRetry(700 * (2 ** attempt));
       continue;
     }
     if (isTransientGeminiError(response.status, providerMessage)) {
       return json({ error: "Gemini is temporarily busy. Automatic retries and backup models were unsuccessful. Please try again shortly." }, 503);
     }
-    return json({ error: "The AI service rejected the request. Check the configured API key and model." }, 502);
+    const detail = String(providerMessage || "").replace(/AIza[\w-]+/gi, "[redacted]").replace(/\s+/g, " ").trim().slice(0, 360);
+    return json({ error: detail ? `The AI service rejected the request: ${detail}` : "The AI service rejected the request. Check the configured API key and model." }, 502);
   }
 
   const interaction = data?.interaction || data;
