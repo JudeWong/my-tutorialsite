@@ -1,4 +1,4 @@
-const CACHE_NAME = "personal-ai-shell-v25";
+const CACHE_NAME = "personal-ai-shell-v26";
 const CORE_ASSETS = [
   "./",
   "./index.html",
