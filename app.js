@@ -1001,6 +1001,7 @@ function renderAssignments() {
     </article>`;
   }).join("") : `<div class="data-empty"><strong>${localized("No assignments yet", "尚未布置练习")}</strong><p>${localized("Assignments created by the teacher will appear here.", "老师建立练习后会显示在这里。")}</p></div>`;
   updateStudentProgress();
+  renderLastUnfinishedAssignment();
   renderTeacherMetrics();
   refreshLanguage();
 }
@@ -1025,11 +1026,21 @@ function updateStudentProgress() {
   $("#student-rank").textContent = "—";
   $("#student-weekly-count").textContent = completed;
   $("#student-weekly-total").textContent = `/ ${assignments.length}`;
-  $("#student-hero-summary").textContent = assignments.length
-    ? localized(`${completed} of ${assignments.length} assignments completed.`, `已完成 ${completed} / ${assignments.length} 份练习。`)
-    : localized("No assignments have been assigned yet.", "老师尚未布置练习。 ");
-  $("#continue-quiz").disabled = !assignments.some((assignment) => (
-    Array.isArray(assignment.questionIds) && assignment.questionIds.some((id) => questionBank.some((question) => question.id === id))
+  const unfinished = getLatestQuizProgressCandidate();
+  $("#student-hero-summary").textContent = unfinished
+    ? localized(
+      `Your last unfinished assignment is “${unfinished.assignment.titleEn || unfinished.assignment.title}”.`,
+      `你上次尚未完成的作业是《${unfinished.assignment.title}》。`
+    )
+    : assignments.length
+      ? localized(`${completed} of ${assignments.length} assignments completed.`, `已完成 ${completed} / ${assignments.length} 份练习。`)
+      : localized("No assignments have been assigned yet.", "老师尚未布置练习。 ");
+  const continueButton = $("#continue-quiz");
+  continueButton.innerHTML = unfinished
+    ? `${localized("Continue unfinished assignment", "继续未完成的作业")} <span>→</span>`
+    : `${localized("Start practice", "开始练习")} <span>→</span>`;
+  continueButton.disabled = !assignments.some((assignment) => (
+    !assignment.done && Array.isArray(assignment.questionIds) && assignment.questionIds.some((id) => questionBank.some((question) => question.id === id))
   ));
   $("#student-achievements").innerHTML = `<span>✓ ${localized("Account registered", "已完成账号注册")}</span>${completed ? `<span>✓ ${localized(`${completed} assignments completed`, `已完成 ${completed} 份练习`)}</span>` : ""}<span>→ ${localized("More achievements will appear as you learn", "学习后将解锁更多成就")}</span>`;
   $("#weekly-goal-note").textContent = assignments.length
@@ -3096,6 +3107,68 @@ function getStoredQuizProgress(assignmentId) {
   return progress && typeof progress === "object" ? progress : null;
 }
 
+function getLatestQuizProgressCandidate() {
+  return assignments
+    .map((assignment, index) => ({ assignment, index, progress: assignment.done ? null : getStoredQuizProgress(assignment.id) }))
+    .filter((item) => item.progress)
+    .sort((left, right) => new Date(right.progress.updatedAt || 0) - new Date(left.progress.updatedAt || 0))[0] || null;
+}
+
+function getQuizProgressStats(assignment, progress) {
+  const savedQuestionIds = Array.isArray(progress?.questionIds) ? progress.questionIds : [];
+  const assignmentQuestionIds = Array.isArray(assignment?.questionIds) ? assignment.questionIds : [];
+  const candidateIds = savedQuestionIds.length ? savedQuestionIds : assignmentQuestionIds;
+  const availableIds = new Set(questionBank.map((question) => question.id));
+  const questionIds = candidateIds.filter((id) => availableIds.has(id));
+  const validIds = new Set(questionIds.length ? questionIds : candidateIds);
+  const answeredCount = Object.entries(progress?.answersByQuestionId || {})
+    .filter(([questionId, answer]) => (!validIds.size || validIds.has(questionId)) && hasAnswer(answer)).length;
+  const total = questionIds.length || candidateIds.length || Number(assignment?.questionCount) || answeredCount;
+  const currentIndex = questionIds.indexOf(progress?.currentQuestionId);
+  return {
+    answeredCount,
+    total,
+    currentQuestion: total ? Math.min(total, currentIndex >= 0 ? currentIndex + 1 : answeredCount + 1) : 0,
+    percentage: total ? Math.min(100, Math.round((answeredCount / total) * 100)) : 0
+  };
+}
+
+function renderLastUnfinishedAssignment() {
+  const card = $("#last-unfinished-assignment");
+  if (!card) return;
+  const candidate = role === "student" ? getLatestQuizProgressCandidate() : null;
+  if (!candidate) {
+    card.hidden = true;
+    card.innerHTML = "";
+    return;
+  }
+
+  const { assignment, index, progress } = candidate;
+  const stats = getQuizProgressStats(assignment, progress);
+  const title = currentLanguage === "en" ? assignment.titleEn || assignment.title : assignment.title;
+  card.hidden = false;
+  card.innerHTML = `
+    <div class="unfinished-assignment-icon" aria-hidden="true">${escapeHTML(assignment.icon || "↗")}</div>
+    <div class="unfinished-assignment-copy">
+      <div class="unfinished-assignment-meta">
+        <span>${localized("LAST UNFINISHED ASSIGNMENT", "上次未完成的作业")}</span>
+        <time>${localized("Last activity", "上次作答")} · ${escapeHTML(formatNoteDate(progress.updatedAt))}</time>
+      </div>
+      <h2>${escapeHTML(title)}</h2>
+      <p>${localized(
+        `${stats.answeredCount} of ${stats.total} questions answered · Continue from question ${stats.currentQuestion}`,
+        `已作答 ${stats.answeredCount} / ${stats.total} 题 · 从第 ${stats.currentQuestion} 题继续`
+      )}</p>
+      <div class="unfinished-assignment-progress" aria-label="${localized("Assignment progress", "作业进度")}">
+        <i style="width:${stats.percentage}%"></i>
+      </div>
+    </div>
+    <div class="unfinished-assignment-action">
+      <strong>${stats.percentage}%</strong>
+      <button type="button" data-resume-assignment="${index}">${localized("Continue", "继续作答")} <span>→</span></button>
+    </div>`;
+}
+
 function saveCurrentQuizProgress() {
   if (role !== "student" || !questions.length) return;
   const assignment = assignments[activeAssignmentIndex];
@@ -3131,11 +3204,7 @@ function clearQuizProgress(assignmentId) {
 }
 
 function getContinueAssignmentIndex() {
-  const candidates = assignments
-    .map((assignment, index) => ({ assignment, index, progress: assignment.done ? null : getStoredQuizProgress(assignment.id) }))
-    .filter((item) => item.progress)
-    .sort((left, right) => new Date(right.progress.updatedAt || 0) - new Date(left.progress.updatedAt || 0));
-  return candidates[0]?.index ?? 0;
+  return getLatestQuizProgressCandidate()?.index ?? 0;
 }
 
 function restoreQuizProgress(assignment) {
@@ -4169,6 +4238,10 @@ $("#assignment-list").addEventListener("click", (event) => {
   if (!button) return;
   const index = Number(button.dataset.assignment);
   assignments[index]?.done ? showToast(localized("No saved answer review is available yet.", "目前没有已储存的答题解析。")) : startQuiz(index);
+});
+$("#last-unfinished-assignment").addEventListener("click", (event) => {
+  const button = event.target.closest("[data-resume-assignment]");
+  if (button) startQuiz(Number(button.dataset.resumeAssignment));
 });
 $("#continue-quiz").addEventListener("click", () => startQuiz());
 $("#exit-quiz").addEventListener("click", () => {

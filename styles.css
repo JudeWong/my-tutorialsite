@@ -1512,6 +1512,44 @@ html[lang="en"] .landing-section-label, html[lang="en"] .section-kicker { font-f
 .ai-key-link { display: inline-block; margin-top: 13px; color: #8c4818; font-size: 13px; font-weight: 700; text-decoration: none; }
 .ai-key-link:hover { text-decoration: underline; }
 
+.unfinished-assignment-card {
+  margin: 0 0 22px;
+  padding: 24px 26px;
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr) auto;
+  align-items: center;
+  gap: 20px;
+  overflow: hidden;
+  border-color: #ddd6ee;
+  background:
+    radial-gradient(circle at 92% 20%, rgba(109,84,232,.11), transparent 32%),
+    linear-gradient(135deg, #fff, #faf8ff);
+}
+.unfinished-assignment-card[hidden] { display: none; }
+.unfinished-assignment-icon {
+  width: 58px;
+  height: 58px;
+  display: grid;
+  place-items: center;
+  border-radius: 17px;
+  color: #fff;
+  background: linear-gradient(135deg,#6d54e8,#4b8bff);
+  box-shadow: 0 10px 24px rgba(92,70,210,.2);
+  font-size: 24px;
+}
+.unfinished-assignment-copy { min-width: 0; }
+.unfinished-assignment-meta { display: flex; align-items: center; justify-content: space-between; gap: 16px; }
+.unfinished-assignment-meta span { color: #6d54e8; font: 700 12px/1.3 Arial,Helvetica,sans-serif; letter-spacing: 1px; }
+.unfinished-assignment-meta time { color: #8a8398; font-size: 12px; white-space: nowrap; }
+.unfinished-assignment-copy h2 { margin: 6px 0 3px; overflow: hidden; color: #211b39; font-size: 22px; line-height: 1.35; text-overflow: ellipsis; white-space: nowrap; }
+.unfinished-assignment-copy p { margin: 0; color: #77718a; font-size: 14px; }
+.unfinished-assignment-progress { height: 7px; margin-top: 13px; overflow: hidden; border-radius: 99px; background: #eae6f2; }
+.unfinished-assignment-progress i { display: block; height: 100%; border-radius: inherit; background: linear-gradient(90deg,#6d54e8,#4b8bff); transition: width .3s ease; }
+.unfinished-assignment-action { display: grid; justify-items: end; gap: 9px; }
+.unfinished-assignment-action strong { color: #4e3eb3; font: 700 20px Arial,Helvetica,sans-serif; }
+.unfinished-assignment-action button { padding: 11px 17px; border: 0; border-radius: 24px; color: #fff; background: #171719; cursor: pointer; font: 700 14px Arial,Helvetica,sans-serif; white-space: nowrap; }
+.unfinished-assignment-action button:hover { background: #6d54e8; }
+
 @media (max-width: 560px) {
   .paper-edit-fields { grid-template-columns: 1fr; }
   .paper-edit-fields label:first-child { grid-column: auto; }
@@ -1529,6 +1567,14 @@ html[lang="en"] .landing-section-label, html[lang="en"] .section-kicker { font-f
   .material-question-actions { grid-column: 2; justify-content: flex-start; max-width: none; }
   .material-question-item button { width: max-content; }
   .question-list-shell { padding: 23px 18px; }
+  .unfinished-assignment-card { grid-template-columns: auto minmax(0,1fr); padding: 20px 18px; gap: 15px; }
+  .unfinished-assignment-icon { width: 48px; height: 48px; border-radius: 14px; font-size: 20px; }
+  .unfinished-assignment-meta { display: grid; gap: 3px; }
+  .unfinished-assignment-meta time { white-space: normal; }
+  .unfinished-assignment-copy h2 { font-size: 19px; }
+  .unfinished-assignment-copy p { font-size: 13px; line-height: 1.55; }
+  .unfinished-assignment-action { grid-column: 1 / -1; display: flex; align-items: center; justify-content: space-between; width: 100%; }
+  .unfinished-assignment-action button { padding: 10px 15px; font-size: 13px; }
 }
 
 .ai-online.offline {
