@@ -2199,13 +2199,13 @@ async function parseAIQuestionResponse(raw, paperId, topic, options = {}) {
   if (!Array.isArray(items)) throw new Error("Question generation response did not contain a questions array");
   const questions = items.map((item, index) => normalizeGeneratedQuestion(item, index, paperId, topic)).filter(Boolean);
   const { materialType, requestedCount, maxItems } = getQuestionGenerationLimits(options);
-  if (materialType === "teaching-material" && questions.length !== requestedCount) {
+  if (!options.allowShortGeneration && materialType === "teaching-material" && questions.length !== requestedCount) {
     throw new Error(localized(
       `Gemini returned ${questions.length} valid Chinese questions instead of the requested ${requestedCount}. Please try again.`,
       `Gemini 返回了 ${questions.length} 道有效中文题目，没有达到所选的 ${requestedCount} 题，请重新尝试。`
     ));
   }
-  if (materialType === "past-paper" && questions.length < requestedCount) {
+  if (!options.allowShortGeneration && materialType === "past-paper" && questions.length < requestedCount) {
     throw new Error(localized(
       `Gemini returned ${questions.length} questions, but a past-year paper requires at least ${requestedCount}. Please try again.`,
       `Gemini 只返回了 ${questions.length} 道题，历届试卷至少需要 ${requestedCount} 道，请重新尝试。`
@@ -2439,11 +2439,21 @@ async function requestQuestionsFromGemini(apiKey, model, prompt, paperId, topic,
   throw new Error("Gemini generation failed");
 }
 
+function buildQuestionSupplementPrompt(text, fileName, topic, options, existingQuestions, missingCount) {
+  const titles = existingQuestions.map((question, index) => `${index + 1}. ${question.title}`).join("\n");
+  const supplementOptions = { ...options, materialType: "teaching-material", questionCount: Math.max(10, Math.min(50, missingCount + 5)) };
+  return `${buildQuestionGenerationPrompt(text, fileName, topic, supplementOptions)}
+
+IMPORTANT SUPPLEMENT TASK:
+The first pass produced ${existingQuestions.length} valid questions, but at least ${missingCount} more are required. Create NEW questions only. Do not repeat, paraphrase, or copy any question in this existing list:
+${titles.slice(0, 12000)}
+Return enough additional valid questions so the combined result reaches the required count. Keep every question a single-best-answer multiple-choice question in Simplified Chinese.`;
+}
+
 async function requestAIQuestions(text, fileName, paperId, topic, options) {
   const configuredEndpoint = globalThis.PERSONAL_AI_CONFIG?.generationEndpoint?.trim()
     || globalThis.PERSONAL_AI_CONFIG?.aiEndpoint?.trim();
   const apiKey = getGeminiApiKey();
-  const prompt = buildQuestionGenerationPrompt(text, fileName, topic, options);
   const controller = new AbortController();
   let generationTimedOut = false;
   const timeout = setTimeout(() => {
@@ -2451,26 +2461,63 @@ async function requestAIQuestions(text, fileName, paperId, topic, options) {
     controller.abort(new DOMException("Question generation timed out", "TimeoutError"));
   }, 300000);
   try {
-    if (configuredEndpoint) return await requestQuestionsFromProxy(configuredEndpoint, prompt, paperId, topic, options, controller.signal);
-    if (apiKey) {
+    const requestGenerated = async (generationPrompt, generationOptions) => {
+      if (configuredEndpoint) return requestQuestionsFromProxy(configuredEndpoint, generationPrompt, paperId, topic, generationOptions, controller.signal);
+      if (apiKey) {
+        try {
+          return await requestQuestionsFromGemini(apiKey, getGeminiModel(), generationPrompt, paperId, topic, generationOptions, controller.signal);
+        } catch (error) {
+          if (error?.name === "AbortError" || error?.source) throw error;
+          error.code = "GEMINI_DIRECT_FAILED";
+          error.source = "gemini-direct";
+          localStorage.setItem(GEMINI_KEY_STATUS_KEY, "error");
+          updateAIConfigStatus();
+          throw error;
+        }
+      }
+      if (location.hostname.endsWith("github.io") || globalThis.Capacitor?.isNativePlatform?.()) throw createAISetupError();
       try {
-        return await requestQuestionsFromGemini(apiKey, getGeminiModel(), prompt, paperId, topic, options, controller.signal);
+        return await requestQuestionsFromProxy("./api/chat", generationPrompt, paperId, topic, generationOptions, controller.signal);
       } catch (error) {
-        if (error?.name === "AbortError" || error?.source) throw error;
-        error.code = "GEMINI_DIRECT_FAILED";
-        error.source = "gemini-direct";
-        localStorage.setItem(GEMINI_KEY_STATUS_KEY, "error");
-        updateAIConfigStatus();
-        throw error;
+        if (error?.name === "AbortError") throw error;
+        throw createAISetupError();
+      }
+    };
+
+    const firstOptions = options.materialType === "past-paper"
+      ? { ...options, allowShortGeneration: true }
+      : options;
+    let questions = await requestGenerated(buildQuestionGenerationPrompt(text, fileName, topic, firstOptions), firstOptions);
+    const { materialType, requestedCount, maxItems } = getQuestionGenerationLimits(options);
+    if (materialType === "past-paper" && questions.length < requestedCount) {
+      const missingCount = requestedCount - questions.length;
+      setGenerationProgress(86, localized(
+        `Gemini returned ${questions.length} usable questions. Creating ${missingCount} additional questions…`,
+        `Gemini 返回了 ${questions.length} 道有效题目，正在补充 ${missingCount} 道题目……`
+      ), "generate");
+      const supplementOptions = {
+        ...options,
+        materialType: "teaching-material",
+        questionCount: Math.max(10, Math.min(50, missingCount + 5)),
+        allowShortGeneration: true
+      };
+      const supplementPrompt = buildQuestionSupplementPrompt(text, fileName, topic, options, questions, missingCount);
+      const supplement = await requestGenerated(supplementPrompt, supplementOptions);
+      const existingTitles = new Set(questions.map((question) => String(question.title || "").trim().toLocaleLowerCase()));
+      questions = questions.concat(supplement.filter((question) => {
+        const key = String(question.title || "").trim().toLocaleLowerCase();
+        if (!key || existingTitles.has(key)) return false;
+        existingTitles.add(key);
+        return true;
+      }));
+      if (questions.length < requestedCount) {
+        throw new Error(localized(
+          `Gemini returned ${questions.length} usable questions, but a past-year paper requires at least ${requestedCount}. Please try again.`,
+          `Gemini 返回了 ${questions.length} 道有效题目，但历届试卷至少需要 ${requestedCount} 道，请重新尝试。`
+        ));
       }
     }
-    if (location.hostname.endsWith("github.io") || globalThis.Capacitor?.isNativePlatform?.()) throw createAISetupError();
-    try {
-      return await requestQuestionsFromProxy("./api/chat", prompt, paperId, topic, options, controller.signal);
-    } catch (error) {
-      if (error?.name === "AbortError") throw error;
-      throw createAISetupError();
-    }
+    return maxItems ? questions.slice(0, maxItems) : questions;
   } catch (error) {
     if (generationTimedOut || error?.name === "AbortError" || error?.name === "TimeoutError") {
       const timeoutError = new Error(localized(

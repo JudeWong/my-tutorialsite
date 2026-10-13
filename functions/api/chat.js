@@ -39,9 +39,12 @@ function json(data, status = 200) {
   return new Response(JSON.stringify(data), { status, headers: JSON_HEADERS });
 }
 
-function systemPrompt(mode, language, task) {
+function systemPrompt(mode, language, task, materialType, questionCount) {
   if (task === "question-generation") {
-    return "Produce accurate, source-grounded UEC computer science assessment questions. For a past-year paper, return at least 40 items by including every top-level question and separately numbered sub-question or part; never return only a short sample. Every user-visible natural-language question, option, explanation, common mistake, and image description must be in Simplified Chinese. Inspect every supplied page image. If a question depends on a chart, table, diagram, screenshot, network layout, circuit, or other visual, return its page number and normalized bounding box [ymin,xmin,ymax,xmax] from 0 to 1000; otherwise use image_page 0 and image_bbox [0,0,0,0]. Preserve combination choices and Roman-numeral choices such as I, II, III, IV, V, ①, and ② exactly; do not skip a question because an option uses these symbols. English is allowed only for source code, identifiers, abbreviations, and unavoidable standard computing terms. Return JSON only.";
+    const taskInstruction = materialType === "teaching-material"
+      ? `For teaching material, create exactly ${Math.max(10, Math.min(50, Number(questionCount) || 10))} distinct questions.`
+      : "For a past-year paper, return at least 40 items by including every top-level question and separately numbered sub-question or part; never return only a short sample.";
+    return `Produce accurate, source-grounded UEC computer science assessment questions. ${taskInstruction} Every user-visible natural-language question, option, explanation, common mistake, and image description must be in Simplified Chinese. Inspect every supplied page image. If a question depends on a chart, table, diagram, screenshot, network layout, circuit, or other visual, return its page number and normalized bounding box [ymin,xmin,ymax,xmax] from 0 to 1000; otherwise use image_page 0 and image_bbox [0,0,0,0]. Preserve combination choices and Roman-numeral choices such as I, II, III, IV, V, ①, and ② exactly; do not skip a question because an option uses these symbols. English is allowed only for source code, identifiers, abbreviations, and unavoidable standard computing terms. Return JSON only.`;
   }
   const style = mode === "study"
     ? "Teach step by step, check the learner's reasoning, use concrete examples, and include a useful practice prompt when appropriate."
@@ -145,7 +148,7 @@ export async function onRequestPost({ request, env }) {
         body: JSON.stringify({
           model: usedModel,
           input: modelInput,
-          system_instruction: systemPrompt(body.mode, body.language, body.task),
+            system_instruction: systemPrompt(body.mode, body.language, body.task, body.materialType, body.questionCount),
           store: false,
           generation_config: {
             temperature: body.task === "question-generation" ? 0.3 : body.mode === "creative" ? 0.9 : 0.55,
