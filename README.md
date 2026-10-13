@@ -13,7 +13,7 @@
 - Supabase 云端 Auth、数据库、RLS、私人文件 Storage 与本机资料一次性迁移层（完成 `ONLINE_SETUP.md` 的密钥设置后启用）
 - 学习资料筛选、练习建立、班级进度与 CSV 报告
 - 互动题目、即时批改、解释与常见错误
-- 类 ChatGPT／Gemini 的连续 AI 对话；通过 Gemini 3.8 Flash 与 Interactions API 理解上传资料并生成题目，不以本机规则拼接假题目
+- 类 ChatGPT／Gemini 的连续 AI 对话；通过 Gemini 3.8 Flash 云端 API 理解上传资料并生成题目，不以本机规则拼接假题目
 - 可安装 PWA、桌面／平板／手机响应式界面
 - Capacitor Android 工程及可直接测试的 APK
 

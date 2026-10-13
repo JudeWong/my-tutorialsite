@@ -71,6 +71,25 @@ function waitForRetry(delay) {
   return new Promise((resolve) => setTimeout(resolve, delay));
 }
 
+async function fetchWithTimeout(url, options, timeoutMs) {
+  const controller = new AbortController();
+  const timeout = setTimeout(() => controller.abort(new DOMException("Gemini request timed out", "TimeoutError")), timeoutMs);
+  try {
+    return await fetch(url, { ...options, signal: controller.signal });
+  } finally {
+    clearTimeout(timeout);
+  }
+}
+
+function generateContentSchema(value) {
+  if (Array.isArray(value)) return value.map(generateContentSchema);
+  if (!value || typeof value !== "object") return value;
+  return Object.fromEntries(Object.entries(value).map(([key, item]) => [
+    key,
+    key === "type" && typeof item === "string" ? item.toUpperCase() : generateContentSchema(item)
+  ]));
+}
+
 export async function onRequestPost({ request, env }) {
   if (!env.GEMINI_API_KEY) {
     return json({ error: "AI is not configured. Add the GEMINI_API_KEY secret in Cloudflare Pages." }, 503);
@@ -114,7 +133,6 @@ export async function onRequestPost({ request, env }) {
 
   const configuredModel = String(env.GEMINI_MODEL || "").trim().replace(/^models\//i, "");
   const model = !configuredModel || configuredModel === "gemini-2.5-flash" ? "gemini-3.8-flash" : configuredModel;
-  const endpoint = "https://generativelanguage.googleapis.com/v1beta/interactions";
   const fallbackModels = [
     "gemini-3.7-flash",
     "gemini-3.6-flash",
@@ -122,7 +140,9 @@ export async function onRequestPost({ request, env }) {
     "gemini-3.5-flash-lite",
     "gemini-3.1-flash-lite"
   ].filter((item) => item !== model);
-  const attemptModels = [model, model, ...fallbackModels];
+  const attemptModels = body.task === "question-generation"
+    ? [model, model, ...fallbackModels]
+    : [model, model, ...fallbackModels.slice(0, 2)];
   let response;
   let data = {};
   let usedModel = model;
@@ -136,39 +156,40 @@ export async function onRequestPost({ request, env }) {
       visualChars += item.data.length;
     }
   }
-  const modelInput = body.task === "question-generation"
-    ? [{ type: "text", text: message }, ...visuals.flatMap((item, index) => [
-      { type: "text", text: `这是供辨识的第 ${Number(item.page) || index + 1} 页图像。` },
-      { type: "image", data: item.data, mime_type: item.mime_type || "image/jpeg" }
-    ])]
-    : conversation.join("\n\n");
+  const contents = body.task === "question-generation"
+    ? [{
+      role: "user",
+      parts: [
+        { text: message },
+        ...visuals.flatMap((item, index) => [
+          { text: `这是供辨识的第 ${Number(item.page) || index + 1} 页图像。` },
+          { inlineData: { data: item.data, mimeType: item.mime_type || "image/jpeg" } }
+        ])
+      ]
+    }]
+    : [{ role: "user", parts: [{ text: conversation.join("\n\n") }] }];
   for (let attempt = 0; attempt < attemptModels.length; attempt += 1) {
     usedModel = attemptModels[attempt];
+    const endpoint = `https://generativelanguage.googleapis.com/v1beta/models/${encodeURIComponent(usedModel)}:generateContent`;
     try {
-      response = await fetch(endpoint, {
+      response = await fetchWithTimeout(endpoint, {
         method: "POST",
         headers: { "Content-Type": "application/json", "x-goog-api-key": env.GEMINI_API_KEY },
         body: JSON.stringify({
-          model: usedModel,
-          input: modelInput,
-            system_instruction: systemPrompt(body.mode, body.language, body.task, body.materialType, body.questionCount),
-          store: false,
-          generation_config: {
+          systemInstruction: { parts: [{ text: systemPrompt(body.mode, body.language, body.task, body.materialType, body.questionCount) }] },
+          contents,
+          generationConfig: {
             temperature: body.task === "question-generation" ? 0.3 : body.mode === "creative" ? 0.9 : 0.55,
-            max_output_tokens: body.task === "question-generation"
+            maxOutputTokens: body.task === "question-generation"
               ? body.materialType === "past-paper" ? 32768 : Math.min(20000, Math.max(8000, (Number(body.questionCount) || 10) * 600))
               : 4096,
-            ...(body.task === "question-generation" ? {} : { thinking_level: "medium" })
-          },
-          ...(body.task === "question-generation" ? {
-            response_format: {
-              type: "text",
-              mime_type: "application/json",
-              schema: questionResponseSchema(body)
-            }
-          } : {})
+            ...(body.task === "question-generation" ? {
+              responseMimeType: "application/json",
+              responseSchema: generateContentSchema(questionResponseSchema(body))
+            } : {})
+          }
         })
-      });
+      }, body.task === "question-generation" ? 60000 : 30000);
       data = await response.json().catch(() => ({}));
     } catch (error) {
       console.error("Gemini network error", error?.message || "Unknown error");
@@ -193,17 +214,11 @@ export async function onRequestPost({ request, env }) {
     return json({ error: detail ? `The AI service rejected the request: ${detail}` : "The AI service rejected the request. Check the configured API key and model." }, 502);
   }
 
-  const interaction = data?.interaction || data;
-  if (interaction?.status && interaction.status !== "completed") {
-    return json({ error: "The AI service did not complete the request." }, 502);
-  }
-  const reply = interaction?.steps
-    ?.filter((step) => step?.type === "model_output")
-    .flatMap((step) => Array.isArray(step.content) ? step.content : [])
-    .filter((content) => content?.type === "text")
-    .map((content) => content.text || "")
+  const reply = data?.candidates
+    ?.flatMap((candidate) => candidate?.content?.parts || [])
+    .map((part) => part?.text || "")
     .join("\n")
-    .trim() || interaction?.output_text?.trim();
+    .trim();
   if (!reply) return json({ error: "The AI service returned an empty response." }, 502);
   return json({ reply, provider: "gemini", model: usedModel, fallback: usedModel !== model });
 }
