@@ -2285,7 +2285,13 @@ async function fetchWithGeminiAttemptTimeout(endpoint, options, parentSignal, ti
 
 function getGeminiAttemptModels(preferredModel) {
   const preferred = normalizeGeminiModel(preferredModel);
-  const fallbacks = ["gemini-3.6-flash", "gemini-3.1-flash-lite", "gemini-2.5-flash"].filter((model) => model !== preferred);
+  const fallbacks = [
+    "gemini-3.7-flash",
+    "gemini-3.6-flash",
+    "gemini-3.5-flash",
+    "gemini-3.5-flash-lite",
+    "gemini-3.1-flash-lite"
+  ].filter((model) => model !== preferred);
   return [preferred, preferred, ...fallbacks];
 }
 

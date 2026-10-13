@@ -31,7 +31,7 @@
    - Deploy command：`npx wrangler deploy`
 4. 部署完成后，到 Worker 的 **Settings → Variables and Secrets** 新增加密变量：
    - `GEMINI_API_KEY`：Google AI Studio 产生的 API key
-   - `GEMINI_MODEL`：可选；未设置时使用 `gemini-3.8-flash`，如果该模型暂时不可用，系统会自动尝试 `gemini-3.6-flash`、`gemini-3.1-flash-lite` 和 `gemini-2.5-flash`
+   - `GEMINI_MODEL`：可选；未设置时使用 `gemini-3.8-flash`，如果该模型暂时不可用，系统会依序尝试目前仍受支持的 Gemini 3.x Flash 模型，不再回退至新账号不可用的 `gemini-2.5-flash`
 5. 重新部署。网页会通过 `/api/chat` 使用 `functions/api/chat.js`，密钥不会传到浏览器。
 
 Cloudflare Pages 和 Gemini 的免费额度均有限，学校大量使用前应查看当时的额度、加入身份验证与速率限制。
