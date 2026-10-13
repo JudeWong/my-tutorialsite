@@ -3,6 +3,7 @@ const ASSIGNMENTS_KEY = "tixi_assignments_v1";
 const QUESTIONS_KEY = "tixi_questions_v1";
 const NOTES_KEY = "tixi_teacher_notes_v1";
 const SESSION_KEY = "tixi_session_v1";
+const QUIZ_PROGRESS_KEY = "tixi_quiz_progress_v1";
 const Cloud = globalThis.personalAICloud;
 
 function createRecordId(prefix = "record") {
@@ -104,7 +105,9 @@ const $$ = (selector, root = document) => [...root.querySelectorAll(selector)];
 let role = "teacher";
 let currentQuestion = 0;
 let activeAssignmentIndex = 0;
+let activeQuizStudentKey = "";
 let answers = [];
+let draftAnswers = [];
 let selectedOption = null;
 let pendingUploadFile = null;
 let pendingUploadVisuals = [];
@@ -929,6 +932,7 @@ function enterApp(nextRole, student = null) {
   updateAccountUI();
   $("#ai-chat-launcher").hidden = nextRole !== "student";
   setRole(nextRole);
+  renderAssignments();
   if (nextRole === "teacher") startCodeTimer();
   else clearInterval(codeTimer);
   window.scrollTo({ top: 0, behavior: "auto" });
@@ -980,12 +984,22 @@ function renderPapers(filter = "全部") {
 }
 
 function renderAssignments() {
-  $("#assignment-list").innerHTML = assignments.length ? assignments.map((item, index) => `
-    <article class="assignment ${item.done ? "done" : ""}">
+  $("#assignment-list").innerHTML = assignments.length ? assignments.map((item, index) => {
+    const progress = role === "student" && !item.done ? getStoredQuizProgress(item.id) : null;
+    const validQuestionIds = new Set(Array.isArray(item.questionIds) ? item.questionIds : []);
+    const answeredCount = progress ? Object.entries(progress.answersByQuestionId || {}).filter(([questionId, answer]) => validQuestionIds.has(questionId) && hasAnswer(answer)).length : 0;
+    const hasProgress = Boolean(progress && (answeredCount > 0 || Object.keys(progress.draftAnswersByQuestionId || {}).length));
+    const detail = hasProgress
+      ? localized(`${answeredCount} / ${item.questionCount || validQuestionIds.size} answered · Continue`, `已作答 ${answeredCount} / ${item.questionCount || validQuestionIds.size} 题 · 可继续`)
+      : currentLanguage === "en" ? item.detailEn : item.detail;
+    const action = hasProgress ? localized("Continue", "继续作答") : currentLanguage === "en" ? item.actionEn : item.action;
+    return `
+    <article class="assignment ${item.done ? "done" : ""} ${hasProgress ? "in-progress" : ""}">
       <div class="paper-year">${item.icon}</div>
-      <div><strong>${escapeHTML(currentLanguage === "en" ? item.titleEn : item.title)}</strong><small>${escapeHTML(currentLanguage === "en" ? item.detailEn : item.detail)}</small></div>
-      <button data-assignment="${index}">${escapeHTML(currentLanguage === "en" ? item.actionEn : item.action)}</button>
-    </article>`).join("") : `<div class="data-empty"><strong>${localized("No assignments yet", "尚未布置练习")}</strong><p>${localized("Assignments created by the teacher will appear here.", "老师建立练习后会显示在这里。")}</p></div>`;
+      <div><strong>${escapeHTML(currentLanguage === "en" ? item.titleEn : item.title)}</strong><small>${escapeHTML(detail)}</small></div>
+      <button data-assignment="${index}">${escapeHTML(action)}</button>
+    </article>`;
+  }).join("") : `<div class="data-empty"><strong>${localized("No assignments yet", "尚未布置练习")}</strong><p>${localized("Assignments created by the teacher will appear here.", "老师建立练习后会显示在这里。")}</p></div>`;
   updateStudentProgress();
   renderTeacherMetrics();
   refreshLanguage();
@@ -1656,6 +1670,7 @@ function downloadReport() {
 }
 
 function showView(name) {
+  if (name !== "quiz" && $("#quiz-view")?.classList.contains("active")) saveCurrentQuizProgress();
   $$(".view").forEach((view) => view.classList.remove("active"));
   if (name === "dashboard") {
     $(`#${role}-view`).classList.add("active");
@@ -2781,8 +2796,14 @@ function getOrderedMaterialQuestions(paperId) {
 async function persistQuestionOrder(paperId, orderedIds) {
   const materialQuestions = getOrderedMaterialQuestions(paperId);
   const byId = new Map(materialQuestions.map((question) => [question.id, question]));
-  const ordered = orderedIds.map((id) => byId.get(id)).filter(Boolean);
-  const remaining = materialQuestions.filter((question) => !orderedIds.includes(question.id));
+  const seen = new Set();
+  const uniqueOrderedIds = orderedIds.filter((id) => {
+    if (!byId.has(id) || seen.has(id)) return false;
+    seen.add(id);
+    return true;
+  });
+  const ordered = uniqueOrderedIds.map((id) => byId.get(id));
+  const remaining = materialQuestions.filter((question) => !seen.has(question.id));
   const finalOrder = [...ordered, ...remaining];
   let cursor = 0;
   questionBank = questionBank.map((question) => question.paperId === paperId ? finalOrder[cursor++] : question);
@@ -2870,8 +2891,8 @@ function openQuestionManager(paperId) {
       <span class="material-question-number">${index + 1}</span>
       <div class="material-question-copy"><strong>${escapeHTML(question.title)}</strong><small>${localized(question.type === "fill" ? "Fill in the Answer" : "Multiple Choice", question.type === "fill" ? "填充题" : "选择题")} · ${localized("Answer", "答案")}: ${escapeHTML(answer)}</small></div>
       <div class="material-question-actions">
-        <button type="button" class="icon-button" data-move-question="up" data-question-id="${escapeHTML(question.id)}" aria-label="${localized("Move up", "上移")}" title="${localized("Move up", "上移")}">↑</button>
-        <button type="button" class="icon-button" data-move-question="down" data-question-id="${escapeHTML(question.id)}" aria-label="${localized("Move down", "下移")}" title="${localized("Move down", "下移")}">↓</button>
+        <button type="button" class="icon-button" data-move-question="up" aria-label="${localized("Move up", "上移")}" title="${localized("Move up", "上移")}">↑</button>
+        <button type="button" class="icon-button" data-move-question="down" aria-label="${localized("Move down", "下移")}" title="${localized("Move down", "下移")}">↓</button>
         <button type="button" data-edit-question="${escapeHTML(question.id)}">${localized("Edit Question", "编辑题目")}</button>
         <button type="button" class="danger-outline-button" data-delete-question="${escapeHTML(question.id)}">${localized("Delete", "删除")}</button>
       </div>
@@ -3047,12 +3068,104 @@ async function deleteStudentAccount() {
   showToast(localized("Student account deleted.", "学生账号已删除。"));
 }
 
-function startQuiz(index = 0) {
+function readQuizProgressStore() {
+  try {
+    const stored = JSON.parse(localStorage.getItem(QUIZ_PROGRESS_KEY) || "{}");
+    return stored && typeof stored === "object" && !Array.isArray(stored) ? stored : {};
+  } catch {
+    return {};
+  }
+}
+
+function getQuizStudentKey() {
+  if (activeStudent?.id) return String(activeStudent.id);
+  if (!activeStudent) return "";
+  return [activeStudent.name, activeStudent.className, activeStudent.year]
+    .map((value) => String(value || "").normalize("NFKC").trim().toLocaleLowerCase())
+    .join("|");
+}
+
+function getQuizProgressStorageKey(assignmentId, studentKey = getQuizStudentKey()) {
+  return studentKey && assignmentId ? `${studentKey}:${assignmentId}` : "";
+}
+
+function getStoredQuizProgress(assignmentId) {
+  const key = getQuizProgressStorageKey(assignmentId);
+  if (!key) return null;
+  const progress = readQuizProgressStore()[key];
+  return progress && typeof progress === "object" ? progress : null;
+}
+
+function saveCurrentQuizProgress() {
+  if (role !== "student" || !questions.length) return;
+  const assignment = assignments[activeAssignmentIndex];
+  if (!assignment || assignment.done) return;
+  const key = getQuizProgressStorageKey(assignment.id, activeQuizStudentKey || getQuizStudentKey());
+  if (!key) return;
+
+  const answersByQuestionId = {};
+  const draftAnswersByQuestionId = {};
+  questions.forEach((question, index) => {
+    if (hasAnswer(answers[index])) answersByQuestionId[question.id] = answers[index];
+    else if (hasAnswer(draftAnswers[index])) draftAnswersByQuestionId[question.id] = draftAnswers[index];
+  });
+  const store = readQuizProgressStore();
+  store[key] = {
+    assignmentId: assignment.id,
+    questionIds: questions.map((question) => question.id),
+    currentQuestionId: questions[currentQuestion]?.id || questions[0]?.id || "",
+    answersByQuestionId,
+    draftAnswersByQuestionId,
+    updatedAt: new Date().toISOString()
+  };
+  localStorage.setItem(QUIZ_PROGRESS_KEY, JSON.stringify(store));
+}
+
+function clearQuizProgress(assignmentId) {
+  const key = getQuizProgressStorageKey(assignmentId);
+  if (!key) return;
+  const store = readQuizProgressStore();
+  if (!Object.prototype.hasOwnProperty.call(store, key)) return;
+  delete store[key];
+  localStorage.setItem(QUIZ_PROGRESS_KEY, JSON.stringify(store));
+}
+
+function getContinueAssignmentIndex() {
+  const candidates = assignments
+    .map((assignment, index) => ({ assignment, index, progress: assignment.done ? null : getStoredQuizProgress(assignment.id) }))
+    .filter((item) => item.progress)
+    .sort((left, right) => new Date(right.progress.updatedAt || 0) - new Date(left.progress.updatedAt || 0));
+  return candidates[0]?.index ?? 0;
+}
+
+function restoreQuizProgress(assignment) {
+  const progress = getStoredQuizProgress(assignment.id);
+  answers = Array(questions.length).fill(null);
+  draftAnswers = Array(questions.length).fill(null);
+  if (!progress) {
+    currentQuestion = 0;
+    return false;
+  }
+  const savedAnswers = progress.answersByQuestionId || {};
+  const savedDrafts = progress.draftAnswersByQuestionId || {};
+  questions.forEach((question, index) => {
+    if (Object.prototype.hasOwnProperty.call(savedAnswers, question.id)) answers[index] = savedAnswers[question.id];
+    else if (Object.prototype.hasOwnProperty.call(savedDrafts, question.id)) draftAnswers[index] = savedDrafts[question.id];
+  });
+  const savedIndex = questions.findIndex((question) => question.id === progress.currentQuestionId);
+  const firstUnanswered = answers.findIndex((answer) => !hasAnswer(answer));
+  currentQuestion = savedIndex >= 0 ? savedIndex : firstUnanswered >= 0 ? firstUnanswered : 0;
+  return true;
+}
+
+function startQuiz(index = null) {
   if (!assignments.length) {
     showToast(localized("No interactive questions are available yet.", "目前还没有可作答的互动题目。"));
     return;
   }
-  activeAssignmentIndex = Math.max(0, Math.min(index, assignments.length - 1));
+  const requestedIndex = Number.isInteger(index) ? index : getContinueAssignmentIndex();
+  activeAssignmentIndex = Math.max(0, Math.min(requestedIndex, assignments.length - 1));
+  activeQuizStudentKey = getQuizStudentKey();
   const assignment = assignments[activeAssignmentIndex];
   const questionIds = Array.isArray(assignment.questionIds) ? assignment.questionIds : null;
   const questionById = new Map(questionBank.map((question) => [question.id, question]));
@@ -3063,10 +3176,10 @@ function startQuiz(index = 0) {
     showToast(localized("This assignment does not contain generated questions yet.", "这份练习还没有生成题目。"));
     return;
   }
-  answers = Array(questions.length).fill(null);
-  currentQuestion = 0;
+  const restored = restoreQuizProgress(assignment);
   renderQuestion();
   showView("quiz");
+  if (restored) showToast(localized("Saved progress restored.", "已恢复上次作答进度。"));
 }
 
 function hasAnswer(answer) {
@@ -3105,7 +3218,7 @@ function renderQuestion() {
     : question.level === "中等" ? localized("Intermediate", "中等") : localized("Basic", "基础");
   const isFill = question.type === "fill";
   const options = currentLanguage === "en" ? question.optionsEn : question.options;
-  selectedOption = answers[currentQuestion];
+  selectedOption = hasAnswer(answers[currentQuestion]) ? answers[currentQuestion] : draftAnswers[currentQuestion];
   $("#current-number").textContent = currentQuestion + 1;
   $("#question-total").textContent = questions.length;
   $("#quiz-progress-bar").style.width = `${((currentQuestion + 1) / questions.length) * 100}%`;
@@ -3157,6 +3270,8 @@ function submitAnswer() {
   const question = questions[currentQuestion];
   if (!question) return;
   answers[currentQuestion] = selectedOption;
+  draftAnswers[currentQuestion] = selectedOption;
+  saveCurrentQuizProgress();
   const isCorrect = isQuestionAnswerCorrect(question, selectedOption);
   if (question.type === "fill") {
     const fillInput = $("#fill-answer-input");
@@ -3499,6 +3614,13 @@ $("#verification-code-dialog").addEventListener("click", (event) => {
 
 $("#logout-button").addEventListener("click", async () => {
   clearInterval(codeTimer);
+  saveCurrentQuizProgress();
+  activeQuizStudentKey = "";
+  questions = [];
+  answers = [];
+  draftAnswers = [];
+  currentQuestion = 0;
+  $("#quiz-view").classList.remove("active");
   if (Cloud?.enabled) {
     await flushCloudSync();
     await Cloud.signOut().catch(() => {});
@@ -3888,7 +4010,8 @@ $("#material-question-list").addEventListener("click", (event) => {
   const paperId = $("#question-list-paper-id").value;
   const moveButton = event.target.closest("[data-move-question]");
   if (moveButton) {
-    void moveQuestionInMaterial(moveButton.dataset.questionId, moveButton.dataset.moveQuestion, paperId);
+    const item = moveButton.closest(".material-question-item[data-question-id]");
+    if (item) void moveQuestionInMaterial(item.dataset.questionId, moveButton.dataset.moveQuestion, paperId);
     return;
   }
   const deleteButton = event.target.closest("[data-delete-question]");
@@ -3903,7 +4026,7 @@ $("#material-question-list").addEventListener("click", (event) => {
 });
 let draggedQuestionId = "";
 $("#material-question-list").addEventListener("dragstart", (event) => {
-  const item = event.target.closest("[data-question-id]");
+  const item = event.target.closest(".material-question-item[data-question-id]");
   if (!item) return;
   draggedQuestionId = item.dataset.questionId || "";
   item.classList.add("dragging");
@@ -3913,21 +4036,21 @@ $("#material-question-list").addEventListener("dragstart", (event) => {
   }
 });
 $("#material-question-list").addEventListener("dragover", (event) => {
-  const item = event.target.closest("[data-question-id]");
+  const item = event.target.closest(".material-question-item[data-question-id]");
   if (!item || item.dataset.questionId === draggedQuestionId) return;
   event.preventDefault();
   item.classList.add("drop-target");
 });
 $("#material-question-list").addEventListener("dragleave", (event) => {
-  const item = event.target.closest("[data-question-id]");
+  const item = event.target.closest(".material-question-item[data-question-id]");
   if (item && !item.contains(event.relatedTarget)) item.classList.remove("drop-target");
 });
 $("#material-question-list").addEventListener("drop", (event) => {
-  const item = event.target.closest("[data-question-id]");
+  const item = event.target.closest(".material-question-item[data-question-id]");
   if (!item || !draggedQuestionId || item.dataset.questionId === draggedQuestionId) return;
   event.preventDefault();
   const container = $("#material-question-list");
-  const ids = [...container.querySelectorAll("[data-question-id]")].map((entry) => entry.dataset.questionId);
+  const ids = [...container.querySelectorAll(".material-question-item[data-question-id]")].map((entry) => entry.dataset.questionId);
   const fromIndex = ids.indexOf(draggedQuestionId);
   const toIndex = ids.indexOf(item.dataset.questionId);
   if (fromIndex < 0 || toIndex < 0) return;
@@ -3937,7 +4060,7 @@ $("#material-question-list").addEventListener("drop", (event) => {
 });
 $("#material-question-list").addEventListener("dragend", () => {
   draggedQuestionId = "";
-  $$("[data-question-id]", $("#material-question-list")).forEach((item) => item.classList.remove("dragging", "drop-target"));
+  $$(".material-question-item[data-question-id]", $("#material-question-list")).forEach((item) => item.classList.remove("dragging", "drop-target"));
 });
 function closeAISettings() {
   resumeUploadAfterAISetup = false;
@@ -3992,7 +4115,7 @@ $("#notification-button").addEventListener("click", () => showToast(localized("N
 $("#workspace-primary-action").addEventListener("click", (event) => {
   const action = event.currentTarget.dataset.action;
   if (action === "upload") openUpload();
-  else if (action === "start-practice") startQuiz(0);
+  else if (action === "start-practice") startQuiz();
   else if (action === "export") downloadReport();
   else if (action === "new-note") openNoteDialog();
   else if (action === "dashboard-classes") {
@@ -4047,19 +4170,28 @@ $("#assignment-list").addEventListener("click", (event) => {
   const index = Number(button.dataset.assignment);
   assignments[index]?.done ? showToast(localized("No saved answer review is available yet.", "目前没有已储存的答题解析。")) : startQuiz(index);
 });
-$("#continue-quiz").addEventListener("click", () => startQuiz(0));
-$("#exit-quiz").addEventListener("click", () => showView("dashboard"));
+$("#continue-quiz").addEventListener("click", () => startQuiz());
+$("#exit-quiz").addEventListener("click", () => {
+  saveCurrentQuizProgress();
+  renderAssignments();
+  showView("dashboard");
+  showToast(localized("Progress saved. You can continue later.", "作答进度已保存，可稍后继续。"));
+});
 $("#quiz-options").addEventListener("click", (event) => {
   const option = event.target.closest(".option");
   if (!option || option.disabled) return;
   selectedOption = Number(option.dataset.option);
+  draftAnswers[currentQuestion] = selectedOption;
   $$(".option").forEach((item) => item.classList.remove("selected"));
   option.classList.add("selected");
   $("#submit-answer").disabled = false;
+  saveCurrentQuizProgress();
 });
 $("#fill-answer-input").addEventListener("input", (event) => {
   selectedOption = event.target.value;
+  draftAnswers[currentQuestion] = selectedOption;
   $("#submit-answer").disabled = !hasAnswer(selectedOption);
+  saveCurrentQuizProgress();
 });
 $("#fill-answer-input").addEventListener("keydown", (event) => {
   if (event.key === "Enter" && !$("#submit-answer").disabled) {
@@ -4083,6 +4215,7 @@ $("#next-question").addEventListener("click", () => {
     } else {
       saveAssignments();
     }
+    clearQuizProgress(assignment.id);
     renderAssignments();
     showView("dashboard");
     showToast(localized(
@@ -4091,11 +4224,14 @@ $("#next-question").addEventListener("click", () => {
     ));
   } else {
     currentQuestion += 1;
+    saveCurrentQuizProgress();
     renderQuestion();
   }
 });
-$("#previous-question").addEventListener("click", () => { if (currentQuestion > 0) { currentQuestion -= 1; renderQuestion(); } });
-$("#question-dots").addEventListener("click", (event) => { const button = event.target.closest("[data-jump]"); if (button) { currentQuestion = Number(button.dataset.jump); renderQuestion(); } });
+$("#previous-question").addEventListener("click", () => { if (currentQuestion > 0) { currentQuestion -= 1; saveCurrentQuizProgress(); renderQuestion(); } });
+$("#question-dots").addEventListener("click", (event) => { const button = event.target.closest("[data-jump]"); if (button) { currentQuestion = Number(button.dataset.jump); saveCurrentQuizProgress(); renderQuestion(); } });
+
+window.addEventListener("beforeunload", saveCurrentQuizProgress);
 
 window.addEventListener("keydown", (event) => {
   if ($("#quiz-view").classList.contains("active") && /^[1-4]$/.test(event.key)) {
