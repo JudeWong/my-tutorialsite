@@ -139,7 +139,7 @@ export async function onRequestPost({ request, env }) {
   // later without changing the higher-capacity question-generation model.
   const configuredChatModel = String(env.GEMINI_CHAT_MODEL || "").trim().replace(/^models\//i, "");
   const model = isChat
-    ? (configuredChatModel || "gemini-3.7-flash")
+    ? (configuredChatModel || "gemini-3.5-flash-lite")
     : (!configuredModel || configuredModel === "gemini-2.5-flash" ? "gemini-3.8-flash" : configuredModel);
   const fallbackModels = [
     "gemini-3.7-flash",
@@ -148,11 +148,16 @@ export async function onRequestPost({ request, env }) {
     "gemini-3.5-flash-lite",
     "gemini-3.1-flash-lite"
   ].filter((item) => item !== model);
+  const fastFallbackModels = [
+    "gemini-3.6-flash",
+    "gemini-3.5-flash",
+    "gemini-3.7-flash"
+  ].filter((item) => item !== model);
   const attemptModels = !isChat
     ? [model, model, ...fallbackModels]
     // Limit chat to one fast request and one fast fallback instead of a long
     // chain of retries that makes the interface look frozen.
-    : [model, ...fallbackModels.slice(0, 1)];
+    : [model, ...fastFallbackModels.slice(0, 1)];
   let response;
   let data = {};
   let usedModel = model;
