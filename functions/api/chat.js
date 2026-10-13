@@ -125,14 +125,22 @@ export async function onRequestPost({ request, env }) {
     return json({ error: `Message must contain between 1 and ${messageLimit} characters.` }, 400);
   }
 
-  const history = Array.isArray(body.messages) ? body.messages.slice(-12) : [];
+  // Keep chat requests responsive even after a long conversation. Question
+  // generation keeps its larger context separately.
+  const isChat = body.task !== "question-generation";
+  const history = Array.isArray(body.messages) ? body.messages.slice(isChat ? -8 : -12) : [];
   const conversation = history
     .filter((item) => item && typeof item.content === "string" && ["user", "assistant"].includes(item.role))
-    .map((item) => `${item.role === "assistant" ? "Assistant" : "User"}: ${item.content.slice(0, messageLimit)}`);
+    .map((item) => `${item.role === "assistant" ? "Assistant" : "User"}: ${item.content.slice(0, isChat ? 1800 : messageLimit)}`);
   if (!conversation.length || history.at(-1)?.role !== "user") conversation.push(`User: ${message}`);
 
   const configuredModel = String(env.GEMINI_MODEL || "").trim().replace(/^models\//i, "");
-  const model = !configuredModel || configuredModel === "gemini-2.5-flash" ? "gemini-3.8-flash" : configuredModel;
+  // Use a dedicated fast model for general chat. GEMINI_CHAT_MODEL can be set
+  // later without changing the higher-capacity question-generation model.
+  const configuredChatModel = String(env.GEMINI_CHAT_MODEL || "").trim().replace(/^models\//i, "");
+  const model = isChat
+    ? (configuredChatModel || "gemini-3.7-flash")
+    : (!configuredModel || configuredModel === "gemini-2.5-flash" ? "gemini-3.8-flash" : configuredModel);
   const fallbackModels = [
     "gemini-3.7-flash",
     "gemini-3.6-flash",
@@ -140,9 +148,11 @@ export async function onRequestPost({ request, env }) {
     "gemini-3.5-flash-lite",
     "gemini-3.1-flash-lite"
   ].filter((item) => item !== model);
-  const attemptModels = body.task === "question-generation"
+  const attemptModels = !isChat
     ? [model, model, ...fallbackModels]
-    : [model, model, ...fallbackModels.slice(0, 2)];
+    // Limit chat to one fast request and one fast fallback instead of a long
+    // chain of retries that makes the interface look frozen.
+    : [model, ...fallbackModels.slice(0, 1)];
   let response;
   let data = {};
   let usedModel = model;
@@ -182,14 +192,14 @@ export async function onRequestPost({ request, env }) {
             temperature: body.task === "question-generation" ? 0.3 : body.mode === "creative" ? 0.9 : 0.55,
             maxOutputTokens: body.task === "question-generation"
               ? body.materialType === "past-paper" ? 32768 : Math.min(20000, Math.max(8000, (Number(body.questionCount) || 10) * 600))
-              : 4096,
+              : (body.mode === "creative" ? 3072 : 2048),
             ...(body.task === "question-generation" ? {
               responseMimeType: "application/json",
               responseSchema: generateContentSchema(questionResponseSchema(body))
             } : {})
           }
         })
-      }, body.task === "question-generation" ? 60000 : 30000);
+      }, !isChat ? 60000 : 12000);
       data = await response.json().catch(() => ({}));
     } catch (error) {
       console.error("Gemini network error", error?.message || "Unknown error");
