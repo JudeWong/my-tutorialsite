@@ -2107,28 +2107,28 @@ function getQuestionGenerationLimits(options = {}) {
     : { materialType, requestedCount, minItems: 40, maxItems: 100 };
 }
 
-function buildQuestionResponseSchema(options = {}) {
+function buildQuestionResponseSchema(options = {}, { compact = false } = {}) {
   const { minItems, maxItems } = getQuestionGenerationLimits(options);
+  const arrayLimits = compact ? {} : { minItems, ...(maxItems ? { maxItems } : {}) };
   return {
     type: "object",
     properties: {
       questions: {
         type: "array",
-        minItems,
-        ...(maxItems ? { maxItems } : {}),
+        ...arrayLimits,
         items: {
           type: "object",
           required: ["question", "code", "options", "correct", "level", "explanation", "mistake", "image_page", "image_bbox", "image_alt"],
           properties: {
             question: { type: "string" },
             code: { type: "string" },
-            options: { type: "array", minItems: 2, maxItems: 6, items: { type: "string" } },
-            correct: { type: "integer", minimum: 0, maximum: 5 },
+            options: { type: "array", ...(compact ? {} : { minItems: 2, maxItems: 6 }), items: { type: "string" } },
+            correct: { type: "integer", ...(compact ? {} : { minimum: 0, maximum: 5 }) },
             level: { type: "string", enum: ["Basic", "Intermediate", "Advanced"] },
             explanation: { type: "string" },
             mistake: { type: "string" },
-            image_page: { type: "integer", minimum: 0 },
-            image_bbox: { type: "array", minItems: 4, maxItems: 4, items: { type: "integer", minimum: 0, maximum: 1000 } },
+            image_page: { type: "integer", ...(compact ? {} : { minimum: 0 }) },
+            image_bbox: { type: "array", ...(compact ? {} : { minItems: 4, maxItems: 4 }), items: { type: "integer", ...(compact ? {} : { minimum: 0, maximum: 1000 }) } },
             image_alt: { type: "string" }
           }
         }
@@ -2217,6 +2217,10 @@ function isGeminiModelError(status, message = "") {
     && /model|not found|not supported|not available|unknown model|invalid.*model/i.test(message);
 }
 
+function isGeminiRequestArgumentError(status, message = "") {
+  return status === 400 && /invalid argument|invalid request|invalid parameter|invalid schema/i.test(message);
+}
+
 function waitForGeminiRetry(delay, signal) {
   return new Promise((resolve, reject) => {
     const timer = setTimeout(resolve, delay);
@@ -2287,6 +2291,15 @@ async function requestQuestionsFromGemini(apiKey, model, prompt, paperId, topic,
   const attemptModels = getGeminiAttemptModels(preferredModel);
   for (let attempt = 0; attempt < attemptModels.length; attempt += 1) {
     const attemptedModel = attemptModels[attempt];
+    const compactRequest = attempt > 0;
+    const requestVisuals = compactRequest
+      ? (options.visuals || []).reduce((items, visual) => {
+        const currentBytes = items.reduce((sum, item) => sum + String(item?.data || "").length, 0);
+        if (items.length >= 12 || currentBytes + String(visual?.data || "").length > 9000000) return items;
+        items.push(visual);
+        return items;
+      }, [])
+      : (options.visuals || []);
     let response;
     let data = {};
     try {
@@ -2297,7 +2310,7 @@ async function requestQuestionsFromGemini(apiKey, model, prompt, paperId, topic,
           model: attemptedModel,
           input: [
             { type: "text", text: prompt },
-            ...(options.visuals || []).flatMap((visual) => {
+            ...requestVisuals.flatMap((visual) => {
               const image = imagePartFromVisual(visual);
               return image ? [{ type: "text", text: `这是供辨识的第 ${visual.page} 页图像。` }, image] : [];
             })
@@ -2306,13 +2319,15 @@ async function requestQuestionsFromGemini(apiKey, model, prompt, paperId, topic,
           store: false,
           generation_config: {
             temperature: 0.2,
-            max_output_tokens: options.materialType === "past-paper" ? 49152 : Math.min(24000, Math.max(10000, options.questionCount * 700)),
-            thinking_level: "medium"
+            max_output_tokens: compactRequest
+              ? options.materialType === "past-paper" ? 32768 : Math.min(20000, Math.max(8000, options.questionCount * 600))
+              : options.materialType === "past-paper" ? 49152 : Math.min(24000, Math.max(10000, options.questionCount * 700)),
+            ...(compactRequest ? {} : { thinking_level: "medium" })
           },
           response_format: {
             type: "text",
             mime_type: "application/json",
-            schema: buildQuestionResponseSchema(options)
+            schema: buildQuestionResponseSchema(options, { compact: compactRequest })
           }
         })
       }, signal, options.materialType === "past-paper" ? 150000 : 90000);
@@ -2341,12 +2356,15 @@ async function requestQuestionsFromGemini(apiKey, model, prompt, paperId, topic,
     if (!response.ok) {
       const providerMessage = data?.error?.message || "";
       const modelRejected = isGeminiModelError(response.status, providerMessage);
-      if (isTransientGeminiError(response.status, providerMessage) || modelRejected) {
+      const requestRejected = isGeminiRequestArgumentError(response.status, providerMessage);
+      if (isTransientGeminiError(response.status, providerMessage) || modelRejected || requestRejected) {
         if (attempt < attemptModels.length - 1) {
           const nextModel = attemptModels[attempt + 1];
           setGenerationProgress(
             Math.min(88, 78 + (attempt * 3)),
-            modelRejected
+            requestRejected && !modelRejected
+              ? localized(`Gemini rejected the request format. Retrying in compatibility mode…`, `Gemini 拒绝了请求格式，正在使用兼容模式重试……`)
+              : modelRejected
               ? localized(`The model was rejected. Retrying with ${nextModel}…`, `当前模型被拒绝，正在使用 ${nextModel} 重试……`)
               : localized(`Gemini is busy. Retrying with ${nextModel}…`, `Gemini 目前繁忙，正在使用 ${nextModel} 重试……`),
             "generate"

@@ -7,29 +7,24 @@ const JSON_HEADERS = {
   "Access-Control-Allow-Methods": "GET, POST, OPTIONS"
 };
 function questionResponseSchema(body) {
-  const isTeachingMaterial = body.materialType === "teaching-material";
-  const requestedCount = isTeachingMaterial
-    ? Math.max(10, Math.min(50, Number(body.questionCount) || 10))
-    : Math.max(40, Math.min(100, Number(body.questionCount) || 40));
   const schema = {
     type: "object",
     properties: {
       questions: {
         type: "array",
-        minItems: requestedCount,
         items: {
           type: "object",
           required: ["question", "code", "options", "correct", "level", "explanation", "mistake", "image_page", "image_bbox", "image_alt"],
           properties: {
             question: { type: "string" },
             code: { type: "string" },
-            options: { type: "array", minItems: 2, maxItems: 6, items: { type: "string" } },
-            correct: { type: "integer", minimum: 0, maximum: 5 },
+            options: { type: "array", items: { type: "string" } },
+            correct: { type: "integer" },
             level: { type: "string", enum: ["Basic", "Intermediate", "Advanced"] },
             explanation: { type: "string" },
             mistake: { type: "string" },
-            image_page: { type: "integer", minimum: 0 },
-            image_bbox: { type: "array", minItems: 4, maxItems: 4, items: { type: "integer", minimum: 0, maximum: 1000 } },
+            image_page: { type: "integer" },
+            image_bbox: { type: "array", items: { type: "integer" } },
             image_alt: { type: "string" }
           }
         }
@@ -37,7 +32,6 @@ function questionResponseSchema(body) {
     },
     required: ["questions"]
   };
-  schema.properties.questions.maxItems = isTeachingMaterial ? requestedCount : 100;
   return schema;
 }
 
@@ -129,9 +123,9 @@ export async function onRequestPost({ request, env }) {
   const visuals = [];
   let visualChars = 0;
   if (Array.isArray(body.visuals)) {
-    for (const item of body.visuals.slice(0, 24)) {
+    for (const item of body.visuals.slice(0, 12)) {
       if (!item || typeof item.data !== "string" || item.data.length >= 2500000) continue;
-      if (visualChars + item.data.length > 18000000) break;
+      if (visualChars + item.data.length > 9000000) break;
       visuals.push(item);
       visualChars += item.data.length;
     }
@@ -156,9 +150,9 @@ export async function onRequestPost({ request, env }) {
           generation_config: {
             temperature: body.task === "question-generation" ? 0.3 : body.mode === "creative" ? 0.9 : 0.55,
             max_output_tokens: body.task === "question-generation"
-              ? body.materialType === "past-paper" ? 49152 : Math.min(24000, Math.max(10000, (Number(body.questionCount) || 10) * 700))
+              ? body.materialType === "past-paper" ? 32768 : Math.min(20000, Math.max(8000, (Number(body.questionCount) || 10) * 600))
               : 4096,
-            thinking_level: body.task === "question-generation" ? "medium" : "medium"
+            ...(body.task === "question-generation" ? {} : { thinking_level: "medium" })
           },
           ...(body.task === "question-generation" ? {
             response_format: {
