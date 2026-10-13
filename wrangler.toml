@@ -7,3 +7,6 @@ workers_dev = true
 directory = "./web"
 binding = "ASSETS"
 run_worker_first = ["/api/*"]
+
+[placement]
+region = "gcp:us-east4"

@@ -21,6 +21,6 @@
   },
   "devDependencies": {
     "@capacitor/cli": "^6.2.1",
-    "wrangler": "4.45.0"
+    "wrangler": "4.150.0"
   }
 }

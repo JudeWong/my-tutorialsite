@@ -17,6 +17,8 @@
 5. 目前 `config.js` 已连接 `https://my-tutorialsite.judewong95.workers.dev`。部署成功后，GitHub Pages、Cloudflare 网站与 APK 都会共用这个后端。
 6. 重新部署网站并构建 APK。老师第一次云端登入时，系统会在云端尚无学习资料的情况下，把这台装置现有的试卷、题目、作业、笔记和班级迁移到 Supabase。旧的本机学生密码不会上传；学生需要使用云端注册流程重新建立安全账号。
 
+Worker 的 API 路由使用 Cloudflare Placement 固定在 `gcp:us-east4`，避免 Gemini 把随机边缘机房误判为不受支持地区。静态文件仍由 Cloudflare 全球 CDN 就近提供。
+
 前端只能使用 Publishable key。`SUPABASE_SECRET_KEY` 和 `GEMINI_API_KEY` 必须只存在于 Cloudflare Secret。
 新版 `sb_secret_...` key 会作为 `apikey` 发送；旧版 `service_role` JWT 仍受兼容支持。请优先使用 Supabase 建议的新版 Secret key。
 
