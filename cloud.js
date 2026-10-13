@@ -551,7 +551,10 @@
       .map((item, index) => ({
         id: newUuid(),
         thread_id: id,
-        sender: item.role === "assistant" ? "assistant" : "user",
+        // The existing Supabase constraint stores AI messages as `ai`.
+        // Keep the browser conversation role as `assistant`, but translate it
+        // at the database boundary so chat sync works with existing projects.
+        sender: item.role === "assistant" ? "ai" : "user",
         message: item.content,
         created_at: new Date(Date.now() + index).toISOString()
       }));
