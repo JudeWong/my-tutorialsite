@@ -1369,6 +1369,13 @@ async function cloudAuthorizationHeaders() {
   return session?.access_token ? { Authorization: `Bearer ${session.access_token}` } : {};
 }
 
+function isTouchInputDevice() {
+  return Boolean(
+    window.matchMedia?.("(pointer: coarse)").matches
+    || Number(navigator.maxTouchPoints) > 0
+  );
+}
+
 async function askAI(question, { repeatUser = true } = {}) {
   const trimmed = question.trim();
   if (!trimmed) return;
@@ -1450,7 +1457,11 @@ async function askAI(question, { repeatUser = true } = {}) {
     console.warn("Generative AI connection failed", error);
   } finally {
     submitButton.disabled = false;
-    $("#ai-question-input").focus();
+    const input = $("#ai-question-input");
+    // Do not restore focus on phones/tablets: doing so reopens the virtual
+    // keyboard after the answer arrives and shifts the chat viewport.
+    if (isTouchInputDevice()) input?.blur();
+    else input?.focus();
   }
 }
 
@@ -1484,7 +1495,7 @@ function openAIChat() {
   requestAnimationFrame(() => panel.classList.add("open"));
   $("#ai-chat-launcher").classList.add("active");
   $("#ai-chat-launcher").setAttribute("aria-expanded", "true");
-  setTimeout(() => $("#ai-question-input")?.focus(), 180);
+  if (!isTouchInputDevice()) setTimeout(() => $("#ai-question-input")?.focus(), 180);
 }
 
 function closeAIChat() {
@@ -1525,7 +1536,7 @@ function toggleAIChatSize() {
   requestAnimationFrame(() => {
     const log = $("#ai-chat-log");
     log.scrollTop = log.scrollHeight;
-    $("#ai-question-input")?.focus();
+    if (!isTouchInputDevice()) $("#ai-question-input")?.focus();
   });
 }
 
