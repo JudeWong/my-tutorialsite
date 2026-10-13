@@ -533,7 +533,7 @@
           <label>难度<select id="manual-question-level"><option value="基础">基础</option><option value="中等" selected>中等</option><option value="进阶">进阶</option></select></label>
           <label class="full-field">题目<textarea id="manual-question-title" rows="3" maxlength="600" placeholder="请输入完整题目" required></textarea></label>
           <label class="full-field">程序代码（可选）<textarea id="manual-question-code" rows="4" spellcheck="false"></textarea></label>
-          <label class="full-field question-image-field">题目照片或图表（可选）<input id="manual-question-image" type="file" accept="image/png,image/jpeg,image/webp" /><small>历届试卷和讲义都可以添加照片；AI 识别到图表时也会自动加入。</small><div id="manual-question-image-preview" class="question-image-preview"></div><button class="text-button question-image-remove" type="button" id="remove-manual-question-image" hidden>移除照片</button></label>
+          <label class="full-field question-image-field">题目照片或图表（可选）<input id="manual-question-image" type="file" accept="image/png,image/jpeg,image/webp" /><small>AI 不会自动附加照片；老师可在检查题目时自行加入或更换所需图片。</small><div id="manual-question-image-preview" class="question-image-preview"></div><button class="text-button question-image-remove" type="button" id="remove-manual-question-image" hidden>移除照片</button></label>
         </div>
         <section id="mcq-fields" class="question-type-fields">
           <div class="option-builder-grid">

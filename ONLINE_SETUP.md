@@ -20,6 +20,8 @@
 前端只能使用 Publishable key。`SUPABASE_SECRET_KEY` 和 `GEMINI_API_KEY` 必须只存在于 Cloudflare Secret。
 新版 `sb_secret_...` key 会作为 `apikey` 发送；旧版 `service_role` JWT 仍受兼容支持。请优先使用 Supabase 建议的新版 Secret key。
 
+`cloud_schema.sql` 也包含 GitHub Pages 所需的学生注册触发器。执行最新版后，学生注册会直接通过 Supabase Auth 验证老师的一小时验证码、检查班级并建立学生资料，不再向 GitHub Pages 的 `/api/student-register` 发送 POST 请求，因此不会再出现 405。已经执行过旧版 SQL 的项目，需要重新完整执行最新版一次；这项升级不会清除现有资料。
+
 ## 推荐：Cloudflare Pages（包含真正的生成式 AI）
 
 1. 把此项目推送到一个 GitHub 仓库。

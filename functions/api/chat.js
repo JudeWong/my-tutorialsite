@@ -14,7 +14,7 @@ function questionResponseSchema(body) {
         type: "array",
         items: {
           type: "object",
-          required: ["question", "code", "options", "correct", "level", "explanation", "mistake", "image_page", "image_bbox", "image_alt"],
+          required: ["question", "code", "options", "correct", "level", "explanation", "mistake"],
           properties: {
             question: { type: "string" },
             code: { type: "string" },
@@ -22,10 +22,7 @@ function questionResponseSchema(body) {
             correct: { type: "integer" },
             level: { type: "string", enum: ["Basic", "Intermediate", "Advanced"] },
             explanation: { type: "string" },
-            mistake: { type: "string" },
-            image_page: { type: "integer" },
-            image_bbox: { type: "array", items: { type: "integer" } },
-            image_alt: { type: "string" }
+            mistake: { type: "string" }
           }
         }
       }
@@ -44,7 +41,7 @@ function systemPrompt(mode, language, task, materialType, questionCount) {
     const taskInstruction = materialType === "teaching-material"
       ? `For teaching material, create exactly ${Math.max(10, Math.min(50, Number(questionCount) || 10))} distinct questions.`
       : "For a past-year paper, return at least 40 items by including every top-level question and separately numbered sub-question or part; never return only a short sample.";
-    return `Produce accurate, source-grounded UEC computer science assessment questions. ${taskInstruction} Every user-visible natural-language question, option, explanation, common mistake, and image description must be in Simplified Chinese. Inspect every supplied page image. If a question depends on a chart, table, diagram, screenshot, network layout, circuit, or other visual, return its page number and normalized bounding box [ymin,xmin,ymax,xmax] from 0 to 1000; otherwise use image_page 0 and image_bbox [0,0,0,0]. Preserve combination choices and Roman-numeral choices such as I, II, III, IV, V, ①, and ② exactly; do not skip a question because an option uses these symbols. English is allowed only for source code, identifiers, abbreviations, and unavoidable standard computing terms. Return JSON only.`;
+    return `Produce accurate, source-grounded UEC computer science assessment questions. ${taskInstruction} Every user-visible natural-language question, option, explanation, and common mistake must be in Simplified Chinese. Inspect every supplied page image so visual questions are recognized and never skipped, but do not attach or return images with generated questions; the teacher will add required question images manually. Preserve combination choices and Roman-numeral choices such as I, II, III, IV, V, ①, and ② exactly; do not skip a question because an option uses these symbols. English is allowed only for source code, identifiers, abbreviations, and unavoidable standard computing terms. Return JSON only.`;
   }
   const style = mode === "study"
     ? "Teach step by step, check the learner's reasoning, use concrete examples, and include a useful practice prompt when appropriate."

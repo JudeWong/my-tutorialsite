@@ -114,6 +114,151 @@ $$;
 revoke all on function public.is_teacher() from public;
 grant execute on function public.is_teacher() to authenticated;
 
+-- GitHub Pages cannot execute /api/student-register. This auth trigger lets
+-- the static site register students safely through Supabase Auth while still
+-- requiring a current teacher-generated code and an active class.
+create or replace function public.student_registration_ready()
+returns boolean
+language sql
+stable
+security definer
+set search_path = public
+as $$
+  select true;
+$$;
+
+revoke all on function public.student_registration_ready() from public;
+grant execute on function public.student_registration_ready() to anon, authenticated;
+
+create or replace function public.validate_student_auth_signup()
+returns trigger
+language plpgsql
+security definer
+set search_path = public, auth
+as $$
+declare
+  student_name text := btrim(coalesce(new.raw_user_meta_data ->> 'full_name', ''));
+  student_class text := btrim(coalesce(new.raw_user_meta_data ->> 'class_name', ''));
+  registration_code text := btrim(coalesce(new.raw_user_meta_data ->> 'registration_code', ''));
+  student_year integer;
+begin
+  if coalesce(new.raw_user_meta_data ->> 'role', '') <> 'student' then
+    return new;
+  end if;
+
+  begin
+    student_year := (new.raw_user_meta_data ->> 'year')::integer;
+  exception when others then
+    raise exception 'Student year is invalid.';
+  end;
+
+  if char_length(student_name) < 2 or char_length(student_name) > 12
+     or char_length(student_class) < 2
+     or student_year < 2000 or student_year > 2100
+     or registration_code !~ '^[0-9]{6}$'
+     or lower(coalesce(new.email, '')) !~ '^student\+[0-9a-f]{32}@chms3\.edu\.my$' then
+    raise exception 'Student registration details are invalid.';
+  end if;
+
+  if not exists (
+    select 1 from public.classes
+    where class_name = student_class and active = true
+  ) then
+    raise exception 'The selected class is unavailable.';
+  end if;
+
+  if not exists (
+    select 1 from public.registration_codes
+    where code::text = registration_code and expires_at > now()
+  ) then
+    raise exception 'The registration code is incorrect or expired.';
+  end if;
+
+  -- Student accounts use generated school-local addresses, so they cannot
+  -- receive confirmation mail. The valid hourly code is the confirmation.
+  new.email_confirmed_at := coalesce(new.email_confirmed_at, now());
+  new.raw_user_meta_data := coalesce(new.raw_user_meta_data, '{}'::jsonb) || jsonb_build_object(
+    'role', 'student',
+    'full_name', student_name,
+    'class_name', student_class,
+    'year', student_year
+  );
+  return new;
+end;
+$$;
+
+create or replace function public.complete_student_registration(
+  student_name text,
+  student_class text,
+  student_year integer,
+  registration_code text
+)
+returns void
+language plpgsql
+security definer
+set search_path = public, auth
+as $$
+declare
+  selected_class_id uuid;
+  current_metadata jsonb;
+begin
+  if auth.uid() is null then
+    raise exception 'Student authentication is required.';
+  end if;
+
+  select raw_user_meta_data into current_metadata from auth.users where id = auth.uid();
+  student_name := btrim(coalesce(student_name, ''));
+  student_class := btrim(coalesce(student_class, ''));
+  registration_code := btrim(coalesce(registration_code, ''));
+
+  if coalesce(current_metadata ->> 'role', '') <> 'student'
+     or current_metadata ->> 'full_name' <> student_name
+     or current_metadata ->> 'class_name' <> student_class
+     or (current_metadata ->> 'year')::integer <> student_year then
+    raise exception 'Student registration details do not match the authenticated account.';
+  end if;
+
+  select id into selected_class_id
+  from public.classes
+  where class_name = student_class and active = true
+  limit 1;
+
+  if selected_class_id is null or not exists (
+    select 1 from public.registration_codes
+    where code::text = registration_code and expires_at > now()
+  ) then
+    raise exception 'The registration code is incorrect or expired, or the class is unavailable.';
+  end if;
+
+  insert into public.profiles (id, full_name, role, class_id, class_name, year, status)
+  values (auth.uid(), student_name, 'student', selected_class_id, student_class, student_year, 'active')
+  on conflict (id) do update
+  set full_name = excluded.full_name,
+      role = 'student',
+      class_id = excluded.class_id,
+      class_name = excluded.class_name,
+      year = excluded.year,
+      status = 'active',
+      updated_at = now();
+
+  update auth.users
+  set raw_user_meta_data = coalesce(raw_user_meta_data, '{}'::jsonb) - 'registration_code'
+  where id = auth.uid();
+end;
+$$;
+
+revoke all on function public.validate_student_auth_signup() from public;
+revoke all on function public.complete_student_registration(text, text, integer, text) from public;
+grant execute on function public.complete_student_registration(text, text, integer, text) to authenticated;
+
+drop trigger if exists validate_student_auth_signup on auth.users;
+create trigger validate_student_auth_signup
+before insert on auth.users
+for each row execute function public.validate_student_auth_signup();
+
+drop trigger if exists create_student_profile_after_signup on auth.users;
+drop function if exists public.create_student_profile_after_signup();
+
 create or replace function public.set_updated_at()
 returns trigger
 language plpgsql

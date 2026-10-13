@@ -131,14 +131,96 @@
     return authenticate(await studentEmail(name, className, year), password, "student");
   }
 
+  async function registerStudentDirect(payload) {
+    const db = requireClient();
+    try {
+      const ready = unwrap(await db.rpc("student_registration_ready"), "Check registration setup");
+      if (ready !== true) throw new Error("Student registration is not ready in Supabase.");
+    } catch (error) {
+      const setupError = new Error("Student registration needs the latest Supabase cloud_schema.sql upgrade. Ask the teacher to run it once in Supabase SQL Editor.");
+      setupError.code = "REGISTRATION_SCHEMA_REQUIRED";
+      setupError.cause = error;
+      throw setupError;
+    }
+
+    const email = await studentEmail(payload.name, payload.className, payload.year);
+    let authData;
+    try {
+      authData = unwrap(await db.auth.signUp({
+        email,
+        password: payload.password,
+        options: {
+          data: {
+            role: "student",
+            full_name: payload.name,
+            class_name: payload.className,
+            year: Number(payload.year),
+            registration_code: payload.code
+          }
+        }
+      }), "Create student account");
+    } catch (error) {
+      if (/already|registered|exists/i.test(error?.message || "")) {
+        const duplicate = new Error("This student account already exists. Use Existing Account to sign in.");
+        duplicate.code = "STUDENT_ALREADY_EXISTS";
+        throw duplicate;
+      }
+      if (/database error|saving new user|verification|code/i.test(error?.message || "")) {
+        const invalidCode = new Error("The verification code is incorrect or expired, or the selected class is unavailable.");
+        invalidCode.code = "INVALID_REGISTRATION_CODE";
+        throw invalidCode;
+      }
+      throw error;
+    }
+
+    session = authData?.session || null;
+    if (!session) {
+      const signedIn = unwrap(await db.auth.signInWithPassword({ email, password: payload.password }), "Start student session");
+      session = signedIn?.session || null;
+    }
+    const userId = session?.user?.id || authData?.user?.id;
+    try {
+      unwrap(await db.rpc("complete_student_registration", {
+        student_name: payload.name,
+        student_class: payload.className,
+        student_year: Number(payload.year),
+        registration_code: payload.code
+      }), "Create student profile");
+    } catch (error) {
+      await db.auth.signOut().catch(() => {});
+      session = null;
+      if (/verification|code|expired|class/i.test(error?.message || "")) {
+        const invalidCode = new Error("The verification code is incorrect or expired, or the selected class is unavailable.");
+        invalidCode.code = "INVALID_REGISTRATION_CODE";
+        throw invalidCode;
+      }
+      throw error;
+    }
+    const profile = normalizeProfile(await getProfile(userId));
+    if (!profile || profile.role !== "student") {
+      await db.auth.signOut().catch(() => {});
+      session = null;
+      throw new Error("The student profile could not be created. Ask the teacher to check the Supabase registration setup.");
+    }
+    return profile;
+  }
+
   async function registerStudent(payload) {
-    const data = await apiRequest("/api/student-register", { method: "POST", body: payload, authenticated: false });
-    unwrap(await requireClient().auth.setSession({
-      access_token: data.session.access_token,
-      refresh_token: data.session.refresh_token
-    }), "Start student session");
-    session = (await getSession());
-    return normalizeProfile(data.profile);
+    const configuredApi = Boolean(String(config.cloudApiEndpoint || "").trim());
+    const staticHost = location.hostname.endsWith("github.io") || globalThis.Capacitor?.isNativePlatform?.();
+    if (!configuredApi && staticHost) return registerStudentDirect(payload);
+    try {
+      const data = await apiRequest("/api/student-register", { method: "POST", body: payload, authenticated: false });
+      unwrap(await requireClient().auth.setSession({
+        access_token: data.session.access_token,
+        refresh_token: data.session.refresh_token
+      }), "Start student session");
+      session = (await getSession());
+      return normalizeProfile(data.profile);
+    } catch (error) {
+      if ([404, 405].includes(Number(error?.status))) return registerStudentDirect(payload);
+      throw error;
+    }
   }
 
   function mapMaterial(row) {

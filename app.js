@@ -2030,49 +2030,8 @@ function normalizeGeneratedQuestion(item, index, paperId, topic) {
     explanation,
     explanationEn: explanation,
     mistake,
-    mistakeEn: mistake,
-    imagePage: Number(item?.image_page) > 0 ? Number(item.image_page) : 0,
-    imageBbox: Array.isArray(item?.image_bbox) && item.image_bbox.length === 4
-      ? item.image_bbox.map((value) => Math.max(0, Math.min(1000, Number(value) || 0)))
-      : null,
-    imageAlt: String(item?.image_alt || "题目图表").trim()
+    mistakeEn: mistake
   };
-}
-
-async function cropVisualData(visual, bbox) {
-  if (!visual?.data) return "";
-  if (!Array.isArray(bbox) || bbox.length !== 4) return visual.data;
-  try {
-    const image = await loadImageElement(visual.data);
-    const width = image.naturalWidth || image.width;
-    const height = image.naturalHeight || image.height;
-    const [ymin, xmin, ymax, xmax] = bbox.map((value) => Math.max(0, Math.min(1000, Number(value) || 0)));
-    const left = Math.floor((xmin / 1000) * width);
-    const top = Math.floor((ymin / 1000) * height);
-    const cropWidth = Math.max(1, Math.floor(((xmax - xmin) / 1000) * width));
-    const cropHeight = Math.max(1, Math.floor(((ymax - ymin) / 1000) * height));
-    if (cropWidth < 40 || cropHeight < 40) return visual.data;
-    const canvas = document.createElement("canvas");
-    canvas.width = cropWidth;
-    canvas.height = cropHeight;
-    canvas.getContext("2d").drawImage(image, left, top, cropWidth, cropHeight, 0, 0, cropWidth, cropHeight);
-    return canvas.toDataURL("image/jpeg", 0.78);
-  } catch {
-    return visual.data;
-  }
-}
-
-async function attachQuestionVisuals(questions, visuals = []) {
-  const visualByPage = new Map((visuals || []).map((visual) => [Number(visual.page), visual]));
-  return Promise.all(questions.map(async (question) => {
-    const visual = visualByPage.get(Number(question.imagePage));
-    if (!visual) return question;
-    return {
-      ...question,
-      imageData: await cropVisualData(visual, question.imageBbox),
-      imageSourcePage: visual.page
-    };
-  }));
 }
 
 function getGeminiApiKey() {
@@ -2132,7 +2091,7 @@ function buildQuestionResponseSchema(options = {}, { compact = false } = {}) {
         ...arrayLimits,
         items: {
           type: "object",
-          required: ["question", "code", "options", "correct", "level", "explanation", "mistake", "image_page", "image_bbox", "image_alt"],
+          required: ["question", "code", "options", "correct", "level", "explanation", "mistake"],
           properties: {
             question: { type: "string" },
             code: { type: "string" },
@@ -2140,10 +2099,7 @@ function buildQuestionResponseSchema(options = {}, { compact = false } = {}) {
             correct: { type: "integer", ...(compact ? {} : { minimum: 0, maximum: 5 }) },
             level: { type: "string", enum: ["Basic", "Intermediate", "Advanced"] },
             explanation: { type: "string" },
-            mistake: { type: "string" },
-            image_page: { type: "integer", ...(compact ? {} : { minimum: 0 }) },
-            image_bbox: { type: "array", ...(compact ? {} : { minItems: 4, maxItems: 4 }), items: { type: "integer", ...(compact ? {} : { minimum: 0, maximum: 1000 }) } },
-            image_alt: { type: "string" }
+            mistake: { type: "string" }
           }
         }
       }
@@ -2171,9 +2127,9 @@ Strict quality rules:
 6. The explanation must state why the correct option is correct. The common mistake must identify a realistic misunderstanding.
 7. ALL user-visible natural-language content must be in Simplified Chinese, even when the source is English or Malay. This includes every question, every answer option, every explanation, and every common mistake. Do not write complete English sentences. English is allowed only inside source code, identifiers, commands, protocol abbreviations, or unavoidable standard computing terms such as CPU, SQL, HTML and Python.
 8. For a past paper, solve each source question carefully and set the correct answer from the source answer key when present; otherwise determine it by sound computer-science reasoning. A question containing a picture, table, combination option, or Roman-numeral option is still a complete question and must be returned.
-9. When a question depends on a chart, table, diagram, screenshot, network layout, circuit, or other visual, set image_page to the supplied visual page number, image_bbox to [ymin,xmin,ymax,xmax] normalized from 0 to 1000, and image_alt to a concise Chinese description. Use image_page 0 and image_bbox [0,0,0,0] when no visual is needed. Never invent a visual that is not present.
+9. Inspect supplied page images to recognize every source question, including questions containing charts, tables, diagrams, screenshots, network layouts, or circuits. Do not attach or return any image with a generated question. When possible, include the essential visual information in Chinese text; the teacher will add any required question image manually during review.
   10. Return only a JSON object with a "questions" array using this exact schema:
-{"questions":[{"question":"...","code":"optional code or empty string","options":["选项文字 1","选项文字 2"],"correct":0,"level":"Basic|Intermediate|Advanced","explanation":"...","mistake":"...","image_page":0,"image_bbox":[0,0,0,0],"image_alt":""}]}
+{"questions":[{"question":"...","code":"optional code or empty string","options":["选项文字 1","选项文字 2"],"correct":0,"level":"Basic|Intermediate|Advanced","explanation":"...","mistake":"..."}]}
 The correct value is a zero-based integer from 0 to one less than the number of options (maximum 5).
 
 Category: ${TOPIC_EN[topic] || topic}
@@ -2217,7 +2173,7 @@ async function parseAIQuestionResponse(raw, paperId, topic, options = {}) {
       `Gemini 只返回了 ${questions.length} 道题，历届试卷至少需要 ${requestedCount} 道，请重新尝试。`
     ));
   }
-  return attachQuestionVisuals(maxItems ? questions.slice(0, maxItems) : questions, options.visuals || []);
+  return maxItems ? questions.slice(0, maxItems) : questions;
 }
 
 function isTransientGeminiError(status, message = "") {
@@ -2330,7 +2286,7 @@ async function requestQuestionsFromGemini(apiKey, model, prompt, paperId, topic,
               return image ? [{ type: "text", text: `这是供辨识的第 ${visual.page} 页图像。` }, image] : [];
             })
           ],
-          system_instruction: "Produce accurate, source-grounded UEC computer science assessment questions. Inspect supplied page images and use image_page/image_bbox/image_alt when a chart, table, diagram, screenshot, or other visual is needed. All natural-language question content must be Simplified Chinese. Return JSON only.",
+          system_instruction: "Produce accurate, source-grounded UEC computer science assessment questions. Inspect supplied page images to recognize all source questions, including visual questions, but never attach or return images; the teacher adds question images manually. All natural-language question content must be Simplified Chinese. Return JSON only.",
           store: false,
           generation_config: {
             temperature: 0.2,
@@ -3380,7 +3336,22 @@ $("#student-register-form").addEventListener("submit", async (event) => {
       showToast(localized("Registration successful. Welcome!", "注册成功，欢迎开始学习"));
     } catch (cloudError) {
       console.error("Student cloud registration failed", cloudError);
-      error.textContent = cloudError?.message || localized("Cloud registration failed. Ask your teacher to check the connection.", "云端注册失败，请老师检查连接。 ");
+      error.textContent = cloudError?.code === "REGISTRATION_SCHEMA_REQUIRED"
+        ? localized(
+          "Student registration needs the latest Supabase cloud_schema.sql upgrade. Ask the teacher to run it once.",
+          "学生注册需要最新版 Supabase cloud_schema.sql，请老师在 SQL Editor 完整执行一次。"
+        )
+        : cloudError?.code === "INVALID_REGISTRATION_CODE"
+          ? localized(
+            "The verification code is incorrect or expired, or the selected class is unavailable.",
+            "验证码不正确或已过期，或者所选班级目前不可用。"
+          )
+          : cloudError?.code === "STUDENT_ALREADY_EXISTS"
+            ? localized(
+              "This student account already exists. Switch to Existing Account to sign in.",
+              "此学生账号已注册，请切换至“已有账号”登入。"
+            )
+            : cloudError?.message || localized("Cloud registration failed. Ask your teacher to check the connection.", "云端注册失败，请老师检查连接。 ");
     } finally {
       submitButton.disabled = false;
     }
@@ -3750,13 +3721,6 @@ $("#process-upload").addEventListener("click", async (event) => {
     if (Cloud?.enabled && cloudProfile) {
       setGenerationProgress(90, localized("Uploading the source file securely…", "正在安全上传原始文件……"), "save");
       paper.storagePath = await Cloud.uploadMaterialFile(paperId, sourceFile);
-      const visualQuestions = generated.questions.filter((question) => question.imageData);
-      for (let index = 0; index < visualQuestions.length; index += 1) {
-        const question = visualQuestions[index];
-        setGenerationProgress(90 + ((index + 1) / Math.max(1, visualQuestions.length)) * 3, localized("Saving question diagrams…", "正在储存题目图表……"), "save");
-        question.imagePath = await Cloud.uploadQuestionImage(question.id, dataUrlToBlob(question.imageData));
-        question.imageData = "";
-      }
     }
     papers.unshift(paper);
     questionBank.push(...generated.questions);

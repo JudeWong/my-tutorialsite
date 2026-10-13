@@ -35,7 +35,7 @@ export async function onRequestPost({ request, env }) {
     try {
       authUser = await supabaseFetch(env, "/auth/v1/admin/users", {
         method: "POST",
-        body: { email, password, email_confirm: true, user_metadata: { full_name: name, class_name: className, year, role: "student" } }
+        body: { email, password, email_confirm: true, user_metadata: { full_name: name, class_name: className, year, role: "student", registration_code: code } }
       });
     } catch (error) {
       if (error.status === 422 || /already|registered|exists/i.test(error.message)) {
