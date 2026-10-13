@@ -6,15 +6,15 @@
 
 1. 在 Supabase Dashboard 打开 **SQL Editor**。
 2. 完整执行 [`supabase/cloud_schema.sql`](supabase/cloud_schema.sql)。这个升级会保留现有资料、加入网站需要的栏位、建立私人 `learning-materials` bucket，并以安全的 RLS 规则取代原型规则。
-3. 在 Cloudflare Pages 的 **Settings → Variables and Secrets** 新增以下加密变量：
+3. 在 Cloudflare Workers 的 **Settings → Variables and Secrets** 新增以下加密变量：
    - `SUPABASE_SECRET_KEY`：Supabase 的 Secret key；也可暂时使用旧版 `service_role` key。绝对不能写进前端或 GitHub。
    - `GEMINI_API_KEY`：Gemini API key。
    - `GEMINI_MODEL`：可选，只填写该 Gemini 账号目前可用的模型。
    - `ALLOWED_ORIGINS`：建议填写正式网站与 APK 会使用的来源，以逗号分隔。
-4. Cloudflare Pages 的普通环境变量可选填写：
+4. Cloudflare Worker 的普通环境变量可选填写：
    - `SUPABASE_URL=https://hwnqqwnqfivykwrmcnml.supabase.co`
    - `SUPABASE_PUBLISHABLE_KEY=sb_publishable_1BpJAI1lQu9099mENDRT1Q_L2iCTOpK`
-5. 部署 Cloudflare Pages 后，把 `config.js` 的 `cloudApiEndpoint`、`aiEndpoint` 和 `generationEndpoint` 指向该 `pages.dev` 网站，再把 `cloudEnabled` 改为 `true`。
+5. 目前 `config.js` 已连接 `https://my-tutorialsite.judewong95.workers.dev`。部署成功后，GitHub Pages、Cloudflare 网站与 APK 都会共用这个后端。
 6. 重新部署网站并构建 APK。老师第一次云端登入时，系统会在云端尚无学习资料的情况下，把这台装置现有的试卷、题目、作业、笔记和班级迁移到 Supabase。旧的本机学生密码不会上传；学生需要使用云端注册流程重新建立安全账号。
 
 前端只能使用 Publishable key。`SUPABASE_SECRET_KEY` 和 `GEMINI_API_KEY` 必须只存在于 Cloudflare Secret。
@@ -22,14 +22,14 @@
 
 `cloud_schema.sql` 也包含 GitHub Pages 所需的学生注册触发器。执行最新版后，学生注册会直接通过 Supabase Auth 验证老师的一小时验证码、检查班级并建立学生资料，不再向 GitHub Pages 的 `/api/student-register` 发送 POST 请求，因此不会再出现 405。已经执行过旧版 SQL 的项目，需要重新完整执行最新版一次；这项升级不会清除现有资料。
 
-## 推荐：Cloudflare Pages（包含真正的生成式 AI）
+## 推荐：Cloudflare Workers（包含真正的生成式 AI）
 
 1. 把此项目推送到一个 GitHub 仓库。
-2. 在 Cloudflare Dashboard 选择 **Workers & Pages → Create → Pages → Connect to Git**。
+2. 在 Cloudflare Dashboard 选择 **Workers & Pages → Create → Import a repository**。
 3. 选择仓库，并设置：
    - Build command：`pnpm run prepare:web`
-   - Build output directory：`web`
-4. 部署完成后，到项目的 **Settings → Variables and Secrets** 新增加密变量：
+   - Deploy command：`npx wrangler deploy`
+4. 部署完成后，到 Worker 的 **Settings → Variables and Secrets** 新增加密变量：
    - `GEMINI_API_KEY`：Google AI Studio 产生的 API key
    - `GEMINI_MODEL`：可选；未设置时使用 `gemini-3.8-flash`，如果该模型暂时不可用，系统会自动尝试 `gemini-3.6-flash`、`gemini-3.1-flash-lite` 和 `gemini-2.5-flash`
 5. 重新部署。网页会通过 `/api/chat` 使用 `functions/api/chat.js`，密钥不会传到浏览器。

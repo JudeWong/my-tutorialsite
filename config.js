@@ -1,11 +1,10 @@
-// Leave blank for same-origin Cloudflare Pages Functions. On GitHub Pages or
-// in the APK, a teacher can instead enter a Gemini key in the in-app AI settings.
-// To connect an APK to a separately hosted API, use the complete HTTPS /api/chat URL.
+// The public website and APK use the Cloudflare Worker as their shared API.
+// Gemini and Supabase secret keys remain server-side Cloudflare secrets.
 window.PERSONAL_AI_CONFIG = Object.freeze({
   cloudEnabled: true,
-  aiEndpoint: "",
-  generationEndpoint: "",
-  cloudApiEndpoint: "",
+  aiEndpoint: "https://my-tutorialsite.judewong95.workers.dev/api/chat",
+  generationEndpoint: "https://my-tutorialsite.judewong95.workers.dev/api/chat",
+  cloudApiEndpoint: "https://my-tutorialsite.judewong95.workers.dev",
   supabaseUrl: "https://hwnqqwnqfivykwrmcnml.supabase.co",
   supabasePublishableKey: "sb_publishable_1BpJAI1lQu9099mENDRT1Q_L2iCTOpK"
 });
