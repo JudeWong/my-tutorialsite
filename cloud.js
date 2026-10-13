@@ -504,6 +504,13 @@
     return path;
   }
 
+  async function getQuestionImageUrl(path) {
+    if (!path) return "";
+    const signed = await requireClient().storage.from("learning-materials").createSignedUrl(path, 3600);
+    if (signed.error) throw signed.error;
+    return signed.data?.signedUrl || "";
+  }
+
   async function deleteQuestionImage(path) {
     if (path) await requireClient().storage.from("learning-materials").remove([path]);
   }
@@ -666,6 +673,7 @@
     deleteStudent,
     uploadMaterialFile,
     uploadQuestionImage,
+    getQuestionImageUrl,
     deleteQuestionImage,
     deleteQuestion,
     deleteMaterial,

@@ -2592,6 +2592,18 @@ function renderManualQuestionImagePreview() {
   remove.hidden = !source && !pendingQuestionImagePath;
 }
 
+function refreshCloudQuestionImagePreview(questionId, imagePath) {
+  if (!Cloud?.enabled || !imagePath || !Cloud.getQuestionImageUrl) return;
+  void Cloud.getQuestionImageUrl(imagePath).then((signedUrl) => {
+    if (!signedUrl || $("#editing-question-id")?.value !== questionId || !$("#question-dialog")?.open) return;
+    pendingQuestionImageData = signedUrl;
+    pendingQuestionImagePath = imagePath;
+    renderManualQuestionImagePreview();
+  }).catch((error) => {
+    console.warn("Unable to load question image preview", error);
+  });
+}
+
 function updateAIConfigStatus() {
   const configuredEndpoint = globalThis.PERSONAL_AI_CONFIG?.generationEndpoint?.trim()
     || globalThis.PERSONAL_AI_CONFIG?.aiEndpoint?.trim();
@@ -2683,6 +2695,7 @@ function openQuestionDialog({ questionId = "", paperId = "" } = {}) {
     if (paperId) $("#question-material").value = paperId;
   }
   renderManualQuestionImagePreview();
+  if (question?.imagePath && !pendingQuestionImageData) refreshCloudQuestionImagePreview(question.id, question.imagePath);
   toggleQuestionTypeFields();
   $("#question-dialog").showModal();
   $("#manual-question-title").focus();
@@ -2778,6 +2791,7 @@ async function saveManualQuestion(event) {
     mistakeEn: mistake,
     imageData: pendingQuestionImageData,
     imagePath: pendingQuestionImagePath,
+    imageUrl: /^https?:\/\//i.test(pendingQuestionImageData) ? pendingQuestionImageData : (existingQuestion?.imageUrl || ""),
     imageAlt: pendingQuestionImageAlt || "题目图表",
     createdAt: existingQuestion?.createdAt || new Date().toISOString(),
     updatedAt: new Date().toISOString()
@@ -2789,9 +2803,11 @@ async function saveManualQuestion(event) {
       if (existingQuestion?.imagePath) await Cloud.deleteQuestionImage(existingQuestion.imagePath);
       question.imagePath = await Cloud.uploadQuestionImage(question.id, dataUrlToBlob(pendingQuestionImageData));
       question.imageData = "";
+      question.imageUrl = await Cloud.getQuestionImageUrl(question.imagePath);
     } else if (Cloud?.enabled && cloudProfile && !pendingQuestionImageData && existingQuestion?.imagePath) {
       await Cloud.deleteQuestionImage(existingQuestion.imagePath);
       question.imagePath = "";
+      question.imageUrl = "";
     }
     if (existingQuestion) questionBank[questionBank.indexOf(existingQuestion)] = { ...existingQuestion, ...question };
     else questionBank.push(question);
@@ -2923,9 +2939,15 @@ function openQuestionManager(paperId) {
     const answer = question.type === "fill"
       ? question.correctAnswer
       : `${String.fromCharCode(65 + question.correct)}. ${question.options?.[question.correct] || ""}`;
+    const imageSource = question.imageUrl || question.imageData || "";
+    const imagePreview = imageSource
+      ? `<img class="material-question-thumb" src="${escapeHTML(imageSource)}" alt="${escapeHTML(question.imageAlt || "题目图表")}">`
+      : question.imagePath
+        ? `<span class="material-question-image-pending">${localized("Image uploaded", "照片已上传")}</span>`
+        : "";
     return `<article class="material-question-item" draggable="true" data-question-id="${escapeHTML(question.id)}">
       <span class="material-question-number">${index + 1}</span>
-      <div class="material-question-copy"><strong>${escapeHTML(question.title)}</strong><small>${localized(question.type === "fill" ? "Fill in the Answer" : "Multiple Choice", question.type === "fill" ? "填充题" : "选择题")} · ${localized("Answer", "答案")}: ${escapeHTML(answer)}</small></div>
+      <div class="material-question-copy">${imagePreview}<strong>${escapeHTML(question.title)}</strong><small>${localized(question.type === "fill" ? "Fill in the Answer" : "Multiple Choice", question.type === "fill" ? "填充题" : "选择题")} · ${localized("Answer", "答案")}: ${escapeHTML(answer)}</small></div>
       <div class="material-question-actions">
         <button type="button" class="icon-button" data-move-question="up" aria-label="${localized("Move up", "上移")}" title="${localized("Move up", "上移")}">↑</button>
         <button type="button" class="icon-button" data-move-question="down" aria-label="${localized("Move down", "下移")}" title="${localized("Move down", "下移")}">↓</button>
