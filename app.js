@@ -625,6 +625,12 @@ function saveAssignments() {
 }
 
 function saveQuestions() {
+  const positions = new Map();
+  questionBank.forEach((question) => {
+    const group = question.paperId || "manual";
+    question.position = positions.get(group) || 0;
+    positions.set(group, question.position + 1);
+  });
   localStorage.setItem(QUESTIONS_KEY, JSON.stringify(questionBank));
   syncCloud(() => Cloud.upsertQuestions(questionBank), "questions");
 }
@@ -2806,20 +2812,113 @@ async function saveManualQuestion(event) {
   saveButton.disabled = false;
 }
 
+function getOrderedMaterialQuestions(paperId) {
+  return questionBank
+    .filter((question) => question.paperId === paperId)
+    .sort((left, right) => {
+      const leftPosition = Number.isFinite(Number(left.position)) ? Number(left.position) : questionBank.indexOf(left);
+      const rightPosition = Number.isFinite(Number(right.position)) ? Number(right.position) : questionBank.indexOf(right);
+      return leftPosition - rightPosition || questionBank.indexOf(left) - questionBank.indexOf(right);
+    });
+}
+
+async function persistQuestionOrder(paperId, orderedIds) {
+  const materialQuestions = getOrderedMaterialQuestions(paperId);
+  const byId = new Map(materialQuestions.map((question) => [question.id, question]));
+  const ordered = orderedIds.map((id) => byId.get(id)).filter(Boolean);
+  const remaining = materialQuestions.filter((question) => !orderedIds.includes(question.id));
+  const finalOrder = [...ordered, ...remaining];
+  let cursor = 0;
+  questionBank = questionBank.map((question) => question.paperId === paperId ? finalOrder[cursor++] : question);
+
+  const orderMap = new Map(finalOrder.map((question, index) => [question.id, index]));
+  assignments.forEach((assignment) => {
+    if (assignment.paperId !== paperId || !Array.isArray(assignment.questionIds)) return;
+    assignment.questionIds = [...assignment.questionIds].sort((left, right) => (orderMap.get(left) ?? Number.MAX_SAFE_INTEGER) - (orderMap.get(right) ?? Number.MAX_SAFE_INTEGER));
+    assignment.questionCount = assignment.questionIds.length;
+    assignment.detail = `${assignment.questionCount} 题 · 可开始`;
+    assignment.detailEn = `${assignment.questionCount} questions · Ready`;
+  });
+
+  saveQuestions();
+  saveAssignments();
+  renderPapers(activePaperFilter);
+  renderAssignments();
+  openQuestionManager(paperId);
+  try {
+    await flushCloudSync({ throwOnError: true });
+    showToast(localized("Question order saved.", "题目顺序已储存。"));
+  } catch (error) {
+    console.error("Unable to save question order", error);
+    showToast(localized("Order saved on this device, but cloud sync failed.", "顺序已储存在本机，但云端同步失败。"));
+  }
+}
+
+async function moveQuestionInMaterial(questionId, direction, paperId) {
+  const ids = getOrderedMaterialQuestions(paperId).map((question) => question.id);
+  const index = ids.indexOf(questionId);
+  const nextIndex = direction === "up" ? index - 1 : index + 1;
+  if (index < 0 || nextIndex < 0 || nextIndex >= ids.length) return;
+  [ids[index], ids[nextIndex]] = [ids[nextIndex], ids[index]];
+  await persistQuestionOrder(paperId, ids);
+}
+
+async function deleteQuestionFromMaterial(questionId, paperId) {
+  const question = questionBank.find((item) => item.id === questionId && item.paperId === paperId);
+  if (!question) return;
+  const confirmed = window.confirm(localized(
+    `Delete question “${question.title}”? This cannot be undone.`,
+    `确定删除题目“${question.title}”吗？此操作无法复原。`
+  ));
+  if (!confirmed) return;
+
+  try {
+    await flushCloudSync({ throwOnError: true });
+    if (Cloud?.enabled && question.imagePath) await Cloud.deleteQuestionImage(question.imagePath);
+    if (Cloud?.enabled) await Cloud.deleteQuestion(question.id);
+    questionBank = questionBank.filter((item) => item.id !== questionId);
+    assignments.forEach((assignment) => {
+      if (!Array.isArray(assignment.questionIds)) return;
+      assignment.questionIds = assignment.questionIds.filter((id) => id !== questionId);
+      assignment.questionCount = assignment.questionIds.length;
+      assignment.detail = `${assignment.questionCount} 题 · 可开始`;
+      assignment.detailEn = `${assignment.questionCount} questions · Ready`;
+    });
+    const paper = papers.find((item) => item.id === paperId);
+    if (paper) paper.count = questionBank.filter((item) => item.paperId === paperId).length;
+    saveQuestions();
+    saveAssignments();
+    savePapers();
+    renderPapers(activePaperFilter);
+    renderAssignments();
+    openQuestionManager(paperId);
+    await flushCloudSync({ throwOnError: true });
+    showToast(localized("Question deleted.", "题目已删除。"));
+  } catch (error) {
+    console.error("Unable to delete question", error);
+    showToast(localized("Question could not be deleted. Please try again.", "题目无法删除，请重新尝试。"));
+  }
+}
+
 function openQuestionManager(paperId) {
   const paper = papers.find((item) => item.id === paperId);
   if (!paper) return;
-  const materialQuestions = questionBank.filter((question) => question.paperId === paper.id);
+  const materialQuestions = getOrderedMaterialQuestions(paper.id);
   $("#question-list-paper-id").value = paper.id;
   $("#question-list-title").textContent = `${currentLanguage === "en" ? paper.titleEn : paper.title} · ${localized("Edit Questions", "编辑题目")}`;
   $("#material-question-list").innerHTML = materialQuestions.length ? materialQuestions.map((question, index) => {
     const answer = question.type === "fill"
       ? question.correctAnswer
       : `${String.fromCharCode(65 + question.correct)}. ${question.options?.[question.correct] || ""}`;
-    return `<article class="material-question-item">
+    return `<article class="material-question-item" draggable="true" data-question-id="${escapeHTML(question.id)}">
       <span class="material-question-number">${index + 1}</span>
       <div class="material-question-copy"><strong>${escapeHTML(question.title)}</strong><small>${localized(question.type === "fill" ? "Fill in the Answer" : "Multiple Choice", question.type === "fill" ? "填充题" : "选择题")} · ${localized("Answer", "答案")}: ${escapeHTML(answer)}</small></div>
-      <button type="button" data-edit-question="${escapeHTML(question.id)}">${localized("Edit Question", "编辑题目")}</button>
+      <div class="material-question-actions">
+        <button type="button" class="icon-button" data-move-question="up" data-question-id="${escapeHTML(question.id)}" aria-label="${localized("Move up", "上移")}" title="${localized("Move up", "上移")}">↑</button>
+        <button type="button" class="icon-button" data-move-question="down" data-question-id="${escapeHTML(question.id)}" aria-label="${localized("Move down", "下移")}" title="${localized("Move down", "下移")}">↓</button>
+        <button type="button" data-edit-question="${escapeHTML(question.id)}">${localized("Edit Question", "编辑题目")}</button>
+        <button type="button" class="danger-outline-button" data-delete-question="${escapeHTML(question.id)}">${localized("Delete", "删除")}</button>
+      </div>
     </article>`;
   }).join("") : `<div class="data-empty"><strong>${localized("No questions in this material", "这份资料还没有题目")}</strong></div>`;
   $("#question-list-dialog").showModal();
@@ -2999,10 +3098,11 @@ function startQuiz(index = 0) {
   }
   activeAssignmentIndex = Math.max(0, Math.min(index, assignments.length - 1));
   const assignment = assignments[activeAssignmentIndex];
-  const questionIds = Array.isArray(assignment.questionIds) ? new Set(assignment.questionIds) : null;
+  const questionIds = Array.isArray(assignment.questionIds) ? assignment.questionIds : null;
+  const questionById = new Map(questionBank.map((question) => [question.id, question]));
   questions = questionIds
-    ? questionBank.filter((question) => questionIds.has(question.id))
-    : questionBank.filter((question) => question.paperId && question.paperId === assignment.paperId);
+    ? questionIds.map((questionId) => questionById.get(questionId)).filter(Boolean)
+    : getOrderedMaterialQuestions(assignment.paperId);
   if (!questions.length) {
     showToast(localized("This assignment does not contain generated questions yet.", "这份练习还没有生成题目。"));
     return;
@@ -3821,11 +3921,59 @@ $("#back-to-paper").addEventListener("click", () => {
   openPaperEditor(paperId);
 });
 $("#material-question-list").addEventListener("click", (event) => {
+  const paperId = $("#question-list-paper-id").value;
+  const moveButton = event.target.closest("[data-move-question]");
+  if (moveButton) {
+    void moveQuestionInMaterial(moveButton.dataset.questionId, moveButton.dataset.moveQuestion, paperId);
+    return;
+  }
+  const deleteButton = event.target.closest("[data-delete-question]");
+  if (deleteButton) {
+    void deleteQuestionFromMaterial(deleteButton.dataset.deleteQuestion, paperId);
+    return;
+  }
   const button = event.target.closest("[data-edit-question]");
   if (!button) return;
-  const paperId = $("#question-list-paper-id").value;
   $("#question-list-dialog").close();
   openQuestionDialog({ questionId: button.dataset.editQuestion, paperId });
+});
+let draggedQuestionId = "";
+$("#material-question-list").addEventListener("dragstart", (event) => {
+  const item = event.target.closest("[data-question-id]");
+  if (!item) return;
+  draggedQuestionId = item.dataset.questionId || "";
+  item.classList.add("dragging");
+  if (event.dataTransfer) {
+    event.dataTransfer.effectAllowed = "move";
+    event.dataTransfer.setData("text/plain", draggedQuestionId);
+  }
+});
+$("#material-question-list").addEventListener("dragover", (event) => {
+  const item = event.target.closest("[data-question-id]");
+  if (!item || item.dataset.questionId === draggedQuestionId) return;
+  event.preventDefault();
+  item.classList.add("drop-target");
+});
+$("#material-question-list").addEventListener("dragleave", (event) => {
+  const item = event.target.closest("[data-question-id]");
+  if (item && !item.contains(event.relatedTarget)) item.classList.remove("drop-target");
+});
+$("#material-question-list").addEventListener("drop", (event) => {
+  const item = event.target.closest("[data-question-id]");
+  if (!item || !draggedQuestionId || item.dataset.questionId === draggedQuestionId) return;
+  event.preventDefault();
+  const container = $("#material-question-list");
+  const ids = [...container.querySelectorAll("[data-question-id]")].map((entry) => entry.dataset.questionId);
+  const fromIndex = ids.indexOf(draggedQuestionId);
+  const toIndex = ids.indexOf(item.dataset.questionId);
+  if (fromIndex < 0 || toIndex < 0) return;
+  ids.splice(fromIndex, 1);
+  ids.splice(toIndex, 0, draggedQuestionId);
+  void persistQuestionOrder($("#question-list-paper-id").value, ids);
+});
+$("#material-question-list").addEventListener("dragend", () => {
+  draggedQuestionId = "";
+  $$("[data-question-id]", $("#material-question-list")).forEach((item) => item.classList.remove("dragging", "drop-target"));
 });
 function closeAISettings() {
   resumeUploadAfterAISetup = false;

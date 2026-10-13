@@ -172,6 +172,7 @@
     return {
       id: row.id,
       paperId: row.material_id || "manual",
+      position: Number.isFinite(Number(row.position)) ? Number(row.position) : 0,
       type: row.question_type || (options.length ? "mcq" : "fill"),
       topic: row.topic || "综合试卷",
       level: row.difficulty || "中等",
@@ -220,7 +221,7 @@
       db.from("profiles").select("*").order("created_at", { ascending: true }),
       db.from("classes").select("*").order("created_at", { ascending: true }),
       db.from("materials").select("*").order("created_at", { ascending: false }),
-      db.from("questions").select("*").order("created_at", { ascending: true }),
+      db.from("questions").select("*").order("position", { ascending: true }).order("created_at", { ascending: true }),
       db.from("notes").select("*").order("created_at", { ascending: false }),
       db.from("assignments").select("*").order("created_at", { ascending: false }),
       db.from("assignment_questions").select("*").order("position", { ascending: true }),
@@ -328,7 +329,13 @@
 
   async function upsertQuestions(questions) {
     if (!session?.user?.id) return;
-    const rows = questions.filter((item) => isUuid(item.id)).map((item, index) => questionRow(item, session.user.id, index));
+    const positions = new Map();
+    const rows = questions.filter((item) => isUuid(item.id)).map((item) => {
+      const group = item.paperId || "manual";
+      const position = positions.get(group) || 0;
+      positions.set(group, position + 1);
+      return questionRow(item, session.user.id, position);
+    });
     if (rows.length) unwrap(await requireClient().from("questions").upsert(rows, { onConflict: "id" }), "Save questions");
   }
 
@@ -417,6 +424,14 @@
 
   async function deleteQuestionImage(path) {
     if (path) await requireClient().storage.from("learning-materials").remove([path]);
+  }
+
+  async function deleteQuestion(questionId) {
+    if (!session?.user?.id || !isUuid(questionId)) return;
+    const db = requireClient();
+    unwrap(await db.from("assignment_questions").delete().eq("question_id", questionId), "Delete question links");
+    unwrap(await db.from("student_answers").delete().eq("question_id", questionId), "Delete question answers");
+    unwrap(await db.from("questions").delete().eq("id", questionId), "Delete question");
   }
 
   async function deleteMaterial(paper) {
@@ -570,6 +585,7 @@
     uploadMaterialFile,
     uploadQuestionImage,
     deleteQuestionImage,
+    deleteQuestion,
     deleteMaterial,
     deleteNote,
     saveSubmission,
