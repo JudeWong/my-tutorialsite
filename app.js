@@ -2107,9 +2107,17 @@ function getQuestionGenerationLimits(options = {}) {
     : { materialType, requestedCount, minItems: 40, maxItems: 100 };
 }
 
+function getQuestionGenerationTarget(options = {}) {
+  const { materialType, requestedCount } = getQuestionGenerationLimits(options);
+  return materialType === "past-paper"
+    ? Math.min(100, requestedCount + 8)
+    : requestedCount;
+}
+
 function buildQuestionResponseSchema(options = {}, { compact = false } = {}) {
-  const { minItems, maxItems } = getQuestionGenerationLimits(options);
-  const arrayLimits = compact ? {} : { minItems, ...(maxItems ? { maxItems } : {}) };
+  const { maxItems } = getQuestionGenerationLimits(options);
+  const generationTarget = getQuestionGenerationTarget(options);
+  const arrayLimits = compact ? {} : { minItems: generationTarget, ...(maxItems ? { maxItems } : {}) };
   return {
     type: "object",
     properties: {
@@ -2140,8 +2148,9 @@ function buildQuestionResponseSchema(options = {}, { compact = false } = {}) {
 
 function buildQuestionGenerationPrompt(text, fileName, topic, options = {}) {
   const { materialType, requestedCount } = getQuestionGenerationLimits(options);
+  const generationTarget = getQuestionGenerationTarget(options);
   const generationTask = materialType === "past-paper"
-    ? `This is a past-year examination paper. Generate AT LEAST ${requestedCount} complete questions. Identify EVERY top-level question AND EVERY separately numbered sub-question or part (such as 1(a), 1(b), 1(c), Section A items, table/diagram items) visible in the supplied document. Return one output item for each source question or sub-question, in exactly the original order. Never return only the first few top-level questions. If there are fewer than ${requestedCount} top-level numbers, expand all visible sub-parts into separate items until at least ${requestedCount}; do not invent facts outside the document. Preserve the original meaning and choices when they exist; if an item is not already multiple-choice, convert it into one logically equivalent single-best-answer question without losing the tested concept.`
+    ? `This is a past-year examination paper. Generate AT LEAST ${generationTarget} complete questions so that at least ${requestedCount} remain after validation. Identify EVERY top-level question AND EVERY separately numbered sub-question or part (such as 1(a), 1(b), 1(c), Section A items, table/diagram items) visible in the supplied document. Return one output item for each source question or sub-question, in exactly the original order. Never return only the first few top-level questions. If there are fewer than ${requestedCount} top-level numbers, expand all visible sub-parts into separate items until at least ${generationTarget}; do not invent facts outside the document. Preserve the original meaning and choices when they exist; if an item is not already multiple-choice, convert it into one logically equivalent single-best-answer question without losing the tested concept.`
     : `This is a handout or teaching resource. Create exactly ${requestedCount} distinct single-best-answer multiple-choice questions that cover the material broadly and proportionally.`;
   return `You are an experienced Malaysian Independent Chinese Secondary School computer science teacher and UEC examination setter. Read and understand the supplied learning material before writing any question.
 
