@@ -2010,11 +2010,36 @@ function containsChineseText(value) {
   return /[\u3400-\u9fff]/u.test(String(value || ""));
 }
 
+const STANDARD_ENGLISH_COMPUTING_TERMS = new Set([
+  "artificial intelligence", "machine learning", "cloud computing", "operating system",
+  "computer network", "local area network", "wide area network", "star topology",
+  "bus topology", "ring topology", "mesh topology", "primary key", "foreign key",
+  "binary search", "linear search", "bubble sort", "insertion sort", "selection sort",
+  "web browser", "web server", "source code", "open source", "virtual memory",
+  "central processing unit", "graphics processing unit", "database management system",
+  "input device", "output device", "system software", "application software",
+  "random access memory", "read only memory", "solid state drive", "hard disk drive",
+  "domain name system", "internet protocol", "media access control",
+  "uniform resource locator", "structured query language"
+]);
+
 function isAcceptableChineseOption(value) {
   const text = String(value || "").trim();
   if (containsChineseText(text)) return true;
-  return /^[A-Za-z][A-Za-z0-9+.#/_-]*$/u.test(text)
-    || /^(?:SELECT|INSERT|UPDATE|DELETE|CREATE|DROP|ALTER)\b|[=<>()[\]{};]|^\d{1,3}(?:\.\d{1,3}){3}(?:\/\d{1,2})?$/iu.test(text);
+  if (!text) return false;
+  const normalized = text.replace(/\s+/g, " ").toLocaleLowerCase();
+  const numericOrSymbolic = /^(?=.*\p{N})[\p{N}\p{Zs}.,:%‰+\-−–—×÷*/=<>≤≥()\[\]{}^~°'"]+$/u.test(text);
+  const numericWithUnit = /^[+\-−]?(?:\d+(?:\.\d+)?|\.\d+)\s*(?:%|‰|B|Ki?B|Mi?B|Gi?B|Ti?B|bps|Kbps|Mbps|Gbps|Tbps|Hz|KHz|MHz|GHz|ns|ms|s)?$/iu.test(text);
+  const codeIdentifierOrAbbreviation = /^[A-Za-z0-9_$][A-Za-z0-9_$+.#/@:\-]*$/u.test(text);
+  const codeOrCommand = /^(?:SELECT|INSERT|UPDATE|DELETE|CREATE|DROP|ALTER)\b|[=<>()[\]{};]/iu.test(text);
+  const titleCaseTechnicalTerm = text.split(/\s+/).length <= 5
+    && text.split(/\s+/).every((word) => /^[A-Z][A-Za-z0-9+.#/_-]*$/u.test(word));
+  return numericOrSymbolic
+    || numericWithUnit
+    || codeIdentifierOrAbbreviation
+    || codeOrCommand
+    || titleCaseTechnicalTerm
+    || STANDARD_ENGLISH_COMPUTING_TERMS.has(normalized);
 }
 
 function normalizeGeneratedQuestion(item, index, paperId, topic) {
@@ -2151,7 +2176,7 @@ Strict quality rules:
 4. Never create cloze, missing-word, fill-in-the-blank, underscore, or simple sentence-copy questions.
 5. Avoid repeatedly asking “according to the material”. Test understanding, application, output tracing, comparison, or reasoning instead.
 6. The explanation must state why the correct option is correct. The common mistake must identify a realistic misunderstanding.
-7. ALL user-visible natural-language content must be in Simplified Chinese, even when the source is English or Malay. This includes every question, every answer option, every explanation, and every common mistake. Do not write complete English sentences. English is allowed only inside source code, identifiers, commands, protocol abbreviations, or unavoidable standard computing terms such as CPU, SQL, HTML and Python.
+7. ALL user-visible natural-language content must be in Simplified Chinese, even when the source is English or Malay. This includes every question, every answer option, every explanation, and every common mistake. Do not write complete English sentences. English is allowed only inside source code, identifiers, commands, protocol abbreviations, or unavoidable standard computing terms such as CPU, SQL, HTML and Python. Numeric or symbolic answer options such as 0, 16, 3.14, 1010, -1 and 50% are valid as written; do not translate them or add unnecessary Chinese words merely to satisfy the language rule.
 8. For a past paper, solve each source question carefully and set the correct answer from the source answer key when present; otherwise determine it by sound computer-science reasoning. A question containing a picture, table, combination option, or Roman-numeral option is still a complete question and must be returned.
 9. Inspect supplied page images to recognize every source question, including questions containing charts, tables, diagrams, screenshots, network layouts, or circuits. Do not attach or return any image with a generated question. When possible, include the essential visual information in Chinese text; the teacher will add any required question image manually during review.
   10. Return only a JSON object with a "questions" array using this exact schema:
@@ -2720,8 +2745,8 @@ async function saveManualQuestion(event) {
   }
   if (type === "mcq" && options.some((option) => !isAcceptableChineseOption(option))) {
     error.textContent = localized(
-      "Write answer options in Chinese. Code, abbreviations, and standard computing terms may remain in English.",
-      "答案选项必须使用中文；程序代码、缩写及标准电脑术语可以保留英文。"
+      "Write natural-language answer options in Chinese. Numbers, formulas, code, abbreviations, and standard computing terms may remain unchanged.",
+      "答案选项的叙述必须使用中文；数字、算式、程序代码、缩写及标准电脑术语可以保留原样。"
     );
     return;
   }
