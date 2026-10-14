@@ -240,6 +240,7 @@ const UI_EN = Object.freeze({
   "活跃学生": "Active Students",
   "最近整理的考题": "Recently Organized Papers",
   "查看全部": "View All",
+  "查看学习报告": "View Learning Report",
   "全部": "All",
   "程序设计": "Programming",
   "数据库": "Database",
@@ -891,6 +892,7 @@ function showPublicScreen(screen) {
   $("#auth-screen").classList.toggle("screen-hidden", screen !== "auth");
   $("#learning-app").classList.add("screen-hidden");
   document.body.classList.remove("app-active");
+  document.body.classList.remove("student-app");
   window.scrollTo({ top: 0, behavior: "auto" });
 }
 
@@ -929,6 +931,7 @@ function enterApp(nextRole, student = null) {
   $("#auth-screen").classList.add("screen-hidden");
   $("#learning-app").classList.remove("screen-hidden");
   document.body.classList.add("app-active");
+  document.body.classList.toggle("student-app", nextRole === "student");
   updateAccountUI();
   $("#ai-chat-launcher").hidden = nextRole !== "student";
   setRole(nextRole);

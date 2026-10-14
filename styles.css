@@ -835,6 +835,30 @@ html[lang="en"] .landing-section-label, html[lang="en"] .section-kicker { font-f
   stroke-width: 1.8;
 }
 
+.student-metrics .metric-icon svg {
+  display: block;
+  width: 21px;
+  height: 21px;
+  fill: none;
+  stroke: currentColor;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+  stroke-width: 1.8;
+}
+
+.student-metrics .metric-icon.amber svg:first-child {
+  fill: currentColor;
+  stroke: currentColor;
+  stroke-width: 1.25;
+}
+
+.student-report-link {
+  position: relative;
+  z-index: 1;
+  margin-top: 15px;
+  padding: 0;
+}
+
 @media (max-width: 760px) {
   body.app-active {
     padding-bottom: calc(70px + env(safe-area-inset-bottom));
@@ -861,6 +885,14 @@ html[lang="en"] .landing-section-label, html[lang="en"] .section-kicker { font-f
 
   .mobile-nav-right {
     grid-template-columns: repeat(3, minmax(0, 1fr));
+  }
+
+  .student-app .mobile-nav-right {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+
+  .student-app .mobile-nav-right [data-view="insights"] {
+    display: none;
   }
 
   .mobile-nav button {
