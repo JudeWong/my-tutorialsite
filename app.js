@@ -675,7 +675,14 @@ function saveTeacherNotes() {
 }
 
 function saveSession() {
-  if (Cloud?.enabled) return;
+  const learningApp = $("#learning-app");
+  if (!learningApp || learningApp.classList.contains("screen-hidden")) return;
+  const activeView = $("#quiz-view")?.classList.contains("active")
+    ? "quiz"
+    : $("#placeholder-view")?.classList.contains("active")
+      ? activeWorkspaceView || "dashboard"
+      : "dashboard";
+  const activeAssignment = assignments[activeAssignmentIndex];
   localStorage.setItem(SESSION_KEY, JSON.stringify({
     role,
     student: role === "student" && activeStudent ? {
@@ -683,16 +690,30 @@ function saveSession() {
       name: activeStudent.name,
       className: activeStudent.className,
       year: activeStudent.year
-    } : null
+    } : null,
+    view: activeView,
+    assignmentId: activeView === "quiz" ? activeAssignment?.id || "" : "",
+    scrollY: Math.max(0, Math.round(window.scrollY || 0))
   }));
+}
+
+function readStoredSession() {
+  try {
+    const session = JSON.parse(localStorage.getItem(SESSION_KEY) || "null");
+    if (!session || !["teacher", "student"].includes(session.role)) return null;
+    if (session.role === "student" && !session.student?.name) return null;
+    return session;
+  } catch {
+    return null;
+  }
 }
 
 function restoreSession() {
   if (Cloud?.enabled) return false;
+  const session = readStoredSession();
   try {
-    const session = JSON.parse(localStorage.getItem(SESSION_KEY) || "null");
     if (session?.role === "teacher") {
-      enterApp("teacher");
+      enterApp("teacher", null, session);
       return true;
     }
     if (session?.role === "student" && session.student?.name) {
@@ -703,7 +724,7 @@ function restoreSession() {
           && student.year === session.student.year)
       ));
       if (registeredStudent && registeredStudent.status !== "disabled") {
-        enterApp("student", registeredStudent);
+        enterApp("student", registeredStudent, session);
         return true;
       }
     }
@@ -877,7 +898,8 @@ function hideSessionLoading({ waitForTransition = false } = {}) {
 }
 
 async function initializeAppSession() {
-  let restoredProfile = null;
+  const cachedSession = Cloud?.enabled ? readStoredSession() : null;
+  if (cachedSession) showSessionBackdrop(cachedSession);
   try {
     if (!Cloud?.enabled) {
       restoreSession();
@@ -886,6 +908,8 @@ async function initializeAppSession() {
     try {
       const session = await Cloud.getSession();
       if (!session?.user?.id) {
+        localStorage.removeItem(SESSION_KEY);
+        if (cachedSession) showPublicScreen("landing");
         cloudClasses = await Cloud.loadPublicClasses().catch(() => []);
         cloudDataLoaded = true;
         renderClassOptions();
@@ -894,21 +918,25 @@ async function initializeAppSession() {
       const profile = Cloud.normalizeProfile(await Cloud.getProfile(session.user.id));
       if (!profile || profile.status === "disabled") {
         await Cloud.signOut();
+        localStorage.removeItem(SESSION_KEY);
+        if (cachedSession) showPublicScreen("landing");
         return;
       }
       await activateCloudProfile(profile);
-      restoredProfile = profile;
+      const matchingCachedSession = cachedSession?.role === profile.role ? cachedSession : null;
+      enterApp(profile.role, profile.role === "student" ? profile : null, matchingCachedSession);
     } catch (error) {
       console.error("Unable to restore cloud session", error);
       await Cloud.signOut().catch(() => {});
       cloudProfile = null;
       cloudDataLoaded = false;
+      localStorage.removeItem(SESSION_KEY);
+      if (cachedSession) showPublicScreen("landing");
       showToast(error?.message || localized("Cloud sign-in could not be restored.", "无法恢复云端登入状态。"));
     }
   } finally {
     await hideSessionLoading({ waitForTransition: true });
   }
-  if (restoredProfile) enterApp(restoredProfile.role, restoredProfile.role === "student" ? restoredProfile : null);
 }
 
 function getHourKey(date = new Date()) {
@@ -1186,10 +1214,40 @@ function updateAccountUI() {
   refreshLanguage();
 }
 
-function enterApp(nextRole, student = null) {
+function restoreSessionView(session, { silentQuiz = false } = {}) {
+  const requestedView = ["dashboard", "library", "notes", "classes", "insights", "quiz"].includes(session?.view)
+    ? session.view
+    : "dashboard";
+  if (requestedView === "quiz" && role === "student") {
+    const assignmentIndex = assignments.findIndex((assignment) => assignment.id === session?.assignmentId);
+    startQuiz(assignmentIndex >= 0 ? assignmentIndex : null, { silent: silentQuiz });
+  } else {
+    showView(requestedView === "quiz" ? "dashboard" : requestedView);
+  }
+  const savedScrollY = Number(session?.scrollY);
+  if (Number.isFinite(savedScrollY) && savedScrollY > 0 && requestedView !== "quiz") {
+    requestAnimationFrame(() => window.scrollTo({ top: savedScrollY, behavior: "auto" }));
+  }
+}
+
+function showSessionBackdrop(session) {
+  role = session.role;
+  activeStudent = session.role === "student" ? session.student : null;
+  $("#landing-page").classList.add("screen-hidden");
+  $("#auth-screen").classList.add("screen-hidden");
+  $("#learning-app").classList.remove("screen-hidden");
+  document.body.classList.add("app-active");
+  document.body.classList.toggle("student-app", session.role === "student");
+  updateAccountUI();
+  $("#ai-chat-launcher").hidden = session.role !== "student";
+  setRole(session.role);
+  renderAssignments();
+  restoreSessionView(session, { silentQuiz: true });
+}
+
+function enterApp(nextRole, student = null, restoredSession = null) {
   role = nextRole;
   activeStudent = student;
-  saveSession();
   $("#landing-page").classList.add("screen-hidden");
   $("#auth-screen").classList.add("screen-hidden");
   $("#learning-app").classList.remove("screen-hidden");
@@ -1199,6 +1257,8 @@ function enterApp(nextRole, student = null) {
   $("#ai-chat-launcher").hidden = nextRole !== "student";
   setRole(nextRole);
   renderAssignments();
+  if (restoredSession) restoreSessionView(restoredSession, { silentQuiz: true });
+  saveSession();
   if (nextRole === "teacher") {
     renderClassPerformance();
     startCodeTimer();
@@ -2010,6 +2070,7 @@ function showView(name) {
   }
   $$("[data-view]").forEach((button) => button.classList.toggle("active", button.dataset.view === name));
   window.scrollTo({ top: 0, behavior: "smooth" });
+  saveSession();
 }
 
 function setRole(nextRole) {
@@ -3621,7 +3682,7 @@ function restoreQuizProgress(assignment) {
   return true;
 }
 
-function startQuiz(index = null) {
+function startQuiz(index = null, { silent = false } = {}) {
   if (!assignments.length) {
     showToast(localized("No interactive questions are available yet.", "目前还没有可作答的互动题目。"));
     return;
@@ -3644,7 +3705,7 @@ function startQuiz(index = null) {
   $("#quiz-result").hidden = true;
   renderQuestion();
   showView("quiz");
-  if (restored) showToast(localized("Saved progress restored.", "已恢复上次作答进度。"));
+  if (restored && !silent) showToast(localized("Saved progress restored.", "已恢复上次作答进度。"));
 }
 
 function hasAnswer(answer) {
@@ -4204,6 +4265,11 @@ $("#logout-button").addEventListener("click", async () => {
   localStorage.removeItem(SESSION_KEY);
   $("#teacher-password").value = "";
   showPublicScreen("landing");
+});
+
+window.addEventListener("pagehide", () => {
+  saveCurrentQuizProgress();
+  saveSession();
 });
 
 $("#class-form").addEventListener("submit", async (event) => {
