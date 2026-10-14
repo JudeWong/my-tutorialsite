@@ -153,6 +153,7 @@
 
     const email = await studentEmail(payload.name, payload.className, payload.year);
     let authData;
+    let existingAccount = false;
     try {
       authData = unwrap(await db.auth.signUp({
         email,
@@ -169,22 +170,31 @@
       }), "Create student account");
     } catch (error) {
       if (/already|registered|exists/i.test(error?.message || "")) {
-        const duplicate = new Error("This student account already exists. Use Existing Account to sign in.");
-        duplicate.code = "STUDENT_ALREADY_EXISTS";
-        throw duplicate;
-      }
-      if (/database error|saving new user|verification|code/i.test(error?.message || "")) {
+        existingAccount = true;
+      } else if (/database error|saving new user|verification|code/i.test(error?.message || "")) {
         const invalidCode = new Error("The verification code is incorrect or expired, or the selected class is unavailable.");
         invalidCode.code = "INVALID_REGISTRATION_CODE";
         throw invalidCode;
+      } else {
+        throw error;
       }
-      throw error;
     }
 
-    session = authData?.session || null;
+    const silentDuplicate = Boolean(authData?.user && Array.isArray(authData.user.identities) && authData.user.identities.length === 0);
+    session = existingAccount || silentDuplicate ? null : (authData?.session || null);
     if (!session) {
-      const signedIn = unwrap(await db.auth.signInWithPassword({ email, password: payload.password }), "Start student session");
-      session = signedIn?.session || null;
+      try {
+        const signedIn = unwrap(await db.auth.signInWithPassword({ email, password: payload.password }), "Start student session");
+        authData = signedIn;
+        session = signedIn?.session || null;
+      } catch (error) {
+        if (existingAccount || silentDuplicate || /invalid login credentials/i.test(error?.message || "")) {
+          const duplicate = new Error("This student account already exists. Use Existing Account to sign in, or ask the teacher to reset its password.");
+          duplicate.code = "STUDENT_ALREADY_EXISTS";
+          throw duplicate;
+        }
+        throw error;
+      }
     }
     const userId = session?.user?.id || authData?.user?.id;
     try {
@@ -229,6 +239,10 @@
       if ([404, 405].includes(Number(error?.status))) return registerStudentDirect(payload);
       throw error;
     }
+  }
+
+  async function repairStudentProfiles() {
+    return apiRequest("/api/student-account");
   }
 
   function mapMaterial(row) {
@@ -775,6 +789,7 @@
     signInTeacher,
     signInStudent,
     registerStudent,
+    repairStudentProfiles,
     signOut,
     loadPublicClasses,
     loadSnapshot,

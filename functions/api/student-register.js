@@ -1,4 +1,4 @@
-import { cloudConfig, json, options, publicError, readJson, supabaseFetch } from "./_cloud.js";
+import { cloudConfig, json, listAuthUsers, options, publicError, readJson, supabaseFetch } from "./_cloud.js";
 
 function isChineseName(value) {
   return /^[\u3400-\u9fff·]{2,12}$/u.test(String(value || "").trim());
@@ -9,6 +9,18 @@ async function studentEmail(name, className, year) {
   const digest = await crypto.subtle.digest("SHA-256", new TextEncoder().encode(normalized));
   const hash = [...new Uint8Array(digest)].map((byte) => byte.toString(16).padStart(2, "0")).join("");
   return `student+${hash.slice(0, 32)}@chms3.edu.my`;
+}
+
+async function signInStudent(env, email, password) {
+  const config = cloudConfig(env);
+  const response = await fetch(`${config.url}/auth/v1/token?grant_type=password`, {
+    method: "POST",
+    headers: { apikey: config.publishableKey, "Content-Type": "application/json" },
+    body: JSON.stringify({ email, password })
+  });
+  const session = await response.json().catch(() => ({}));
+  if (!response.ok) throw Object.assign(new Error(session.error_description || session.msg || "Student sign-in failed."), { status: response.status });
+  return session;
 }
 
 export async function onRequestPost({ request, env }) {
@@ -32,6 +44,7 @@ export async function onRequestPost({ request, env }) {
 
     const email = await studentEmail(name, className, year);
     let authUser;
+    let restoredMissingProfile = false;
     try {
       authUser = await supabaseFetch(env, "/auth/v1/admin/users", {
         method: "POST",
@@ -39,9 +52,19 @@ export async function onRequestPost({ request, env }) {
       });
     } catch (error) {
       if (error.status === 422 || /already|registered|exists/i.test(error.message)) {
-        return json(request, env, { error: "This student account already exists. Use Existing Account to sign in." }, 409);
+        const existingUser = (await listAuthUsers(env)).find((user) => String(user?.email || "").toLowerCase() === email.toLowerCase());
+        if (!existingUser?.id) {
+          return json(request, env, { error: "This student account already exists. Use Existing Account to sign in.", code: "STUDENT_ALREADY_EXISTS" }, 409);
+        }
+        const existingProfiles = await supabaseFetch(env, `/rest/v1/profiles?id=eq.${encodeURIComponent(existingUser.id)}&select=id&limit=1`);
+        if (existingProfiles?.length) {
+          return json(request, env, { error: "This student account already exists. Use Existing Account to sign in.", code: "STUDENT_ALREADY_EXISTS" }, 409);
+        }
+        authUser = existingUser;
+        restoredMissingProfile = true;
+      } else {
+        throw error;
       }
-      throw error;
     }
 
     try {
@@ -59,18 +82,24 @@ export async function onRequestPost({ request, env }) {
         }
       });
     } catch (error) {
-      await supabaseFetch(env, `/auth/v1/admin/users/${authUser.id}`, { method: "DELETE" }).catch(() => {});
+      if (!restoredMissingProfile) {
+        await supabaseFetch(env, `/auth/v1/admin/users/${authUser.id}`, { method: "DELETE" }).catch(() => {});
+      }
       throw error;
     }
 
-    const config = cloudConfig(env);
-    const signInResponse = await fetch(`${config.url}/auth/v1/token?grant_type=password`, {
-      method: "POST",
-      headers: { apikey: config.publishableKey, "Content-Type": "application/json" },
-      body: JSON.stringify({ email, password })
-    });
-    const session = await signInResponse.json().catch(() => ({}));
-    if (!signInResponse.ok) throw Object.assign(new Error(session.error_description || "Student account was created but sign-in failed."), { status: 502 });
+    let session;
+    try {
+      session = await signInStudent(env, email, password);
+    } catch (error) {
+      if (restoredMissingProfile) {
+        return json(request, env, {
+          error: "The missing student record was restored. Ask the teacher to reset the password in Student Management, then use Existing Account to sign in.",
+          code: "STUDENT_PROFILE_RESTORED"
+        }, 409);
+      }
+      throw Object.assign(new Error("Student account was created but sign-in failed."), { status: 502, cause: error });
+    }
     return json(request, env, {
       session: { access_token: session.access_token, refresh_token: session.refresh_token },
       profile: { id: authUser.id, full_name: name, role: "student", class_id: classes[0].id, class_name: className, year, status: "active" }

@@ -788,6 +788,18 @@ async function activateCloudProfile(profile, { migrateLocal = true } = {}) {
     throw error;
   }
   cloudProfile = profile;
+  if (profile.role === "teacher") {
+    try {
+      const repairResult = await Cloud.repairStudentProfiles();
+      if (repairResult?.repaired) {
+        console.info(`Restored ${repairResult.repaired} missing student profile(s).`);
+      }
+    } catch (repairError) {
+      // Account reconciliation is a safety repair. A temporary Worker failure
+      // must not prevent the teacher from entering the rest of the platform.
+      console.warn("Unable to reconcile student profiles", repairError);
+    }
+  }
   const localSnapshot = readLocalCloudMigrationSnapshot();
   let snapshot = await Cloud.loadSnapshot(profile);
   const cloudHasLearningData = snapshot.papers.length || snapshot.questions.length || snapshot.assignments.length || snapshot.notes.length;
@@ -3927,9 +3939,14 @@ $("#student-register-form").addEventListener("submit", async (event) => {
           )
           : cloudError?.code === "STUDENT_ALREADY_EXISTS"
             ? localized(
-              "This student account already exists. Switch to Existing Account to sign in.",
-              "此学生账号已注册，请切换至“已有账号”登入。"
+              "This student account already exists. Use Existing Account to sign in, or ask the teacher to reset its password.",
+              "此学生账号已存在，请使用“已有账号”登入，或请老师在学生管理中重设密码。"
             )
+            : cloudError?.code === "STUDENT_PROFILE_RESTORED"
+              ? localized(
+                "The missing student record was restored. Ask the teacher to reset the password in Student Management, then use Existing Account to sign in.",
+                "缺失的学生资料已补回。请老师在学生管理中重设密码，再使用“已有账号”登入。"
+              )
             : cloudError?.message || localized("Cloud registration failed. Ask your teacher to check the connection.", "云端注册失败，请老师检查连接。 ");
     } finally {
       submitButton.disabled = false;

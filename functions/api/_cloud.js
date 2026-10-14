@@ -71,6 +71,17 @@ export async function supabaseFetch(env, path, { method = "GET", body, prefer = 
   return data;
 }
 
+export async function listAuthUsers(env) {
+  const users = [];
+  for (let page = 1; page <= 20; page += 1) {
+    const result = await supabaseFetch(env, `/auth/v1/admin/users?page=${page}&per_page=1000`);
+    const batch = Array.isArray(result) ? result : (result?.users || []);
+    users.push(...batch);
+    if (batch.length < 1000) break;
+  }
+  return users;
+}
+
 export async function requireTeacher(request, env) {
   const authorization = request.headers.get("Authorization") || "";
   const accessToken = authorization.replace(/^Bearer\s+/i, "").trim();
