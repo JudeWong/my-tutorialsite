@@ -15,6 +15,20 @@
     <link rel="stylesheet" href="styles.css" />
   </head>
   <body>
+    <div id="session-loading" class="session-loading" role="status" aria-live="polite" aria-label="正在恢复登入状态">
+      <div class="session-loading-visual" aria-hidden="true">
+        <span class="session-loading-orbit session-orbit-one"></span>
+        <span class="session-loading-orbit session-orbit-two"></span>
+        <strong>AI</strong>
+        <i></i><i></i><i></i>
+      </div>
+      <div class="session-loading-copy">
+        <strong>Restoring your learning space</strong>
+        <span>正在恢复登入状态，请稍候……</span>
+      </div>
+      <div class="session-loading-bar" aria-hidden="true"><i></i></div>
+    </div>
+
     <section id="landing-page" class="public-screen landing-page">
       <nav class="landing-nav">
         <a class="dark-brand" href="#" aria-label="AI助理首页"><span>AI</span><strong>你的私人AI助理</strong></a>
@@ -252,6 +266,14 @@
               <div><span>活跃学生</span><strong id="teacher-student-count">0</strong><small id="teacher-class-count">0 个班级</small></div>
             </article>
           </div>
+
+          <section class="panel teacher-assignment-progress-panel">
+            <div class="panel-heading">
+              <div><p class="section-kicker">ASSIGNMENT PROGRESS</p><h2>每份作业的学生进度</h2><p>展开作业即可查看每位学生的实时作答状态与成绩。</p></div>
+              <span class="live-indicator"><i></i> LIVE</span>
+            </div>
+            <div id="teacher-assignment-progress" class="teacher-assignment-progress"></div>
+          </section>
 
           <div class="teacher-layout">
             <section class="panel question-panel">

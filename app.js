@@ -149,6 +149,7 @@ let stopProgressRealtime = null;
 let teacherProgressPollTimer = null;
 let progressRefreshTimer = null;
 let progressRefreshInFlight = false;
+const openTeacherAssignmentProgressIds = new Set();
 let pendingQuestionImageData = "";
 let pendingQuestionImagePath = "";
 let pendingQuestionImageAlt = "题目图表";
@@ -540,6 +541,11 @@ const UI_EN = Object.freeze({
   ,"实时": "LIVE"
   ,"已完成": "Completed"
   ,"正在作答": "In progress"
+  ,"每份作业的学生进度": "Student Progress by Assignment"
+  ,"展开作业即可查看每位学生的实时作答状态与成绩。": "Expand an assignment to view every student's live answer progress and score."
+  ,"尚未开始": "Not started"
+  ,"所有班级": "All classes"
+  ,"学生作答明细": "Student progress details"
 });
 
 function applyLanguage(language = "zh", { persist = true } = {}) {
@@ -809,32 +815,43 @@ async function activateCloudProfile(profile, { migrateLocal = true } = {}) {
   return true;
 }
 
+function hideSessionLoading() {
+  const loader = $("#session-loading");
+  if (!loader || loader.hidden) return;
+  loader.classList.add("is-hiding");
+  setTimeout(() => { loader.hidden = true; }, 260);
+}
+
 async function initializeAppSession() {
-  if (!Cloud?.enabled) {
-    restoreSession();
-    return;
-  }
   try {
-    const session = await Cloud.getSession();
-    if (!session?.user?.id) {
-      cloudClasses = await Cloud.loadPublicClasses().catch(() => []);
-      cloudDataLoaded = true;
-      renderClassOptions();
+    if (!Cloud?.enabled) {
+      restoreSession();
       return;
     }
-    const profile = Cloud.normalizeProfile(await Cloud.getProfile(session.user.id));
-    if (!profile || profile.status === "disabled") {
-      await Cloud.signOut();
-      return;
+    try {
+      const session = await Cloud.getSession();
+      if (!session?.user?.id) {
+        cloudClasses = await Cloud.loadPublicClasses().catch(() => []);
+        cloudDataLoaded = true;
+        renderClassOptions();
+        return;
+      }
+      const profile = Cloud.normalizeProfile(await Cloud.getProfile(session.user.id));
+      if (!profile || profile.status === "disabled") {
+        await Cloud.signOut();
+        return;
+      }
+      await activateCloudProfile(profile);
+      enterApp(profile.role, profile.role === "student" ? profile : null);
+    } catch (error) {
+      console.error("Unable to restore cloud session", error);
+      await Cloud.signOut().catch(() => {});
+      cloudProfile = null;
+      cloudDataLoaded = false;
+      showToast(error?.message || localized("Cloud sign-in could not be restored.", "无法恢复云端登入状态。"));
     }
-    await activateCloudProfile(profile);
-    enterApp(profile.role, profile.role === "student" ? profile : null);
-  } catch (error) {
-    console.error("Unable to restore cloud session", error);
-    await Cloud.signOut().catch(() => {});
-    cloudProfile = null;
-    cloudDataLoaded = false;
-    showToast(error?.message || localized("Cloud sign-in could not be restored.", "无法恢复云端登入状态。"));
+  } finally {
+    hideSessionLoading();
   }
 }
 
@@ -890,6 +907,74 @@ function getLatestCloudSubmissions() {
     if (!current || submissionTime >= currentTime) latest.set(key, submission);
   });
   return [...latest.values()];
+}
+
+function getStudentsForAssignment(assignment) {
+  const students = getStudents().filter((student) => student.status !== "disabled");
+  if (!assignment?.classId) return students;
+  const assignedClass = cloudClasses.find((item) => item.id === assignment.classId);
+  return students.filter((student) => (
+    student.classId === assignment.classId
+    || (assignedClass?.name && student.className === assignedClass.name)
+  ));
+}
+
+function teacherAssignmentProgressCardsMarkup(openAssignmentIds = openTeacherAssignmentProgressIds) {
+  if (!assignments.length) {
+    return `<div class="data-empty"><strong>${localized("No assignments yet", "尚未布置练习")}</strong><p>${localized("Create an assignment to begin tracking every student.", "建立作业后即可追踪每位学生的进度。")}</p></div>`;
+  }
+  const latestByStudentAndAssignment = new Map(getLatestCloudSubmissions().map((submission) => [
+    `${submission.assignmentId}:${submission.studentId}`,
+    submission
+  ]));
+  return assignments.map((assignment) => {
+    const students = getStudentsForAssignment(assignment);
+    const studentRows = students.map((student) => ({
+      student,
+      submission: latestByStudentAndAssignment.get(`${assignment.id}:${student.id}`) || null
+    }));
+    const completedCount = studentRows.filter(({ submission }) => submission?.status === "completed").length;
+    const activeCount = studentRows.filter(({ submission }) => submission?.status === "in_progress").length;
+    const className = cloudClasses.find((item) => item.id === assignment.classId)?.name || localized("All classes", "所有班级");
+    const title = currentLanguage === "en" ? assignment.titleEn : assignment.title;
+    const totalQuestions = Number(assignment.questionCount) || assignment.questionIds?.length || 0;
+    const open = openAssignmentIds.has(assignment.id) ? " open" : "";
+    return `<details class="assignment-progress-card" data-assignment-progress-id="${escapeHTML(assignment.id)}"${open}>
+      <summary>
+        <span class="assignment-progress-icon">${escapeHTML(assignment.icon || "✦")}</span>
+        <span class="assignment-progress-title"><strong>${escapeHTML(title)}</strong><small>${escapeHTML(className)} · ${totalQuestions} ${localized("questions", "题")}</small></span>
+        <span class="assignment-progress-overview"><strong>${completedCount} / ${students.length}</strong><small>${localized("completed", "已完成")} · ${activeCount} ${localized("in progress", "进行中")}</small></span>
+        <span class="assignment-progress-chevron" aria-hidden="true">⌄</span>
+      </summary>
+      <div class="assignment-student-progress" aria-label="${localized("Student progress details", "学生作答明细")}">
+        ${studentRows.length ? studentRows.map(({ student, submission }) => {
+          const total = submission?.totalQuestions || totalQuestions;
+          const completed = submission?.status === "completed";
+          const active = submission?.status === "in_progress";
+          const answered = completed ? total : Math.min(total || submission?.answeredQuestions || 0, submission?.answeredQuestions || 0);
+          const percentage = completed ? 100 : total ? Math.round((answered / total) * 100) : 0;
+          const statusText = completed ? localized("Completed", "已完成") : active ? localized("In progress", "正在作答") : localized("Not started", "尚未开始");
+          const detail = completed
+            ? localized(`Score ${submission.score} / ${total}`, `成绩 ${submission.score} / ${total}`)
+            : active ? localized(`${answered} / ${total} answered`, `已作答 ${answered} / ${total} 题`) : localized(`0 / ${total} answered`, `已作答 0 / ${total} 题`);
+          const updated = submission?.updatedAt ? formatNoteDate(submission.updatedAt) : localized("No activity yet", "尚无活动");
+          return `<article class="assignment-student-row">
+            <span class="assignment-student-avatar">${escapeHTML(student.name?.slice(-1) || "学")}</span>
+            <span class="assignment-student-name"><strong>${escapeHTML(student.name || localized("Student", "学生"))}</strong><small>${escapeHTML(student.className || "—")} · ${escapeHTML(String(student.year || ""))}</small></span>
+            <span class="assignment-student-meter"><span><b>${escapeHTML(detail)}</b><small>${escapeHTML(updated)}</small></span><i><b style="width:${percentage}%"></b></i></span>
+            <em class="assignment-status ${completed ? "completed" : active ? "active" : "not-started"}">${escapeHTML(statusText)}</em>
+          </article>`;
+        }).join("") : `<div class="assignment-progress-empty">${localized("No students are assigned to this class yet.", "此班级尚未有学生账号。")}</div>`}
+      </div>
+    </details>`;
+  }).join("");
+}
+
+function renderTeacherAssignmentProgress() {
+  const container = $("#teacher-assignment-progress");
+  if (!container || role !== "teacher") return;
+  $$("details[open][data-assignment-progress-id]", container).forEach((details) => openTeacherAssignmentProgressIds.add(details.dataset.assignmentProgressId));
+  container.innerHTML = teacherAssignmentProgressCardsMarkup();
 }
 
 function renderTeacherLiveProgress() {
@@ -1059,6 +1144,7 @@ function enterApp(nextRole, student = null) {
   setRole(nextRole);
   renderAssignments();
   if (nextRole === "teacher") {
+    renderClassPerformance();
     startCodeTimer();
     startTeacherProgressRealtime();
   } else {
@@ -1132,6 +1218,7 @@ function renderAssignments() {
   }).join("") : `<div class="data-empty"><strong>${localized("No assignments yet", "尚未布置练习")}</strong><p>${localized("Assignments created by the teacher will appear here.", "老师建立练习后会显示在这里。")}</p></div>`;
   updateStudentProgress();
   renderLastUnfinishedAssignment();
+  renderTeacherAssignmentProgress();
   renderTeacherMetrics();
   refreshLanguage();
 }
@@ -1814,11 +1901,13 @@ function renderWorkspaceView(name) {
       const students = getStudents();
       action.textContent = localized("＋ Add Class", "＋ 添加班级");
       action.dataset.action = "dashboard-classes";
-      const completedAssignments = assignments.filter((item) => item.done).length;
-      const completionRate = assignments.length ? Math.round((completedAssignments / assignments.length) * 100) : 0;
+      const completedAssignments = getLatestCloudSubmissions().filter((item) => item.status === "completed").length;
+      const expectedAssignments = assignments.length * Math.max(1, students.filter((student) => student.status !== "disabled").length);
+      const completionRate = expectedAssignments ? Math.round((completedAssignments / expectedAssignments) * 100) : 0;
       content.innerHTML = `
         <div class="workspace-metrics"><article><strong>${getClasses().length}</strong><span>${localized("Active classes", "启用班级")}</span></article><article><strong>${students.length}</strong><span>${localized("Registered students", "已注册学生")}</span></article><article><strong>${completionRate}%</strong><span>${localized("Completion rate", "完成率")}</span></article></div>
-        <section class="panel workspace-panel"><h2>${localized("Student Roster", "学生名册")}</h2>${students.length ? `<div class="workspace-table">${students.map((student) => `<article><span class="student-initial">${escapeHTML(student.name?.slice(-1) || "S")}</span><div><strong>${escapeHTML(student.name)}</strong><small>${escapeHTML(student.className)} · ${escapeHTML(student.year)}</small></div><span class="status-pill ${student.status === "disabled" ? "status-disabled" : ""}">${student.status === "disabled" ? localized("Disabled", "已停用") : localized("Active", "启用中")}</span><button type="button" data-manage-student-id="${escapeHTML(student.id)}">${localized("Manage Account", "管理账号")}</button></article>`).join("")}</div>` : `<div class="workspace-empty"><strong>${localized("No students registered yet", "暂时没有学生注册")}</strong><p>${localized("Share the hourly verification code with students to get started.", "把每小时验证码交给学生即可开始注册。")}</p></div>`}</section>`;
+        <section class="panel workspace-panel"><h2>${localized("Student Roster", "学生名册")}</h2>${students.length ? `<div class="workspace-table">${students.map((student) => `<article><span class="student-initial">${escapeHTML(student.name?.slice(-1) || "S")}</span><div><strong>${escapeHTML(student.name)}</strong><small>${escapeHTML(student.className)} · ${escapeHTML(student.year)}</small></div><span class="status-pill ${student.status === "disabled" ? "status-disabled" : ""}">${student.status === "disabled" ? localized("Disabled", "已停用") : localized("Active", "启用中")}</span><button type="button" data-manage-student-id="${escapeHTML(student.id)}">${localized("Manage Account", "管理账号")}</button></article>`).join("")}</div>` : `<div class="workspace-empty"><strong>${localized("No students registered yet", "暂时没有学生注册")}</strong><p>${localized("Share the hourly verification code with students to get started.", "把每小时验证码交给学生即可开始注册。")}</p></div>`}</section>
+        <section class="panel workspace-panel workspace-assignment-progress"><h2>${localized("Student Progress by Assignment", "每份作业的学生进度")}</h2><div class="teacher-assignment-progress">${teacherAssignmentProgressCardsMarkup()}</div></section>`;
     } else {
       const completed = assignments.filter((item) => item.done).length;
       const level = Math.max(1, LEVEL_TARGETS.filter((target) => completed >= target).length + 1);
@@ -3666,6 +3755,13 @@ function submitAnswer() {
   renderQuestionMap();
   refreshLanguage();
 }
+
+document.addEventListener("toggle", (event) => {
+  const details = event.target.closest?.("details[data-assignment-progress-id]");
+  if (!details) return;
+  if (details.open) openTeacherAssignmentProgressIds.add(details.dataset.assignmentProgressId);
+  else openTeacherAssignmentProgressIds.delete(details.dataset.assignmentProgressId);
+}, true);
 
 renderPapers();
 renderAssignments();
