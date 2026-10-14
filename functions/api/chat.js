@@ -1,11 +1,4 @@
-import { cloudConfig } from "./_cloud.js";
-
-const JSON_HEADERS = {
-  "Content-Type": "application/json; charset=utf-8",
-  "Access-Control-Allow-Origin": "*",
-  "Access-Control-Allow-Headers": "Authorization, Content-Type",
-  "Access-Control-Allow-Methods": "GET, POST, OPTIONS"
-};
+import { cloudConfig, corsHeaders } from "./_cloud.js";
 function questionResponseSchema(body) {
   const schema = {
     type: "object",
@@ -32,8 +25,11 @@ function questionResponseSchema(body) {
   return schema;
 }
 
-function json(data, status = 200) {
-  return new Response(JSON.stringify(data), { status, headers: JSON_HEADERS });
+function json(request, env, data, status = 200) {
+  return new Response(JSON.stringify(data), {
+    status,
+    headers: { "Content-Type": "application/json; charset=utf-8", ...corsHeaders(request, env) }
+  });
 }
 
 function systemPrompt(mode, language, task, materialType, questionCount) {
@@ -92,37 +88,37 @@ function generateContentSchema(value) {
 
 export async function onRequestPost({ request, env }) {
   if (!env.GEMINI_API_KEY) {
-    return json({ error: "AI is not configured. Add the GEMINI_API_KEY secret in Cloudflare Pages." }, 503);
+    return json(request, env, { error: "AI is not configured. Add the GEMINI_API_KEY secret in Cloudflare Pages." }, 503);
   }
 
   const authorization = request.headers.get("Authorization") || "";
   const accessToken = authorization.replace(/^Bearer\s+/i, "").trim();
-  if (!accessToken) return json({ error: "Sign in before using the AI service." }, 401);
+  if (!accessToken) return json(request, env, { error: "Sign in before using the AI service." }, 401);
   const supabase = cloudConfig(env);
   const authResponse = await fetch(`${supabase.url}/auth/v1/user`, {
     headers: { apikey: supabase.publishableKey, Authorization: `Bearer ${accessToken}` }
   });
-  if (!authResponse.ok) return json({ error: "Your cloud session is invalid or expired. Sign in again." }, 401);
+  if (!authResponse.ok) return json(request, env, { error: "Your cloud session is invalid or expired. Sign in again." }, 401);
   const authUser = await authResponse.json().catch(() => ({}));
   const profileResponse = await fetch(`${supabase.url}/rest/v1/profiles?id=eq.${encodeURIComponent(authUser.id || "")}&select=status&limit=1`, {
     headers: { apikey: supabase.publishableKey, Authorization: `Bearer ${accessToken}` }
   });
   const profiles = await profileResponse.json().catch(() => []);
   if (!profileResponse.ok || profiles[0]?.status === "disabled") {
-    return json({ error: "This cloud account is disabled or unavailable." }, 403);
+    return json(request, env, { error: "This cloud account is disabled or unavailable." }, 403);
   }
 
   let body;
   try {
     body = await request.json();
   } catch {
-    return json({ error: "Invalid JSON body." }, 400);
+    return json(request, env, { error: "Invalid JSON body." }, 400);
   }
 
   const message = typeof body.message === "string" ? body.message.trim() : "";
   const messageLimit = body.task === "question-generation" ? 600000 : 6000;
   if (!message || message.length > messageLimit) {
-    return json({ error: `Message must contain between 1 and ${messageLimit} characters.` }, 400);
+    return json(request, env, { error: `Message must contain between 1 and ${messageLimit} characters.` }, 400);
   }
 
   // Keep chat requests responsive even after a long conversation. Question
@@ -212,7 +208,7 @@ export async function onRequestPost({ request, env }) {
         await waitForRetry(700 * (2 ** attempt));
         continue;
       }
-      return json({ error: "Gemini is temporarily busy. Automatic retries and backup models were unsuccessful. Please try again shortly." }, 503);
+      return json(request, env, { error: "Gemini is temporarily busy. Automatic retries and backup models were unsuccessful. Please try again shortly." }, 503);
     }
     if (response.ok) break;
     const providerMessage = data?.error?.message || "Unknown error";
@@ -223,10 +219,10 @@ export async function onRequestPost({ request, env }) {
       continue;
     }
     if (isTransientGeminiError(response.status, providerMessage)) {
-      return json({ error: "Gemini is temporarily busy. Automatic retries and backup models were unsuccessful. Please try again shortly." }, 503);
+      return json(request, env, { error: "Gemini is temporarily busy. Automatic retries and backup models were unsuccessful. Please try again shortly." }, 503);
     }
     const detail = String(providerMessage || "").replace(/AIza[\w-]+/gi, "[redacted]").replace(/\s+/g, " ").trim().slice(0, 360);
-    return json({ error: detail ? `The AI service rejected the request: ${detail}` : "The AI service rejected the request. Check the configured API key and model." }, 502);
+    return json(request, env, { error: detail ? `The AI service rejected the request: ${detail}` : "The AI service rejected the request. Check the configured API key and model." }, 502);
   }
 
   const reply = data?.candidates
@@ -234,14 +230,14 @@ export async function onRequestPost({ request, env }) {
     .map((part) => part?.text || "")
     .join("\n")
     .trim();
-  if (!reply) return json({ error: "The AI service returned an empty response." }, 502);
-  return json({ reply, provider: "gemini", model: usedModel, fallback: usedModel !== model });
+  if (!reply) return json(request, env, { error: "The AI service returned an empty response." }, 502);
+  return json(request, env, { reply, provider: "gemini", model: usedModel, fallback: usedModel !== model });
 }
 
-export function onRequestGet({ env }) {
-  return json({ ready: Boolean(env.GEMINI_API_KEY), provider: "gemini" });
+export function onRequestGet({ request, env }) {
+  return json(request, env, { ready: Boolean(env.GEMINI_API_KEY), provider: "gemini" });
 }
 
-export function onRequestOptions() {
-  return new Response(null, { status: 204, headers: JSON_HEADERS });
+export function onRequestOptions({ request, env }) {
+  return new Response(null, { status: 204, headers: corsHeaders(request, env) });
 }

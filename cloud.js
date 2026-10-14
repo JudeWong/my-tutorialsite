@@ -90,6 +90,13 @@
     return session;
   }
 
+  async function refreshSession() {
+    if (!client) return null;
+    const refreshed = unwrap(await client.auth.refreshSession(), "Refresh session");
+    session = refreshed?.session || null;
+    return session;
+  }
+
   async function getProfile(userId = session?.user?.id) {
     if (!userId) return null;
     return unwrap(await requireClient().from("profiles").select("*").eq("id", userId).maybeSingle(), "Load profile") || null;
@@ -656,6 +663,7 @@
     isUuid,
     newUuid,
     getSession,
+    refreshSession,
     getProfile,
     normalizeProfile,
     signInTeacher,

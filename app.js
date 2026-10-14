@@ -1365,7 +1365,12 @@ async function requestChatFromGemini(apiKey, question) {
 
 async function cloudAuthorizationHeaders() {
   if (!Cloud?.enabled) return {};
-  const session = await Cloud.getSession();
+  let session = await Cloud.getSession();
+  const expiresSoon = Number(session?.expires_at) > 0
+    && Number(session.expires_at) <= Math.floor(Date.now() / 1000) + 60;
+  if ((!session?.access_token || expiresSoon) && Cloud.refreshSession) {
+    session = await Cloud.refreshSession().catch(() => session);
+  }
   return session?.access_token ? { Authorization: `Bearer ${session.access_token}` } : {};
 }
 
