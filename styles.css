@@ -19,12 +19,13 @@ body {
   margin: 0;
   color: var(--ink);
   background: var(--cream);
-  font-family: KaiTi, STKaiti, "楷体", serif;
+  font-family: Arial, "Noto Sans TC", "Microsoft JhengHei", "PingFang TC", sans-serif;
   -webkit-font-smoothing: antialiased;
 }
 button, select, input { font: inherit; }
 button { color: inherit; }
-[lang="en"], .section-kicker, .landing-eyebrow, .auth-kicker, code, pre { font-family: "Times New Roman", Times, serif !important; }
+[lang="en"], .section-kicker, .landing-eyebrow, .auth-kicker { font-family: Arial, "Noto Sans TC", sans-serif !important; }
+code, pre, kbd, samp { font-family: Consolas, "Courier New", monospace !important; }
 button:focus-visible, select:focus-visible, input:focus-visible { outline: 3px solid rgba(22, 119, 102, .25); outline-offset: 2px; }
 .screen-hidden { display: none !important; }
 html.session-restore-app #landing-page,
@@ -39,7 +40,7 @@ html.session-restore-app[data-session-role="student"] #student-view { display: b
 .landing-nav { height: 76px; padding: 0 clamp(24px, 6vw, 92px); display: flex; align-items: center; justify-content: space-between; position: relative; z-index: 5; border-bottom: 1px solid rgba(146, 190, 176, .12); }
 .dark-brand { display: flex; align-items: center; gap: 10px; color: #edf9f5; text-decoration: none; }
 .dark-brand > span { width: 36px; height: 36px; display: grid; place-items: center; border-radius: 9px; color: #08201a; background: #6fe1bc; font-weight: 900; box-shadow: 0 0 28px rgba(76, 227, 177, .2); }
-.dark-brand strong { font: 600 22px KaiTi, STKaiti, "楷体", serif; letter-spacing: 1px; }
+.dark-brand strong { font: 600 22px Arial, "Noto Sans TC", sans-serif; letter-spacing: 1px; }
 .landing-nav > div { display: flex; align-items: center; gap: 30px; }
 .landing-nav a:not(.dark-brand) { color: #b6c9c3; text-decoration: none; font-size: 14px; }
 .landing-nav button { border: 1px solid rgba(111, 225, 188, .45); border-radius: 7px; color: #b7f3df; background: transparent; padding: 10px 17px; font-size: 13px; cursor: pointer; }
@@ -88,7 +89,7 @@ html.session-restore-app[data-session-role="student"] #student-view { display: b
 }
 .brand { display: flex; align-items: center; gap: 12px; padding: 0 12px 34px; color: var(--ink); text-decoration: none; }
 .brand-mark { width: 39px; height: 39px; border-radius: 10px; display: grid; place-items: center; background: var(--green); color: white; font-weight: 800; box-shadow: 0 7px 14px rgba(13, 98, 83, .2); }
-.brand strong { display: block; font-family: KaiTi, STKaiti, "楷体", serif; font-size: 19px; letter-spacing: 1px; }
+.brand strong { display: block; font-family: Arial, "Noto Sans TC", sans-serif; font-size: 19px; letter-spacing: 1px; }
 .brand small { display: block; color: var(--muted); font-size: 10px; margin-top: 2px; letter-spacing: 1px; }
 .side-nav { display: grid; gap: 7px; }
 .nav-item { border: 0; background: transparent; border-radius: 9px; padding: 12px 14px; display: flex; align-items: center; gap: 12px; color: #697a75; cursor: pointer; text-align: left; }
@@ -127,7 +128,7 @@ html.session-restore-app[data-session-role="student"] #student-view { display: b
 @keyframes fade-in { from { opacity: 0; transform: translateY(5px); } to { opacity: 1; transform: none; } }
 .page-head { display: flex; align-items: end; justify-content: space-between; gap: 30px; margin-bottom: 32px; }
 .eyebrow, .section-kicker { margin: 0 0 8px; color: var(--green); font-size: 10px; font-weight: 800; letter-spacing: 1.7px; text-transform: uppercase; }
-h1, h2 { font-family: KaiTi, STKaiti, "楷体", serif; }
+h1, h2 { font-family: Arial, "Noto Sans TC", sans-serif; }
 .page-head h1 { margin: 0 0 9px; font-size: clamp(27px, 3vw, 39px); font-weight: 500; letter-spacing: -1px; }
 .page-head > div > p:last-child { margin: 0; color: var(--muted); font-size: 13px; }
 .primary-button, .secondary-button, .hero-button { border: 0; border-radius: 8px; padding: 12px 18px; cursor: pointer; font-weight: 700; font-size: 12px; transition: .2s; }
@@ -260,7 +261,7 @@ body { color:#f4f4f5; background:#08080a; }
 
 /* English typography */
 [lang="en"],.section-kicker,.landing-eyebrow,.auth-kicker,code,pre,.landing-section-label,.hero-index,.service-number,.service-copy span,.machine-head small,.machine-head strong,.machine-head b,.model-core,.paper-stack strong,.paper-stack small,.answer-terminal b,.answer-terminal p,.growth-avatar b,.growth-avatar span,.number-item strong,.chat-message>span,.level-chip,.inventory-level-tabs button,.avatar-body span,.brand-mark,.dark-brand>span,.advantage-strip article>span,.data-two span,.landing-nav a,.code-display strong{font-family:Arial,Helvetica,sans-serif!important}
-.section-kicker.ai-general-label{font-family:KaiTi,STKaiti,"楷体",serif!important}
+.section-kicker.ai-general-label{font-family:Arial,"Noto Sans TC",sans-serif!important}
 
 /* Light teacher and student workspaces */
 .app-shell,.main-content{color:#171719;background:#f4f4f1}.sidebar{color:#171719;border-color:#dededb;background:#fff}.brand{color:#171719}.brand small,.teacher-mini small{color:#76767c}.nav-item{color:#4d4d52}.nav-item:hover{background:#f2f2ef}.nav-item.active{color:#fff;background:#171719}.help-card{color:#171719;background:#f2eee8}.help-card p{color:#717176}.teacher-mini{color:#171719;border-color:#dededb}.topbar{border-color:#dededb;background:rgba(255,255,255,.94)}.mobile-brand{color:#171719}.account-role{color:#9c5319;background:#fff0e2}.logout-button{color:#666;border-color:#ddd}.icon-button:hover{background:#f0f0ed}.page-head>div>p:last-child{color:#66666c}.primary-button{color:#fff;background:#171719}.primary-button:hover{color:#fff;background:#f28a2f}.secondary-button{color:#171719;background:#e9e9e6}
@@ -322,7 +323,7 @@ html[lang="en"] body,html[lang="en"] button,html[lang="en"] input,html[lang="en"
 }
 
 body { color: var(--ink); background: var(--cream); }
-button, input, select, textarea { font-family: KaiTi, STKaiti, "楷体", serif; }
+button, input, select, textarea { font-family: Arial, "Noto Sans TC", sans-serif; }
 html[lang="en"] body, html[lang="en"] button, html[lang="en"] input, html[lang="en"] select, html[lang="en"] textarea,
 html[lang="en"] h1, html[lang="en"] h2, html[lang="en"] h3, html[lang="en"] p, html[lang="en"] a, html[lang="en"] label,
 html[lang="en"] .landing-section-label, html[lang="en"] .section-kicker { font-family: Arial, Helvetica, sans-serif !important; }
@@ -341,7 +342,7 @@ html[lang="en"] .landing-section-label, html[lang="en"] .section-kicker { font-f
   background: linear-gradient(135deg, #6d54e8, #a06bff); box-shadow: 0 9px 24px rgba(109,84,232,.25);
   font: 700 13px Arial, Helvetica, sans-serif;
 }
-.dark-brand strong { font: 700 21px KaiTi, STKaiti, "楷体", serif; letter-spacing: .5px; }
+.dark-brand strong { font: 700 21px Arial, "Noto Sans TC", sans-serif; letter-spacing: .5px; }
 .landing-nav > div { gap: clamp(15px, 2.4vw, 32px); }
 .landing-nav a:not(.dark-brand) { color: #504a63; font: 14px Arial, Helvetica, sans-serif; }
 .landing-nav a:not(.dark-brand):hover { color: var(--green); }
@@ -1128,7 +1129,7 @@ html.session-loading-active,html.session-loading-active body { overflow: hidden;
 .note-modal form { padding: 30px; }
 .note-fields { display: grid; gap: 18px; }
 .note-fields label { display: grid; gap: 8px; color: #514a65; font-size: 14px; font-weight: 700; }
-.note-fields input, .note-fields textarea { width: 100%; padding: 13px 14px; border: 1px solid #d9d3e6; border-radius: 12px; color: #211b39; background: #fff; font: 16px/1.65 KaiTi, STKaiti, "楷体", serif; }
+.note-fields input, .note-fields textarea { width: 100%; padding: 13px 14px; border: 1px solid #d9d3e6; border-radius: 12px; color: #211b39; background: #fff; font: 16px/1.65 Arial, "Noto Sans TC", sans-serif; }
 .note-fields textarea { min-height: 250px; resize: vertical; }
 .note-fields input:focus, .note-fields textarea:focus { border-color: #7657ef; outline: 3px solid rgba(109, 84, 232, .12); }
 
@@ -1881,4 +1882,18 @@ html.session-loading-active,html.session-loading-active body { overflow: hidden;
 .ai-online.offline i {
   background: #e5a126;
   box-shadow: 0 0 0 4px rgba(229, 161, 38, .13);
+}
+
+/* Final font guard keeps every UI glyph on the requested bilingual stack. */
+html:is(:lang(en), :lang(zh-Hans)) body,
+html:is(:lang(en), :lang(zh-Hans)) body *:not(:root) {
+  font-family: Arial, "Noto Sans TC", "Microsoft JhengHei", "PingFang TC", sans-serif !important;
+}
+html:is(:lang(en), :lang(zh-Hans)) body code:not(:root),
+html:is(:lang(en), :lang(zh-Hans)) body pre:not(:root),
+html:is(:lang(en), :lang(zh-Hans)) body kbd:not(:root),
+html:is(:lang(en), :lang(zh-Hans)) body samp:not(:root),
+html:is(:lang(en), :lang(zh-Hans)) body code *:not(:root),
+html:is(:lang(en), :lang(zh-Hans)) body pre *:not(:root) {
+  font-family: Consolas, "Courier New", monospace !important;
 }
