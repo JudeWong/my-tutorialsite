@@ -167,8 +167,8 @@
               <label>入学年份<select id="register-year" required></select></label>
             </div>
             <div class="auth-form-row">
-              <label>设置密码<input id="register-password" type="password" minlength="4" autocomplete="new-password" placeholder="至少 4 个字符" required /></label>
-              <label>确认密码<input id="register-password-confirm" type="password" minlength="4" autocomplete="new-password" placeholder="再次输入密码" required /></label>
+              <label>设置密码<input id="register-password" type="password" minlength="6" autocomplete="new-password" placeholder="至少 6 个字符" required /></label>
+              <label>确认密码<input id="register-password-confirm" type="password" minlength="6" autocomplete="new-password" placeholder="再次输入密码" required /></label>
             </div>
             <label>老师验证码<input id="register-code" type="text" inputmode="numeric" maxlength="6" placeholder="6 位数验证码" required /></label>
             <p class="code-help">验证码由老师端产生，每小时自动更换。</p>
@@ -647,7 +647,7 @@
           <label>班级<select id="edit-student-class" required></select></label>
           <label>入学年份<select id="edit-student-year" required></select></label>
           <label>账号状态<select id="edit-student-status"><option value="active">启用</option><option value="disabled">停用</option></select></label>
-          <label>重设密码<input id="edit-student-password" type="password" minlength="4" autocomplete="new-password" placeholder="留空则保留目前密码" /></label>
+          <label>重设密码<input id="edit-student-password" type="password" minlength="6" autocomplete="new-password" placeholder="留空则保留目前密码（至少 6 个字符）" /></label>
         </div>
         <p class="form-error" id="student-account-error"></p>
         <div class="modal-actions">
@@ -721,8 +721,8 @@
         <p class="modal-intro">为 Superadmin 设置新密码。修改后请使用新密码登入。</p>
         <div class="password-fields">
           <label>目前密码<input id="current-password" type="password" required /></label>
-          <label>新密码<input id="new-password" type="password" minlength="4" required /></label>
-          <label>确认新密码<input id="confirm-password" type="password" minlength="4" required /></label>
+          <label>新密码<input id="new-password" type="password" minlength="6" required /></label>
+          <label>确认新密码<input id="confirm-password" type="password" minlength="6" required /></label>
         </div>
         <p class="form-error" id="password-error"></p>
         <div class="modal-actions">

@@ -31,8 +31,11 @@ export async function onRequestPost({ request, env }) {
     const year = Number(body?.year);
     const password = String(body?.password || "");
     const code = String(body?.code || "").trim();
-    if (!isChineseName(name) || className.length < 2 || !Number.isInteger(year) || password.length < 4 || !/^\d{6}$/.test(code)) {
+    if (!isChineseName(name) || className.length < 2 || !Number.isInteger(year) || !/^\d{6}$/.test(code)) {
       return json(request, env, { error: "Registration details are incomplete or invalid." }, 400);
+    }
+    if (password.length < 6) {
+      return json(request, env, { error: "The password must contain at least 6 characters.", code: "WEAK_PASSWORD" }, 400);
     }
 
     const classes = await supabaseFetch(env, `/rest/v1/classes?class_name=eq.${encodeURIComponent(className)}&active=eq.true&select=id,class_name&limit=1`);
@@ -51,7 +54,10 @@ export async function onRequestPost({ request, env }) {
         body: { email, password, email_confirm: true, user_metadata: { full_name: name, class_name: className, year, role: "student", registration_code: code } }
       });
     } catch (error) {
-      if (error.status === 422 || /already|registered|exists/i.test(error.message)) {
+      const authCode = String(error?.data?.code || error?.data?.error_code || "").toLowerCase();
+      const duplicateAccount = ["email_exists", "user_already_exists"].includes(authCode)
+        || /already (?:been )?registered|already exists|user.*exists/i.test(error?.message || "");
+      if (duplicateAccount) {
         const existingUser = (await listAuthUsers(env)).find((user) => String(user?.email || "").toLowerCase() === email.toLowerCase());
         if (!existingUser?.id) {
           return json(request, env, { error: "This student account already exists. Use Existing Account to sign in.", code: "STUDENT_ALREADY_EXISTS" }, 409);

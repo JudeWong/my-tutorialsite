@@ -479,7 +479,7 @@ const UI_EN = Object.freeze({
   ,"AI 已设置，上传资料时会由 Gemini 理解内容并生成题目。": "AI is configured. Gemini will understand uploaded content and generate the questions."
   ,"设置密码": "Set Password"
   ,"确认密码": "Confirm Password"
-  ,"至少 4 个字符": "At least 4 characters"
+  ,"至少 6 个字符": "At least 6 characters"
   ,"再次输入密码": "Enter the password again"
   ,"资料类型": "Material Type"
   ,"历届试卷（辨识全部题目）": "Past Paper (Extract All Questions)"
@@ -3359,8 +3359,8 @@ async function saveStudentAccount(event) {
     error.textContent = localized("Select the student's class and enrollment year.", "请选择学生班级与入学年份。");
     return;
   }
-  if (newPassword && newPassword.length < 4) {
-    error.textContent = localized("The new password must contain at least 4 characters.", "新密码至少需要 4 个字符。");
+  if (newPassword && newPassword.length < 6) {
+    error.textContent = localized("The new password must contain at least 6 characters.", "新密码至少需要 6 个字符。");
     return;
   }
   if (students.some((item) => item.id !== student.id && item.name === name && item.className === className && item.year === year)) {
@@ -3899,8 +3899,8 @@ $("#student-register-form").addEventListener("submit", async (event) => {
     error.textContent = localized("Select a complete class name.", "请输入完整班级名称。");
     return;
   }
-  if (password.length < 4) {
-    error.textContent = localized("The password must contain at least 4 characters.", "密码至少需要 4 个字符。");
+  if (password.length < 6) {
+    error.textContent = localized("The password must contain at least 6 characters.", "密码至少需要 6 个字符。");
     return;
   }
   if (password !== passwordConfirmation) {
@@ -3946,6 +3946,11 @@ $("#student-register-form").addEventListener("submit", async (event) => {
               ? localized(
                 "The missing student record was restored. Ask the teacher to reset the password in Student Management, then use Existing Account to sign in.",
                 "缺失的学生资料已补回。请老师在学生管理中重设密码，再使用“已有账号”登入。"
+              )
+            : cloudError?.code === "WEAK_PASSWORD"
+              ? localized(
+                "The password must contain at least 6 characters.",
+                "密码至少需要 6 个字符。"
               )
             : cloudError?.message || localized("Cloud registration failed. Ask your teacher to check the connection.", "云端注册失败，请老师检查连接。 ");
     } finally {
@@ -4034,8 +4039,8 @@ $("#password-form").addEventListener("submit", async (event) => {
     error.textContent = localized("The current password is incorrect.", "目前密码不正确。");
     return;
   }
-  if (next.length < 4) {
-    error.textContent = localized("The new password must contain at least 4 characters.", "新密码至少需要 4 个字符。");
+  if (next.length < 6) {
+    error.textContent = localized("The new password must contain at least 6 characters.", "新密码至少需要 6 个字符。");
     return;
   }
   if (next !== confirmation) {
