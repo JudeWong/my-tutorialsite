@@ -1,4 +1,4 @@
-const CACHE_NAME = "personal-ai-shell-v67";
+const CACHE_NAME = "personal-ai-shell-v68";
 const CORE_ASSETS = [
   "./",
   "./index.html",
@@ -6,6 +6,7 @@ const CORE_ASSETS = [
   "./config.js",
   "./cloud.js",
   "./app.js",
+  "./arena.js",
   "./assets/vendor/supabase.js",
   "./manifest.webmanifest",
   "./assets/icons/icon.svg"

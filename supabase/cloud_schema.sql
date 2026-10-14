@@ -409,6 +409,101 @@ with check (
   exists (select 1 from public.chat_threads t where t.id = chat_messages.thread_id and (t.user_id = auth.uid() or public.is_teacher()))
 );
 
+-- Live 1v1 quiz battle rooms. The game is event-based so every answer,
+-- attack, combo and skill remains auditable and can be replayed after refresh.
+create table if not exists public.battle_rooms (
+  id uuid primary key default gen_random_uuid(),
+  room_code text not null unique,
+  teacher_id uuid not null references auth.users(id) on delete cascade,
+  class_name text,
+  assignment_id uuid references public.assignments(id) on delete set null,
+  status text not null default 'lobby' check (status in ('lobby','battle','finished','cancelled')),
+  started_at timestamptz,
+  duration_seconds integer not null default 180,
+  created_at timestamptz not null default now(),
+  updated_at timestamptz not null default now()
+);
+
+create table if not exists public.battle_players (
+  id uuid primary key default gen_random_uuid(),
+  room_id uuid not null references public.battle_rooms(id) on delete cascade,
+  student_id uuid not null references auth.users(id) on delete cascade,
+  display_name text not null,
+  class_name text,
+  status text not null default 'ready' check (status in ('ready','playing','left','finished')),
+  joined_at timestamptz not null default now(),
+  updated_at timestamptz not null default now(),
+  unique(room_id, student_id)
+);
+
+create table if not exists public.battle_events (
+  id uuid primary key default gen_random_uuid(),
+  room_id uuid not null references public.battle_rooms(id) on delete cascade,
+  player_id uuid not null references public.battle_players(id) on delete cascade,
+  round_number integer not null default 0,
+  event_type text not null default 'answer',
+  question_id uuid references public.questions(id) on delete set null,
+  is_correct boolean not null default false,
+  damage integer not null default 0,
+  effect text,
+  created_at timestamptz not null default now()
+);
+
+create index if not exists battle_rooms_code_idx on public.battle_rooms(room_code);
+create index if not exists battle_players_room_idx on public.battle_players(room_id, joined_at);
+create index if not exists battle_events_room_idx on public.battle_events(room_id, created_at);
+
+alter table public.battle_rooms enable row level security;
+alter table public.battle_players enable row level security;
+alter table public.battle_events enable row level security;
+grant select, insert, update on public.battle_rooms, public.battle_players, public.battle_events to authenticated;
+
+drop policy if exists battle_rooms_read on public.battle_rooms;
+drop policy if exists battle_rooms_teacher_write on public.battle_rooms;
+drop policy if exists battle_players_read on public.battle_players;
+drop policy if exists battle_players_write on public.battle_players;
+drop policy if exists battle_events_read on public.battle_events;
+drop policy if exists battle_events_insert on public.battle_events;
+
+create policy battle_rooms_read on public.battle_rooms for select to authenticated
+using (
+  teacher_id = auth.uid()
+  or exists (select 1 from public.profiles p where p.id = auth.uid() and p.role = 'student' and (battle_rooms.class_name is null or p.class_name = battle_rooms.class_name))
+);
+create policy battle_rooms_teacher_write on public.battle_rooms for all to authenticated
+using (teacher_id = auth.uid() or public.is_teacher())
+with check (teacher_id = auth.uid() or public.is_teacher());
+
+create policy battle_players_read on public.battle_players for select to authenticated
+using (student_id = auth.uid() or public.is_teacher() or exists (select 1 from public.battle_rooms r where r.id = battle_players.room_id and r.teacher_id = auth.uid()));
+create policy battle_players_write on public.battle_players for all to authenticated
+using (student_id = auth.uid() or public.is_teacher())
+with check (student_id = auth.uid() or public.is_teacher());
+
+create policy battle_events_read on public.battle_events for select to authenticated
+using (
+  public.is_teacher()
+  or exists (
+    select 1 from public.battle_players viewer
+    where viewer.room_id = battle_events.room_id and viewer.student_id = auth.uid()
+  )
+);
+create policy battle_events_insert on public.battle_events for insert to authenticated
+with check (exists (select 1 from public.battle_players bp where bp.id = battle_events.player_id and (bp.student_id = auth.uid() or public.is_teacher())));
+
+do $$ begin
+  alter publication supabase_realtime add table public.battle_rooms;
+exception when duplicate_object or undefined_object then null;
+end $$;
+do $$ begin
+  alter publication supabase_realtime add table public.battle_players;
+exception when duplicate_object or undefined_object then null;
+end $$;
+do $$ begin
+  alter publication supabase_realtime add table public.battle_events;
+exception when duplicate_object or undefined_object then null;
+end $$;
+
 insert into storage.buckets (id, name, public)
 values ('learning-materials', 'learning-materials', false)
 on conflict (id) do update set public = false;

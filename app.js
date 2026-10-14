@@ -1359,7 +1359,7 @@ function updateAccountUI() {
 }
 
 function restoreSessionView(session, { silentQuiz = false } = {}) {
-  const requestedView = ["dashboard", "library", "notes", "classes", "insights", "quiz"].includes(session?.view)
+  const requestedView = ["dashboard", "library", "notes", "classes", "arena", "insights", "quiz"].includes(session?.view)
     ? session.view
     : "dashboard";
   if (requestedView === "quiz" && role === "student") {
@@ -2436,6 +2436,14 @@ function renderWorkspaceView(name) {
       action.dataset.action = "start-practice";
       content.innerHTML = `<div class="workspace-metrics"><article><strong>LV. ${level}</strong><span>${localized("Current level", "目前等级")}</span></article><article><strong>${completed}/${assignments.length}</strong><span>${localized("Assignments completed", "已完成作业")}</span></article><article><strong>${analytics.totalQuestions ? `${analytics.accuracy}%` : "—"}</strong><span>${localized("Answer accuracy", "答题正确率")}</span></article></div><section class="panel workspace-panel"><h2>${localized("Learning Milestones", "学习里程碑")}</h2><div class="milestone-list"><span class="done">✓ ${localized("Registered an account", "完成账号注册")}</span>${completed ? `<span class="done">✓ ${localized(`${completed} assignments completed`, `完成 ${completed} 份练习`)}</span>` : ""}<span>${localized("Complete assignments to unlock more milestones", "完成练习以解锁更多里程碑")}</span></div></section>`;
     }
+  } else if (name === "arena") {
+    title.textContent = localized("Battle Arena", "联机对战");
+    description.textContent = role === "teacher"
+      ? localized("Open a classroom room and let the system pair students for a live 1v1 quiz battle.", "开启课堂房间，让系统自动把学生配成 1 对 1 答题对战。")
+      : localized("Join your teacher's room, answer quickly, and use correct answers to attack your opponent.", "输入老师提供的验证码加入房间，用正确答案攻击对手。 ");
+    action.hidden = true;
+    content.innerHTML = `<section class="arena-workspace-panel panel"><div id="arena-root" class="arena-root" data-role="${role}"></div></section>`;
+    if (globalThis.personalAIArena?.mount) globalThis.personalAIArena.mount("#arena-root");
   } else {
     title.textContent = role === "teacher" ? localized("Learning Analytics", "学习分析") : localized("Learning Report", "学习报告");
     description.textContent = role === "teacher"
@@ -2500,11 +2508,11 @@ function setRole(nextRole) {
 function updateNavigationLabels() {
   $$(".nav-item span:last-child").forEach((span, index) => {
     if (role === "student") span.textContent = currentLanguage === "en"
-      ? ["Learning Home", "Practice Library", "Teacher Notes", "My Progress", "Learning Report"][index]
-      : ["学习首页", "练习题库", "老师笔记", "我的进度", "学习报告"][index];
+      ? ["Learning Home", "Practice Library", "Teacher Notes", "My Progress", "Battle Arena", "Learning Report"][index]
+      : ["学习首页", "练习题库", "老师笔记", "我的进度", "联机对战", "学习报告"][index];
     else span.textContent = currentLanguage === "en"
-      ? ["Overview", "Learning Materials", "Teacher Notes", "Class Progress", "Learning Analytics"][index]
-      : ["总览", "学习资料", "教师笔记", "班级进度", "学习分析"][index];
+      ? ["Overview", "Learning Materials", "Teacher Notes", "Class Progress", "Battle Arena", "Learning Analytics"][index]
+      : ["总览", "学习资料", "教师笔记", "班级进度", "联机对战", "学习分析"][index];
   });
   $$(".mobile-nav-label").forEach((span, index) => {
     if (role === "student") span.textContent = currentLanguage === "en"
@@ -4555,6 +4563,32 @@ document.addEventListener("toggle", (event) => {
   if (details.open) openTeacherAssignmentProgressIds.add(details.dataset.assignmentProgressId);
   else openTeacherAssignmentProgressIds.delete(details.dataset.assignmentProgressId);
 }, true);
+
+globalThis.personalAIAppContext = () => ({
+  role,
+  profile: cloudProfile || activeStudent || null,
+  cloudEnabled: Boolean(Cloud?.enabled && cloudProfile),
+  assignments: assignments.map((assignment) => ({
+    id: assignment.id,
+    title: assignment.title,
+    titleEn: assignment.titleEn,
+    questionIds: assignment.questionIds || [],
+    questionCount: assignment.questionCount || assignment.questionIds?.length || 0,
+    classId: assignment.classId || "",
+    className: assignment.className || ""
+  })),
+  questions: questionBank.map((question) => ({
+    id: question.id,
+    title: question.title,
+    options: question.options || [],
+    correct: question.correct,
+    type: question.type || "mcq",
+    correctAnswer: question.correctAnswer || "",
+    acceptedAnswers: question.acceptedAnswers || [],
+    topic: question.topic || "综合试卷"
+  })),
+  classes: getClasses()
+});
 
 renderPapers();
 renderAssignments();

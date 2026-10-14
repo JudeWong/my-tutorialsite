@@ -695,6 +695,127 @@
     return { id: submission.id, status: "completed", score, totalQuestions: questions.length };
   }
 
+  function mapBattleRoom(row) {
+    if (!row) return null;
+    return {
+      id: row.id,
+      code: row.room_code || "",
+      teacherId: row.teacher_id || "",
+      className: row.class_name || "",
+      assignmentId: row.assignment_id || "",
+      status: row.status || "lobby",
+      startedAt: row.started_at || "",
+      durationSeconds: Number(row.duration_seconds) || 180,
+      createdAt: row.created_at || "",
+      updatedAt: row.updated_at || ""
+    };
+  }
+
+  function mapBattlePlayer(row) {
+    return {
+      id: row.id,
+      roomId: row.room_id,
+      studentId: row.student_id,
+      name: row.display_name || "学生",
+      className: row.class_name || "",
+      joinedAt: row.joined_at || row.created_at || "",
+      status: row.status || "ready"
+    };
+  }
+
+  function mapBattleEvent(row) {
+    return {
+      id: row.id,
+      roomId: row.room_id,
+      playerId: row.player_id,
+      round: Number(row.round_number) || 0,
+      type: row.event_type || "answer",
+      questionId: row.question_id || "",
+      correct: row.is_correct === true,
+      damage: Number(row.damage) || 0,
+      effect: row.effect || "",
+      createdAt: row.created_at || ""
+    };
+  }
+
+  async function loadBattleRoom(roomId) {
+    if (!session?.user?.id || !isUuid(roomId)) return null;
+    const db = requireClient();
+    const room = unwrap(await db.from("battle_rooms").select("*").eq("id", roomId).maybeSingle(), "Load battle room");
+    if (!room) return null;
+    const players = unwrap(await db.from("battle_players").select("*").eq("room_id", roomId).order("joined_at", { ascending: true }), "Load battle players") || [];
+    const events = unwrap(await db.from("battle_events").select("*").eq("room_id", roomId).order("created_at", { ascending: true }), "Load battle events") || [];
+    return { room: mapBattleRoom(room), players: players.map(mapBattlePlayer), events: events.map(mapBattleEvent) };
+  }
+
+  function createBattleCode() {
+    const values = new Uint32Array(1);
+    crypto.getRandomValues(values);
+    return String(100000 + (values[0] % 900000));
+  }
+
+  async function createBattleRoom({ className = "", assignmentId = "" } = {}) {
+    if (!session?.user?.id) throw new Error("Please sign in before creating a battle room.");
+    const db = requireClient();
+    const row = unwrap(await db.from("battle_rooms").insert({
+      room_code: createBattleCode(),
+      teacher_id: session.user.id,
+      class_name: className || null,
+      assignment_id: isUuid(assignmentId) ? assignmentId : null,
+      status: "lobby",
+      duration_seconds: 180
+    }).select("*").single(), "Create battle room");
+    return await loadBattleRoom(row.id);
+  }
+
+  async function joinBattleRoom(code) {
+    if (!session?.user?.id) throw new Error("Please sign in before joining a battle room.");
+    const db = requireClient();
+    const room = unwrap(await db.from("battle_rooms").select("*").eq("room_code", String(code || "").trim()).eq("status", "lobby").maybeSingle(), "Find battle room");
+    if (!room) throw new Error("Battle room not found or it has already started.");
+    const profile = await getProfile(session.user.id);
+    if (room.class_name && profile?.class_name !== room.class_name) throw new Error("This room is only open to the selected class.");
+    const existing = unwrap(await db.from("battle_players").select("id").eq("room_id", room.id).eq("student_id", session.user.id).maybeSingle(), "Check battle player");
+    if (!existing) {
+      unwrap(await db.from("battle_players").insert({ room_id: room.id, student_id: session.user.id, display_name: profile?.full_name || "学生", class_name: profile?.class_name || "", status: "ready" }), "Join battle room");
+    }
+    return await loadBattleRoom(room.id);
+  }
+
+  async function startBattleRoom(roomId) {
+    if (!session?.user?.id || !isUuid(roomId)) return null;
+    const db = requireClient();
+    const players = unwrap(await db.from("battle_players").select("id").eq("room_id", roomId), "Count battle players") || [];
+    if (players.length < 2 || players.length % 2 !== 0) throw new Error("An even number of players is required to start the battle.");
+    unwrap(await db.from("battle_rooms").update({ status: "battle", started_at: new Date().toISOString(), updated_at: new Date().toISOString() }).eq("id", roomId).eq("teacher_id", session.user.id), "Start battle room");
+    return await loadBattleRoom(roomId);
+  }
+
+  async function submitBattleEvent({ roomId, playerId, round = 0, type = "answer", questionId = "", correct = false, damage = 0, effect = "" } = {}) {
+    if (!session?.user?.id || !isUuid(roomId) || !isUuid(playerId)) return null;
+    const row = unwrap(await requireClient().from("battle_events").insert({
+      room_id: roomId,
+      player_id: playerId,
+      round_number: Number(round) || 0,
+      event_type: type,
+      question_id: isUuid(questionId) ? questionId : null,
+      is_correct: Boolean(correct),
+      damage: Math.max(0, Number(damage) || 0),
+      effect: String(effect || "")
+    }).select("*").single(), "Save battle answer");
+    return mapBattleEvent(row);
+  }
+
+  function subscribeToBattleRoom(roomId, callback) {
+    if (!client || !isUuid(roomId)) return () => {};
+    const channel = client.channel(`battle-room-${roomId}`)
+      .on("postgres_changes", { event: "*", schema: "public", table: "battle_rooms", filter: `id=eq.${roomId}` }, callback)
+      .on("postgres_changes", { event: "*", schema: "public", table: "battle_players", filter: `room_id=eq.${roomId}` }, callback)
+      .on("postgres_changes", { event: "*", schema: "public", table: "battle_events", filter: `room_id=eq.${roomId}` }, callback)
+      .subscribe();
+    return () => { void client.removeChannel(channel); };
+  }
+
   function subscribeToProgress(callback) {
     if (!client) return () => {};
     if (progressChannel) {
@@ -865,6 +986,12 @@
     deleteNote,
     saveQuizProgress,
     saveSubmission,
+    loadBattleRoom,
+    createBattleRoom,
+    joinBattleRoom,
+    startBattleRoom,
+    submitBattleEvent,
+    subscribeToBattleRoom,
     subscribeToProgress,
     saveChatConversation,
     getRegistrationCode,
