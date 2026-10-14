@@ -827,11 +827,28 @@ async function activateCloudProfile(profile, { migrateLocal = true } = {}) {
   return true;
 }
 
+let sessionLoadingHideTimer = 0;
+
+function showSessionLoading(titleEn, titleZh, detailEn, detailZh) {
+  const loader = $("#session-loading");
+  if (!loader) return;
+  clearTimeout(sessionLoadingHideTimer);
+  const title = loader.querySelector(".session-loading-copy strong");
+  const detail = loader.querySelector(".session-loading-copy span");
+  const localizedTitle = localized(titleEn, titleZh);
+  if (title) title.textContent = localizedTitle;
+  if (detail) detail.textContent = localized(detailEn, detailZh);
+  loader.setAttribute("aria-label", localizedTitle);
+  loader.hidden = false;
+  loader.classList.remove("is-hiding");
+}
+
 function hideSessionLoading() {
   const loader = $("#session-loading");
   if (!loader || loader.hidden) return;
+  clearTimeout(sessionLoadingHideTimer);
   loader.classList.add("is-hiding");
-  setTimeout(() => { loader.hidden = true; }, 260);
+  sessionLoadingHideTimer = setTimeout(() => { loader.hidden = true; }, 260);
 }
 
 async function initializeAppSession() {
@@ -3851,6 +3868,12 @@ $("#teacher-login-form").addEventListener("submit", async (event) => {
   const submitButton = event.currentTarget.querySelector("button[type='submit']");
   if (Cloud?.enabled) {
     submitButton.disabled = true;
+    showSessionLoading(
+      "Signing in to the teacher portal",
+      "正在登入老师端",
+      "Checking your account and loading cloud learning data…",
+      "正在验证账号并载入云端学习资料……"
+    );
     try {
       const profile = await Cloud.signInTeacher(email, password);
       await activateCloudProfile(profile);
@@ -3870,6 +3893,7 @@ $("#teacher-login-form").addEventListener("submit", async (event) => {
           : localized("The cloud email or password is incorrect.", "云端账号或密码不正确，请重新检查。");
     } finally {
       submitButton.disabled = false;
+      hideSessionLoading();
     }
     return;
   }
@@ -3919,6 +3943,12 @@ $("#student-register-form").addEventListener("submit", async (event) => {
   if (Cloud?.enabled) {
     const submitButton = event.currentTarget.querySelector("button[type='submit']");
     submitButton.disabled = true;
+    showSessionLoading(
+      "Creating your student account",
+      "正在建立学生账号",
+      "Verifying your registration details and preparing your learning space…",
+      "正在验证注册资料并准备学习空间……"
+    );
     try {
       const student = await Cloud.registerStudent({ name, className, year, password, code });
       await activateCloudProfile(student, { migrateLocal: false });
@@ -3955,6 +3985,7 @@ $("#student-register-form").addEventListener("submit", async (event) => {
             : cloudError?.message || localized("Cloud registration failed. Ask your teacher to check the connection.", "云端注册失败，请老师检查连接。 ");
     } finally {
       submitButton.disabled = false;
+      hideSessionLoading();
     }
     return;
   }
@@ -3976,6 +4007,12 @@ $("#student-login-form").addEventListener("submit", async (event) => {
   if (Cloud?.enabled) {
     const submitButton = event.currentTarget.querySelector("button[type='submit']");
     submitButton.disabled = true;
+    showSessionLoading(
+      "Signing in to your learning space",
+      "正在登入学习空间",
+      "Checking your account and restoring your learning progress…",
+      "正在验证账号并恢复学习进度……"
+    );
     try {
       const student = await Cloud.signInStudent(name, className, year, password);
       await activateCloudProfile(student, { migrateLocal: false });
@@ -3993,6 +4030,7 @@ $("#student-login-form").addEventListener("submit", async (event) => {
           : localized("Student account details or password are incorrect.", "学生账号资料或密码不正确。");
     } finally {
       submitButton.disabled = false;
+      hideSessionLoading();
     }
     return;
   }
