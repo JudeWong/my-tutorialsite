@@ -241,6 +241,7 @@ const UI_EN = Object.freeze({
   "最近整理的考题": "Recently Organized Papers",
   "查看全部": "View All",
   "查看学习报告": "View Learning Report",
+  "查看完整分析": "View Full Analytics",
   "全部": "All",
   "程序设计": "Programming",
   "数据库": "Database",

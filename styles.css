@@ -859,6 +859,18 @@ html[lang="en"] .landing-section-label, html[lang="en"] .section-kicker { font-f
   padding: 0;
 }
 
+.performance-heading-actions {
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 10px;
+  min-width: 0;
+}
+
+.performance-heading-actions .text-button {
+  white-space: nowrap;
+}
+
 @media (max-width: 760px) {
   body.app-active {
     padding-bottom: calc(70px + env(safe-area-inset-bottom));
@@ -887,14 +899,10 @@ html[lang="en"] .landing-section-label, html[lang="en"] .section-kicker { font-f
   }
 
   .mobile-nav-right {
-    grid-template-columns: repeat(3, minmax(0, 1fr));
-  }
-
-  .student-app .mobile-nav-right {
     grid-template-columns: repeat(2, minmax(0, 1fr));
   }
 
-  .student-app .mobile-nav-right [data-view="insights"] {
+  .mobile-nav .mobile-nav-right [data-view="insights"] {
     display: none;
   }
 
@@ -928,16 +936,34 @@ html[lang="en"] .landing-section-label, html[lang="en"] .section-kicker { font-f
   }
 
   .mobile-nav > .mobile-add {
+    flex: none;
     width: 46px;
     min-width: 46px;
     height: 46px;
+    min-height: 46px;
+    aspect-ratio: 1 / 1;
     justify-self: center;
     align-self: start;
     margin-top: -4px;
     padding: 0;
+    border-radius: 50% !important;
+    box-sizing: border-box;
+    display: grid;
+    place-items: center;
     transform: translateY(-7px);
     font-size: 25px;
     line-height: 1;
+  }
+}
+
+@media (max-width: 560px) {
+  .performance-heading-actions {
+    flex-wrap: wrap;
+    gap: 6px;
+  }
+
+  .performance-heading-actions .text-button {
+    font-size: 12px;
   }
 }
 
