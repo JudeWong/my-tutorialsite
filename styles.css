@@ -613,6 +613,8 @@ html[lang="en"] .landing-section-label, html[lang="en"] .section-kicker { font-f
 .workspace-panel { padding: 28px; }
 .workspace-panel > h2 { margin: 0 0 20px; font-size: 24px; }
 .workspace-summary { display: flex; align-items: baseline; gap: 12px; margin-bottom: 20px; }
+.workspace-category-filters { margin: 0 0 22px; padding-bottom: 8px; }
+.upload-classification-options { grid-template-columns: 1fr; }
 .workspace-summary strong { color: #5d43d5; font-size: 42px; }
 .workspace-summary span { color: #827b96; font-size: 14px; }
 .workspace-table { display: grid; }

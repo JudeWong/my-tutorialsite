@@ -42,23 +42,51 @@ const TOPIC_ZH = Object.freeze({
   "Hardware": "硬件"
 });
 const LEVEL_ZH = Object.freeze({ Basic: "基础", Intermediate: "中等", Advanced: "进阶" });
+const MAIN_CATEGORIES = Object.freeze(["高一", "高二", "高三", "初中"]);
+const MAIN_CATEGORY_EN = Object.freeze({ "高一": "Senior 1", "高二": "Senior 2", "高三": "Senior 3", "初中": "Junior Secondary" });
+const SUBJECTS = Object.freeze(["高中资讯科技", "初中电脑与资讯工艺"]);
+const SUBJECT_EN = Object.freeze({ "高中资讯科技": "Senior Information Technology", "初中电脑与资讯工艺": "Junior Computer and Information Technology" });
 
-papers = papers.map((paper, index) => ({
-  id: paper.id || createRecordId("paper"),
-  title: paper.title || paper.fileName || "Untitled Paper",
-  titleEn: paper.titleEn || paper.title || paper.fileName || "Untitled Paper",
-  year: String(paper.year || new Date().getFullYear()),
-  topic: TOPIC_ZH[paper.topic] || paper.topic || "综合试卷",
-  topicEn: paper.topicEn || TOPIC_EN[TOPIC_ZH[paper.topic] || paper.topic] || "General Paper",
-  count: Number(paper.count) || 0,
-  status: paper.status || "待校对",
-  statusEn: paper.statusEn || "Needs review",
-  fileName: paper.fileName || "",
-  fileSize: Number(paper.fileSize) || 0,
-  materialType: paper.materialType === "teaching-material" ? "teaching-material" : "past-paper",
-  requestedQuestionCount: Number(paper.requestedQuestionCount) || 0,
-  createdAt: paper.createdAt || new Date().toISOString()
-}));
+function normalizeMainCategory(value, subject = "") {
+  const category = String(value || "").trim();
+  if (MAIN_CATEGORIES.includes(category)) return category;
+  return subject === "初中电脑与资讯工艺" ? "初中" : "高一";
+}
+
+function normalizeSubject(value, mainCategory = "") {
+  const subject = String(value || "").trim();
+  if (SUBJECTS.includes(subject)) return subject;
+  return mainCategory === "初中" ? "初中电脑与资讯工艺" : "高中资讯科技";
+}
+
+function normalizePaperRecord(paper) {
+  const storedSubject = paper.subject || (SUBJECTS.includes(paper.topicEn) ? paper.topicEn : "");
+  const mainCategory = normalizeMainCategory(paper.mainCategory || paper.topic, storedSubject);
+  const subject = normalizeSubject(storedSubject, mainCategory);
+  return {
+    ...paper,
+    id: paper.id || createRecordId("paper"),
+    title: paper.title || paper.fileName || "Untitled Paper",
+    titleEn: paper.titleEn || paper.title || paper.fileName || "Untitled Paper",
+    year: String(paper.year || new Date().getFullYear()),
+    mainCategory,
+    mainCategoryEn: MAIN_CATEGORY_EN[mainCategory],
+    subject,
+    subjectEn: SUBJECT_EN[subject],
+    topic: mainCategory,
+    topicEn: MAIN_CATEGORY_EN[mainCategory],
+    count: Number(paper.count) || 0,
+    status: paper.status || "待校对",
+    statusEn: paper.statusEn || "Needs review",
+    fileName: paper.fileName || "",
+    fileSize: Number(paper.fileSize) || 0,
+    materialType: paper.materialType === "teaching-material" ? "teaching-material" : "past-paper",
+    requestedQuestionCount: Number(paper.requestedQuestionCount) || 0,
+    createdAt: paper.createdAt || new Date().toISOString()
+  };
+}
+
+papers = papers.map(normalizePaperRecord);
 
 teacherNotes = teacherNotes
   .filter((note) => note && typeof note === "object" && String(note.title || "").trim() && String(note.content || "").trim())
@@ -130,6 +158,7 @@ let aiReplyTimer;
 let aiConversation = [];
 let activeWorkspaceView = null;
 let activePaperFilter = "全部";
+let activeLibraryCategoryFilter = "全部";
 let isGeneratingQuestions = false;
 let resumeUploadAfterAISetup = false;
 let cloudProfile = null;
@@ -346,6 +375,13 @@ const UI_EN = Object.freeze({
   "支持 PDF、JPG、PNG；每个文件不超过 25MB": "Supports PDF, JPG, and PNG up to 25MB each",
   "考试年份": "Exam Year",
   "主要分类": "Main Category",
+  "科系": "Subject",
+  "高一": "Senior 1",
+  "高二": "Senior 2",
+  "高三": "Senior 3",
+  "初中": "Junior Secondary",
+  "高中资讯科技": "Senior Information Technology",
+  "初中电脑与资讯工艺": "Junior Computer and Information Technology",
   "综合试卷": "General Paper",
   "电脑网络": "Computer Networking",
   "取消": "Cancel",
@@ -781,7 +817,7 @@ function readLocalCloudMigrationSnapshot() {
 }
 
 function applyCloudSnapshot(snapshot) {
-  papers = snapshot.papers || [];
+  papers = (snapshot.papers || []).map(normalizePaperRecord);
   questionBank = snapshot.questions || [];
   assignments = snapshot.assignments || [];
   teacherNotes = snapshot.notes || [];
@@ -1305,15 +1341,38 @@ function startCodeTimer() {
   codeTimer = setInterval(updateVerificationCode, 1000);
 }
 
+function getPaperMainCategory(paper) {
+  return normalizeMainCategory(paper?.mainCategory || paper?.topic, paper?.subject);
+}
+
+function getPaperSubject(paper) {
+  return normalizeSubject(paper?.subject, getPaperMainCategory(paper));
+}
+
+function getPaperClassificationLabel(paper) {
+  const mainCategory = getPaperMainCategory(paper);
+  const subject = getPaperSubject(paper);
+  return currentLanguage === "en"
+    ? `${MAIN_CATEGORY_EN[mainCategory]} · ${SUBJECT_EN[subject]}`
+    : `${mainCategory} · ${subject}`;
+}
+
+function categoryFilterButtons(activeFilter, attribute = "data-library-category") {
+  return ["全部", ...MAIN_CATEGORIES].map((category) => {
+    const label = category === "全部" ? localized("All", "全部") : localized(MAIN_CATEGORY_EN[category], category);
+    return `<button type="button" class="filter ${category === activeFilter ? "active" : ""}" ${attribute}="${escapeHTML(category)}">${escapeHTML(label)}</button>`;
+  }).join("");
+}
+
 function renderPapers(filter = "全部") {
   activePaperFilter = filter;
-  const topicFilter = filter === "网络" ? "电脑网络" : filter;
-  const visible = filter === "全部" ? papers : papers.filter((p) => p.topic === topicFilter || (filter === "硬件" && p.topic === "综合试卷"));
+  $$(".question-panel .filter[data-filter]").forEach((button) => button.classList.toggle("active", button.dataset.filter === filter));
+  const visible = filter === "全部" ? papers : papers.filter((paper) => getPaperMainCategory(paper) === filter);
   $("#paper-list").innerHTML = visible.map((paper) => `
     <article class="paper-row">
       <div class="paper-year">${paper.year}</div>
       <div class="paper-info"><strong>${escapeHTML(currentLanguage === "en" ? paper.titleEn : paper.title)}</strong><small>${paper.count} ${localized("questions", "道题目")} · ${escapeHTML(currentLanguage === "en" ? paper.statusEn : paper.status)}</small></div>
-      <div class="paper-meta"><span>${escapeHTML(currentLanguage === "en" ? paper.topicEn : paper.topic)}</span><button data-paper-id="${escapeHTML(paper.id)}">${localized("Edit Material →", "编辑资料 →")}</button></div>
+      <div class="paper-meta"><span>${escapeHTML(getPaperClassificationLabel(paper))}</span><button data-paper-id="${escapeHTML(paper.id)}">${localized("Edit Material →", "编辑资料 →")}</button></div>
     </article>`).join("") || `<div class="data-empty"><strong>${localized("No learning materials uploaded", "尚未上传学习资料")}</strong><p>${localized("Upload a paper, handout, image, or document to generate interactive questions.", "上传试卷、讲义、图片或文件即可生成互动题目。")}</p><button type="button" data-empty-upload>${localized("Upload Learning Material", "上传学习资料")}</button></div>`;
   renderTeacherMetrics();
   refreshLanguage();
@@ -1987,6 +2046,12 @@ function renderWorkspaceView(name) {
   action.dataset.action = "";
 
   if (name === "library") {
+    const visiblePapers = activeLibraryCategoryFilter === "全部"
+      ? papers
+      : papers.filter((paper) => getPaperMainCategory(paper) === activeLibraryCategoryFilter);
+    const visibleAssignments = assignments.map((item, index) => ({ item, index, paper: papers.find((paper) => paper.id === item.paperId) }))
+      .filter(({ paper }) => activeLibraryCategoryFilter === "全部" || (paper && getPaperMainCategory(paper) === activeLibraryCategoryFilter));
+    const categoryFilters = `<div class="filters workspace-category-filters" aria-label="${localized("Filter by main category", "按主要分类筛选")}">${categoryFilterButtons(activeLibraryCategoryFilter)}</div>`;
     title.textContent = localized("Learning Materials", "学习资料题库");
     description.textContent = role === "teacher"
       ? localized("Review uploaded materials, edit their details, or generate more question sets.", "查看已上传资料、编辑内容，或继续生成更多题目。")
@@ -1994,14 +2059,16 @@ function renderWorkspaceView(name) {
     action.textContent = role === "teacher" ? localized("＋ Upload Material", "＋ 上传资料") : localized("Start Practice →", "开始练习 →");
     action.dataset.action = role === "teacher" ? "upload" : "start-practice";
     content.innerHTML = role === "teacher" ? `
+      ${categoryFilters}
       <section class="panel workspace-panel">
-        <div class="workspace-summary"><strong>${papers.length}</strong><span>${localized("materials uploaded", "份资料已上传")}</span></div>
+        <div class="workspace-summary"><strong>${visiblePapers.length}</strong><span>${localized("materials in this category", "份此分类资料")}</span></div>
         <div class="workspace-table" role="table">
-          ${papers.length ? papers.map((paper) => `<article role="row"><span class="workspace-year">${escapeHTML(paper.year)}</span><div><strong>${escapeHTML(currentLanguage === "en" ? paper.titleEn : paper.title)}</strong><small>${escapeHTML(currentLanguage === "en" ? paper.topicEn : paper.topic)} · ${paper.count} ${localized("questions", "题")}</small></div><span class="status-pill">${escapeHTML(currentLanguage === "en" ? paper.statusEn : paper.status)}</span><button type="button" data-workspace-paper-id="${escapeHTML(paper.id)}">${localized("Edit Material", "编辑资料")}</button></article>`).join("") : `<div class="data-empty"><strong>${localized("No learning materials uploaded", "尚未上传学习资料")}</strong><p>${localized("Upload your first paper, handout, or document to generate questions.", "上传第一份试卷、讲义或文件以生成题目。")}</p></div>`}
+          ${visiblePapers.length ? visiblePapers.map((paper) => `<article role="row"><span class="workspace-year">${escapeHTML(paper.year)}</span><div><strong>${escapeHTML(currentLanguage === "en" ? paper.titleEn : paper.title)}</strong><small>${escapeHTML(getPaperClassificationLabel(paper))} · ${paper.count} ${localized("questions", "题")}</small></div><span class="status-pill">${escapeHTML(currentLanguage === "en" ? paper.statusEn : paper.status)}</span><button type="button" data-workspace-paper-id="${escapeHTML(paper.id)}">${localized("Edit Material", "编辑资料")}</button></article>`).join("") : `<div class="data-empty"><strong>${localized("No materials in this category", "此分类尚无学习资料")}</strong><p>${localized("Choose another category or upload a new material.", "请选择其他分类或上传新资料。")}</p></div>`}
         </div>
       </section>` : `
+      ${categoryFilters}
       <div class="practice-grid">
-        ${assignments.length ? assignments.map((item, index) => `<article class="panel practice-card"><span>${escapeHTML(item.icon)}</span><small>${item.done ? localized("COMPLETED", "已完成") : localized("READY", "可开始")}</small><h2>${escapeHTML(currentLanguage === "en" ? item.titleEn : item.title)}</h2><p>${escapeHTML(currentLanguage === "en" ? item.detailEn : item.detail)}</p><button type="button" data-start-assignment="${index}">${item.done ? localized("Review Answers", "查看解析") : localized("Start Practice", "开始练习")}</button></article>`).join("") : `<div class="data-empty"><strong>${localized("No assignments yet", "尚未布置练习")}</strong><p>${localized("Teacher assignments will appear here.", "老师建立练习后会显示在这里。")}</p></div>`}
+        ${visibleAssignments.length ? visibleAssignments.map(({ item, index, paper }) => `<article class="panel practice-card"><span>${escapeHTML(item.icon)}</span><small>${paper ? escapeHTML(getPaperClassificationLabel(paper)) : (item.done ? localized("COMPLETED", "已完成") : localized("READY", "可开始"))}</small><h2>${escapeHTML(currentLanguage === "en" ? item.titleEn : item.title)}</h2><p>${escapeHTML(currentLanguage === "en" ? item.detailEn : item.detail)}</p><button type="button" data-start-assignment="${index}">${item.done ? localized("Review Answers", "查看解析") : localized("Start Practice", "开始练习")}</button></article>`).join("") : `<div class="data-empty"><strong>${localized("No assignments in this category", "此分类尚无练习")}</strong><p>${localized("Choose another main category to continue.", "请选择其他主要分类继续学习。")}</p></div>`}
       </div>`;
   } else if (name === "notes") {
     title.textContent = localized("Teacher Notes", "教师笔记");
@@ -2111,6 +2178,13 @@ function getUploadGenerationOptions() {
   };
 }
 
+function syncSubjectWithMainCategory(categorySelectId, subjectSelectId) {
+  const category = $(categorySelectId)?.value;
+  const subjectSelect = $(subjectSelectId);
+  if (!subjectSelect) return;
+  subjectSelect.value = category === "初中" ? "初中电脑与资讯工艺" : "高中资讯科技";
+}
+
 function syncUploadGenerationOptions() {
   const { materialType, questionCount } = getUploadGenerationOptions();
   const isTeachingMaterial = materialType === "teaching-material";
@@ -2135,6 +2209,8 @@ function openUpload() {
   $("#material-extra-images-preview").innerHTML = "";
   $("#upload-material-type").value = "past-paper";
   $("#upload-question-count").value = "10";
+  if (!MAIN_CATEGORIES.includes($("#upload-topic").value)) $("#upload-topic").value = "高一";
+  syncSubjectWithMainCategory("#upload-topic", "#upload-subject");
   syncUploadGenerationOptions();
   resetGenerationUI();
   $("#upload-dialog").showModal();
@@ -2204,6 +2280,8 @@ function resetGenerationUI() {
   $("#material-extra-images").disabled = false;
   $("#upload-material-type").disabled = false;
   $("#upload-question-count").disabled = false;
+  $("#upload-topic").disabled = false;
+  $("#upload-subject").disabled = false;
 }
 
 function setGenerationProgress(percent, status, stage, result = "") {
@@ -2573,7 +2651,8 @@ Strict quality rules:
 {"questions":[{"question":"...","code":"optional code or empty string","options":["选项文字 1","选项文字 2"],"correct":0,"level":"Basic|Intermediate|Advanced","explanation":"...","mistake":"..."}]}
 The correct value is a zero-based integer from 0 to one less than the number of options (maximum 5).
 
-Category: ${TOPIC_EN[topic] || topic}
+Main category: ${MAIN_CATEGORY_EN[topic] || topic}
+Subject: ${SUBJECT_EN[options.subject] || options.subject || "Senior Information Technology"}
 Source file: ${fileName}
 
 LEARNING MATERIAL:
@@ -3364,7 +3443,8 @@ function openPaperEditor(paperId) {
   $("#edit-paper-id").value = paper.id;
   $("#edit-paper-title").value = paper.title;
   $("#edit-paper-year").value = paper.year;
-  $("#edit-paper-topic").value = paper.topic;
+  $("#edit-paper-topic").value = getPaperMainCategory(paper);
+  $("#edit-paper-subject").value = getPaperSubject(paper);
   $("#edit-paper-status").value = paper.status;
   $("#edit-paper-file").textContent = paper.fileName
     ? `${paper.fileName} · ${(paper.fileSize / 1024 / 1024).toFixed(1)} MB`
@@ -3786,6 +3866,10 @@ function renderQuestion() {
     return;
   }
   const topic = {
+    "高一": localized("Senior 1", "高一"),
+    "高二": localized("Senior 2", "高二"),
+    "高三": localized("Senior 3", "高三"),
+    "初中": localized("Junior Secondary", "初中"),
     "程序设计": localized("Programming", "程序设计"),
     "数据库": localized("Database", "数据库"),
     "电脑网络": localized("Computer Networks", "电脑网络")
@@ -4411,6 +4495,8 @@ $("#quick-upload").addEventListener("click", openUpload);
 $("#mobile-add").addEventListener("click", () => role === "teacher" ? openUpload() : startQuiz());
 $("#file-input").addEventListener("change", (event) => loadFiles(event.target.files));
 $("#material-extra-images").addEventListener("change", (event) => loadSupplementalVisuals(event.target.files));
+$("#upload-topic").addEventListener("change", () => syncSubjectWithMainCategory("#upload-topic", "#upload-subject"));
+$("#edit-paper-topic").addEventListener("change", () => syncSubjectWithMainCategory("#edit-paper-topic", "#edit-paper-subject"));
 $("#upload-material-type").addEventListener("change", syncUploadGenerationOptions);
 $("#upload-question-count").addEventListener("change", syncUploadGenerationOptions);
 $("#upload-dialog").addEventListener("cancel", (event) => { if (isGeneratingQuestions) event.preventDefault(); });
@@ -4450,10 +4536,14 @@ $("#process-upload").addEventListener("click", async (event) => {
   $("#material-extra-images").disabled = true;
   $("#upload-material-type").disabled = true;
   $("#upload-question-count").disabled = true;
+  $("#upload-topic").disabled = true;
+  $("#upload-subject").disabled = true;
   $("#generation-progress").classList.remove("success", "error");
   const year = $("#upload-year").value;
   const topic = $("#upload-topic").value;
+  const subject = $("#upload-subject").value;
   const generationOptions = getUploadGenerationOptions();
+  generationOptions.subject = subject;
   generationOptions.extraVisuals = pendingUploadVisuals.slice();
   const sourceFile = pendingUploadFile;
   const title = sourceFile.name.replace(/\.[^.]+$/, "").trim() || `${year} 学习资料`;
@@ -4468,8 +4558,12 @@ $("#process-upload").addEventListener("click", async (event) => {
       year,
       title,
       titleEn: title,
+      mainCategory: topic,
+      mainCategoryEn: MAIN_CATEGORY_EN[topic],
+      subject,
+      subjectEn: SUBJECT_EN[subject],
       topic,
-      topicEn: TOPIC_EN[topic] || topic,
+      topicEn: MAIN_CATEGORY_EN[topic] || topic,
       count: generated.questions.length,
       status: "已整理",
       statusEn: "Organized",
@@ -4540,6 +4634,8 @@ $("#process-upload").addEventListener("click", async (event) => {
     $("#change-gemini-key").disabled = false;
     $("#upload-material-type").disabled = false;
     $("#upload-question-count").disabled = false;
+    $("#upload-topic").disabled = false;
+    $("#upload-subject").disabled = false;
   }
 });
 $("#change-gemini-key").addEventListener("click", openAISettingsFromUpload);
@@ -4563,15 +4659,24 @@ $("#edit-paper-form").addEventListener("submit", (event) => {
   paper.title = title;
   paper.titleEn = title;
   paper.year = $("#edit-paper-year").value;
-  paper.topic = $("#edit-paper-topic").value;
-  paper.topicEn = TOPIC_EN[paper.topic] || paper.topic;
+  paper.mainCategory = $("#edit-paper-topic").value;
+  paper.mainCategoryEn = MAIN_CATEGORY_EN[paper.mainCategory];
+  paper.subject = $("#edit-paper-subject").value;
+  paper.subjectEn = SUBJECT_EN[paper.subject];
+  paper.topic = paper.mainCategory;
+  paper.topicEn = paper.mainCategoryEn;
   paper.status = $("#edit-paper-status").value;
   paper.statusEn = paper.status === "已整理" ? "Organized" : "Needs review";
   assignments.filter((assignment) => assignment.paperId === paper.id).forEach((assignment) => {
     assignment.title = title;
     assignment.titleEn = title;
   });
+  questionBank.filter((question) => question.paperId === paper.id).forEach((question) => {
+    question.topic = paper.mainCategory;
+    question.updatedAt = new Date().toISOString();
+  });
   savePapers();
+  saveQuestions();
   saveAssignments();
   renderPapers(activePaperFilter);
   if (activeWorkspaceView === "library") renderWorkspaceView("library");
@@ -4588,7 +4693,7 @@ $("#delete-student-account").addEventListener("click", deleteStudentAccount);
 $(".filters").addEventListener("click", (event) => {
   const button = event.target.closest(".filter");
   if (!button) return;
-  $$(".filter").forEach((item) => item.classList.remove("active"));
+  $$(".filter", event.currentTarget).forEach((item) => item.classList.remove("active"));
   button.classList.add("active");
   renderPapers(button.dataset.filter || "全部");
 });
@@ -4765,6 +4870,12 @@ $("#workspace-primary-action").addEventListener("click", (event) => {
   }
 });
 $("#workspace-content").addEventListener("click", async (event) => {
+  const categoryButton = event.target.closest("[data-library-category]");
+  if (categoryButton) {
+    activeLibraryCategoryFilter = categoryButton.dataset.libraryCategory || "全部";
+    renderWorkspaceView("library");
+    return;
+  }
   const editNoteButton = event.target.closest("[data-edit-note]");
   if (editNoteButton) {
     openNoteDialog(editNoteButton.dataset.editNote);

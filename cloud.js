@@ -246,13 +246,18 @@
   }
 
   function mapMaterial(row) {
+    const category = ["高一", "高二", "高三", "初中"].includes(row.topic) ? row.topic : "高一";
+    const storedSubject = ["高中资讯科技", "初中电脑与资讯工艺"].includes(row.topic_en) ? row.topic_en : "";
+    const subject = storedSubject || (category === "初中" ? "初中电脑与资讯工艺" : "高中资讯科技");
     return {
       id: row.id,
       year: String(row.year || new Date(row.created_at || Date.now()).getFullYear()),
       title: row.title || "未命名学习资料",
       titleEn: row.title_en || row.title || "Untitled Material",
-      topic: row.topic || "综合试卷",
-      topicEn: row.topic_en || row.topic || "General Paper",
+      mainCategory: category,
+      subject,
+      topic: category,
+      topicEn: row.topic_en || category,
       count: Number(row.count ?? row.question_count) || 0,
       status: row.status || "待校对",
       statusEn: row.status_en || "Needs review",
@@ -402,8 +407,8 @@
       title: paper.title,
       title_en: paper.titleEn || paper.title,
       year: Number(paper.year) || new Date().getFullYear(),
-      topic: paper.topic || "综合试卷",
-      topic_en: paper.topicEn || "General Paper",
+      topic: paper.mainCategory || paper.topic || "高一",
+      topic_en: paper.subject || "高中资讯科技",
       file_url: paper.storagePath || "",
       file_name: paper.fileName || "",
       file_size: Number(paper.fileSize) || 0,

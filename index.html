@@ -304,10 +304,10 @@
               </div>
               <div class="filters" aria-label="题库筛选">
                 <button class="filter active" data-filter="全部">全部</button>
-                <button class="filter" data-filter="程序设计">程序设计</button>
-                <button class="filter" data-filter="数据库">数据库</button>
-                <button class="filter" data-filter="网络">网络</button>
-                <button class="filter" data-filter="硬件">硬件</button>
+                <button class="filter" data-filter="高一">高一</button>
+                <button class="filter" data-filter="高二">高二</button>
+                <button class="filter" data-filter="高三">高三</button>
+                <button class="filter" data-filter="初中">初中</button>
               </div>
               <div class="paper-list" id="paper-list"></div>
             </section>
@@ -572,7 +572,10 @@
         </section>
         <div class="form-row">
           <label>资料年份<select id="upload-year"></select></label>
-          <label>主要分类<select id="upload-topic"><option value="综合试卷">综合试卷</option><option value="程序设计">程序设计</option><option value="数据库">数据库</option><option value="电脑网络">电脑网络</option><option value="硬件">硬件</option></select></label>
+          <label>主要分类<select id="upload-topic"><option value="高一">高一</option><option value="高二">高二</option><option value="高三">高三</option><option value="初中">初中</option></select></label>
+        </div>
+        <div class="form-row upload-classification-options">
+          <label>科系<select id="upload-subject"><option value="高中资讯科技">高中资讯科技</option><option value="初中电脑与资讯工艺">初中电脑与资讯工艺</option></select></label>
         </div>
         <div class="form-row upload-generation-options">
           <label>资料类型<select id="upload-material-type"><option value="past-paper">历届试卷（辨识全部题目）</option><option value="teaching-material">讲义或教学资料</option></select></label>
@@ -599,7 +602,7 @@
         <div class="question-builder-grid">
           <label>题型<select id="question-type"><option value="mcq">选择题</option><option value="fill">填充题</option></select></label>
           <label>加入学习资料（可选）<select id="question-material"><option value="">独立出题</option></select></label>
-          <label>题目分类<select id="manual-question-topic"><option value="综合试卷">综合试卷</option><option value="程序设计">程序设计</option><option value="数据库">数据库</option><option value="电脑网络">电脑网络</option><option value="硬件">硬件</option></select></label>
+          <label>题目分类<select id="manual-question-topic"><option value="高一">高一</option><option value="高二">高二</option><option value="高三">高三</option><option value="初中">初中</option><option value="综合试卷">综合试卷</option><option value="程序设计">程序设计</option><option value="数据库">数据库</option><option value="电脑网络">电脑网络</option><option value="硬件">硬件</option></select></label>
           <label>难度<select id="manual-question-level"><option value="基础">基础</option><option value="中等" selected>中等</option><option value="进阶">进阶</option></select></label>
           <label class="full-field">题目<textarea id="manual-question-title" rows="3" maxlength="600" placeholder="请输入完整题目" required></textarea></label>
           <label class="full-field">程序代码（可选）<textarea id="manual-question-code" rows="4" spellcheck="false"></textarea></label>
@@ -641,7 +644,8 @@
         <div class="paper-edit-fields">
           <label>资料名称<input id="edit-paper-title" type="text" maxlength="120" required /></label>
           <label>资料年份<select id="edit-paper-year"></select></label>
-          <label>主要分类<select id="edit-paper-topic"><option value="综合试卷">综合试卷</option><option value="程序设计">程序设计</option><option value="数据库">数据库</option><option value="电脑网络">电脑网络</option><option value="硬件">硬件</option></select></label>
+          <label>主要分类<select id="edit-paper-topic"><option value="高一">高一</option><option value="高二">高二</option><option value="高三">高三</option><option value="初中">初中</option></select></label>
+          <label>科系<select id="edit-paper-subject"><option value="高中资讯科技">高中资讯科技</option><option value="初中电脑与资讯工艺">初中电脑与资讯工艺</option></select></label>
           <label>整理状态<select id="edit-paper-status"><option value="待校对">待校对</option><option value="已整理">已整理</option></select></label>
         </div>
         <p class="paper-source" id="edit-paper-file"></p>
