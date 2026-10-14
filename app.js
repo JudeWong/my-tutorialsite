@@ -385,6 +385,8 @@ const UI_EN = Object.freeze({
   "发布给班级": "Assign to Classes",
   "可同时选择多个班级；只有获分配的班级能在学生端看到并回答此资料。": "Select multiple classes. Only assigned classes can see and answer this material.",
   "所有班级": "All Classes",
+  "授权班级": "Authorized Classes",
+  "尚未授权": "Not Assigned",
   "综合试卷": "General Paper",
   "电脑网络": "Computer Networking",
   "取消": "Cancel",
@@ -1367,16 +1369,39 @@ function categoryFilterButtons(activeFilter, attribute = "data-library-category"
   }).join("");
 }
 
+function getPaperAuthorizedClassNames(paperId) {
+  const paperAssignments = assignments.filter((assignment) => assignment.paperId === paperId);
+  if (!paperAssignments.length) return [];
+  if (paperAssignments.some((assignment) => !assignment.classId && !assignment.className)) {
+    return [localized("All Classes", "所有班级")];
+  }
+  return [...new Set(paperAssignments.map((assignment) => {
+    if (assignment.className) return assignment.className;
+    return cloudClasses.find((item) => item.id === assignment.classId)?.name || "";
+  }).filter(Boolean))];
+}
+
+function paperAuthorizedClassesMarkup(paperId) {
+  const authorizedClasses = getPaperAuthorizedClassNames(paperId);
+  const classChips = (authorizedClasses.length ? authorizedClasses : [localized("Not Assigned", "尚未授权")])
+    .map((className) => `<span class="paper-access-chip">${escapeHTML(className)}</span>`).join("");
+  return `<div class="paper-access"><span class="paper-access-label">${localized("Authorized Classes", "授权班级")}</span><div class="paper-access-classes">${classChips}</div></div>`;
+}
+
 function renderPapers(filter = "全部") {
   activePaperFilter = filter;
   $$(".question-panel .filter[data-filter]").forEach((button) => button.classList.toggle("active", button.dataset.filter === filter));
   const visible = filter === "全部" ? papers : papers.filter((paper) => getPaperMainCategory(paper) === filter);
   $("#paper-list").innerHTML = visible.map((paper) => `
-    <article class="paper-row">
-      <div class="paper-year">${paper.year}</div>
-      <div class="paper-info"><strong>${escapeHTML(currentLanguage === "en" ? paper.titleEn : paper.title)}</strong><small>${paper.count} ${localized("questions", "道题目")} · ${escapeHTML(currentLanguage === "en" ? paper.statusEn : paper.status)}</small></div>
-      <div class="paper-meta"><span>${escapeHTML(getPaperClassificationLabel(paper))}</span><button data-paper-id="${escapeHTML(paper.id)}">${localized("Edit Material →", "编辑资料 →")}</button></div>
-    </article>`).join("") || `<div class="data-empty"><strong>${localized("No learning materials uploaded", "尚未上传学习资料")}</strong><p>${localized("Upload a paper, handout, image, or document to generate interactive questions.", "上传试卷、讲义、图片或文件即可生成互动题目。")}</p><button type="button" data-empty-upload>${localized("Upload Learning Material", "上传学习资料")}</button></div>`;
+      <article class="paper-row">
+        <div class="paper-year">${paper.year}</div>
+        <div class="paper-info">
+          <strong>${escapeHTML(currentLanguage === "en" ? paper.titleEn : paper.title)}</strong>
+          <small>${paper.count} ${localized("questions", "道题目")} · ${escapeHTML(currentLanguage === "en" ? paper.statusEn : paper.status)}</small>
+          ${paperAuthorizedClassesMarkup(paper.id)}
+        </div>
+        <div class="paper-meta"><span>${escapeHTML(getPaperClassificationLabel(paper))}</span><button data-paper-id="${escapeHTML(paper.id)}">${localized("Edit Material →", "编辑资料 →")}</button></div>
+      </article>`).join("") || `<div class="data-empty"><strong>${localized("No learning materials uploaded", "尚未上传学习资料")}</strong><p>${localized("Upload a paper, handout, image, or document to generate interactive questions.", "上传试卷、讲义、图片或文件即可生成互动题目。")}</p><button type="button" data-empty-upload>${localized("Upload Learning Material", "上传学习资料")}</button></div>`;
   renderTeacherMetrics();
   refreshLanguage();
 }
@@ -2066,7 +2091,7 @@ function renderWorkspaceView(name) {
       <section class="panel workspace-panel">
         <div class="workspace-summary"><strong>${visiblePapers.length}</strong><span>${localized("materials in this category", "份此分类资料")}</span></div>
         <div class="workspace-table" role="table">
-          ${visiblePapers.length ? visiblePapers.map((paper) => `<article role="row"><span class="workspace-year">${escapeHTML(paper.year)}</span><div><strong>${escapeHTML(currentLanguage === "en" ? paper.titleEn : paper.title)}</strong><small>${escapeHTML(getPaperClassificationLabel(paper))} · ${paper.count} ${localized("questions", "题")}</small></div><span class="status-pill">${escapeHTML(currentLanguage === "en" ? paper.statusEn : paper.status)}</span><button type="button" data-workspace-paper-id="${escapeHTML(paper.id)}">${localized("Edit Material", "编辑资料")}</button></article>`).join("") : `<div class="data-empty"><strong>${localized("No materials in this category", "此分类尚无学习资料")}</strong><p>${localized("Choose another category or upload a new material.", "请选择其他分类或上传新资料。")}</p></div>`}
+          ${visiblePapers.length ? visiblePapers.map((paper) => `<article role="row"><span class="workspace-year">${escapeHTML(paper.year)}</span><div><strong>${escapeHTML(currentLanguage === "en" ? paper.titleEn : paper.title)}</strong><small>${escapeHTML(getPaperClassificationLabel(paper))} · ${paper.count} ${localized("questions", "题")}</small>${paperAuthorizedClassesMarkup(paper.id)}</div><span class="status-pill">${escapeHTML(currentLanguage === "en" ? paper.statusEn : paper.status)}</span><button type="button" data-workspace-paper-id="${escapeHTML(paper.id)}">${localized("Edit Material", "编辑资料")}</button></article>`).join("") : `<div class="data-empty"><strong>${localized("No materials in this category", "此分类尚无学习资料")}</strong><p>${localized("Choose another category or upload a new material.", "请选择其他分类或上传新资料。")}</p></div>`}
         </div>
       </section>` : `
       ${categoryFilters}
