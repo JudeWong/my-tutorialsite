@@ -433,12 +433,16 @@
       </main>
 
       <nav class="mobile-nav" aria-label="移动端导航">
-        <button class="active" data-view="dashboard"><span>⌂</span>总览</button>
-        <button data-view="library"><span>▤</span>题库</button>
+        <div class="mobile-nav-group mobile-nav-left">
+          <button class="active" data-view="dashboard"><span class="nav-glyph" aria-hidden="true"><svg viewBox="0 0 24 24"><path d="m3 10.5 9-7 9 7.5"/><path d="M5.5 9.5V21h13V9.5"/><path d="M9.5 21v-6h5v6"/></svg></span><span class="mobile-nav-label">总览</span></button>
+          <button data-view="library"><span class="nav-glyph" aria-hidden="true"><svg viewBox="0 0 24 24"><path d="M5 4h14v16H5z"/><path d="M8 8h8M8 12h8M8 16h5"/></svg></span><span class="mobile-nav-label">题库</span></button>
+        </div>
         <button id="mobile-add" class="mobile-add" aria-label="上传学习资料">＋</button>
-        <button data-view="notes"><span>✎</span>笔记</button>
-        <button data-view="classes"><span>◎</span>班级</button>
-        <button data-view="insights"><span>↗</span>分析</button>
+        <div class="mobile-nav-group mobile-nav-right">
+          <button data-view="notes"><span class="nav-glyph" aria-hidden="true"><svg viewBox="0 0 24 24"><path d="M5 3h10l4 4v14H5z"/><path d="M15 3v5h5"/><path d="m8 16 5-5 2 2-5 5-3 1z"/></svg></span><span class="mobile-nav-label">笔记</span></button>
+          <button data-view="classes"><span class="nav-glyph" aria-hidden="true"><svg viewBox="0 0 24 24"><path d="m4 8.5 8-4.5 8 4.5-8 4.5z"/><path d="M7 12.5V17c2.6 1.8 7.4 1.8 10 0v-4.5"/><path d="M20 10v6"/></svg></span><span class="mobile-nav-label">班级</span></button>
+          <button data-view="insights"><span class="nav-glyph" aria-hidden="true"><svg viewBox="0 0 24 24"><path d="M4 19V5M4 19h17"/><path d="m6 15 4-4 3 2 5-6"/></svg></span><span class="mobile-nav-label">分析</span></button>
+        </div>
       </nav>
 
       <button class="ai-chat-launcher" id="ai-chat-launcher" type="button" aria-controls="ai-chat-popover" aria-expanded="false" hidden>

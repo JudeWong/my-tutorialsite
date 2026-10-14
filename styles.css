@@ -811,6 +811,92 @@ html[lang="en"] .landing-section-label, html[lang="en"] .section-kicker { font-f
   box-shadow: 0 0 0 4px rgba(229, 161, 38, .13);
 }
 
+/* Stable mobile navigation: two balanced groups around the centered action. */
+.mobile-nav-group {
+  min-width: 0;
+}
+
+.mobile-nav .nav-glyph {
+  display: grid;
+  width: 22px;
+  height: 22px;
+  place-items: center;
+  line-height: 1;
+}
+
+.mobile-nav .nav-glyph svg {
+  display: block;
+  width: 20px;
+  height: 20px;
+  fill: none;
+  stroke: currentColor;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+  stroke-width: 1.8;
+}
+
+@media (max-width: 760px) {
+  body.app-active {
+    padding-bottom: calc(70px + env(safe-area-inset-bottom));
+  }
+
+  .mobile-nav {
+    display: grid;
+    grid-template-columns: minmax(0, 1fr) 58px minmax(0, 1fr);
+    gap: 8px;
+    height: calc(64px + env(safe-area-inset-bottom));
+    padding: 5px 10px env(safe-area-inset-bottom);
+    align-items: stretch;
+  }
+
+  .mobile-nav-group {
+    display: grid;
+    min-width: 0;
+    align-items: center;
+  }
+
+  .mobile-nav-left {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+
+  .mobile-nav-right {
+    grid-template-columns: repeat(3, minmax(0, 1fr));
+  }
+
+  .mobile-nav button {
+    width: 100%;
+    min-width: 0;
+    height: 54px;
+    padding: 3px 1px;
+    gap: 2px;
+    font-size: 9px;
+    line-height: 1.1;
+    white-space: nowrap;
+  }
+
+  .mobile-nav .mobile-nav-label {
+    display: block;
+    max-width: 100%;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    font-size: inherit;
+    line-height: inherit;
+  }
+
+  .mobile-nav > .mobile-add {
+    width: 46px;
+    min-width: 46px;
+    height: 46px;
+    justify-self: center;
+    align-self: start;
+    margin-top: -4px;
+    padding: 0;
+    transform: translateY(-7px);
+    font-size: 25px;
+    line-height: 1;
+  }
+}
+
 /* Teacher notes shared with the student workspace. */
 .student-progress-focus {
   grid-template-columns: minmax(320px, 760px);

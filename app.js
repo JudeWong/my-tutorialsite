@@ -1726,6 +1726,14 @@ function updateNavigationLabels() {
       ? ["Overview", "Learning Materials", "Teacher Notes", "Class Progress", "Learning Analytics"][index]
       : ["总览", "学习资料", "教师笔记", "班级进度", "学习分析"][index];
   });
+  $$(".mobile-nav-label").forEach((span, index) => {
+    if (role === "student") span.textContent = currentLanguage === "en"
+      ? ["Overview", "Library", "Notes", "Progress", "Report"][index]
+      : ["总览", "题库", "笔记", "进度", "报告"][index];
+    else span.textContent = currentLanguage === "en"
+      ? ["Overview", "Library", "Notes", "Class", "Analytics"][index]
+      : ["总览", "题库", "笔记", "班级", "分析"][index];
+  });
 }
 
 function getUploadGenerationOptions() {
