@@ -831,6 +831,63 @@ function readLocalCloudMigrationSnapshot() {
   };
 }
 
+function getLocalCompletedReviewsForStudent(profile) {
+  if (!profile?.id || profile.role !== "student") return [];
+  const prefix = `${profile.id}:`;
+  return Object.entries(readQuizReviewStore())
+    .filter(([key, review]) => key.startsWith(prefix) && review && typeof review === "object")
+    .map(([, review]) => review)
+    .filter((review) => review.assignmentId && Object.keys(review.answersByQuestionId || {}).length);
+}
+
+function preserveLocalCompletedReviews(snapshot, profile) {
+  const completedIds = new Set(getLocalCompletedReviewsForStudent(profile).map((review) => review.assignmentId));
+  if (!completedIds.size) return snapshot;
+  snapshot.assignments = (snapshot.assignments || []).map((assignment) => completedIds.has(assignment.id) ? {
+    ...assignment,
+    done: true,
+    action: "查看解析",
+    actionEn: "Review Answers",
+    detail: `${assignment.questionCount || assignment.questionIds?.length || 0} 题 · 已完成`,
+    detailEn: `${assignment.questionCount || assignment.questionIds?.length || 0} questions · Completed`
+  } : assignment);
+  return snapshot;
+}
+
+async function recoverLocalCompletedSubmissions(profile, snapshot) {
+  const reviews = getLocalCompletedReviewsForStudent(profile);
+  if (!reviews.length) return 0;
+  const completedAssignmentIds = new Set((snapshot.submissions || [])
+    .filter((submission) => submission.studentId === profile.id && submission.status === "completed")
+    .map((submission) => submission.assignmentId));
+  const assignmentMap = new Map((snapshot.assignments || []).map((assignment) => [assignment.id, assignment]));
+  const questionMap = new Map((snapshot.questions || []).map((question) => [question.id, question]));
+  let recovered = 0;
+  for (const review of reviews) {
+    if (completedAssignmentIds.has(review.assignmentId)) continue;
+    const assignment = assignmentMap.get(review.assignmentId);
+    if (!assignment) continue;
+    const questionIds = Array.isArray(review.questionIds) && review.questionIds.length
+      ? review.questionIds
+      : assignment.questionIds || [];
+    const reviewQuestions = questionIds.map((questionId) => questionMap.get(questionId)).filter(Boolean);
+    const savedAnswers = review.answersByQuestionId || {};
+    if (!reviewQuestions.length || !reviewQuestions.every((question) => Object.prototype.hasOwnProperty.call(savedAnswers, question.id))) continue;
+    const reviewAnswers = reviewQuestions.map((question) => savedAnswers[question.id]);
+    try {
+      await Cloud.saveSubmission(assignment, reviewQuestions, reviewAnswers, {
+        startedAt: review.startedAt || review.completedAt || "",
+        completedAt: review.completedAt || ""
+      });
+      completedAssignmentIds.add(review.assignmentId);
+      recovered += 1;
+    } catch (error) {
+      console.warn("Unable to recover a locally completed submission", error);
+    }
+  }
+  return recovered;
+}
+
 function applyCloudSnapshot(snapshot) {
   papers = (snapshot.papers || []).map(normalizePaperRecord);
   questionBank = snapshot.questions || [];
@@ -894,6 +951,11 @@ async function activateCloudProfile(profile, { migrateLocal = true } = {}) {
       ));
       snapshot = await Cloud.loadSnapshot(profile);
     }
+  }
+  if (profile.role === "student") {
+    const recovered = await recoverLocalCompletedSubmissions(profile, snapshot);
+    if (recovered) snapshot = await Cloud.loadSnapshot(profile);
+    preserveLocalCompletedReviews(snapshot, profile);
   }
   applyCloudSnapshot(snapshot);
   return true;
@@ -5563,7 +5625,7 @@ $("#fill-answer-input").addEventListener("keydown", (event) => {
   }
 });
 $("#submit-answer").addEventListener("click", submitAnswer);
-$("#next-question").addEventListener("click", () => {
+$("#next-question").addEventListener("click", async () => {
   if (isQuizReviewMode) {
     if (currentQuestion === questions.length - 1) {
       renderQuizResult(activeQuizResultData);
@@ -5585,17 +5647,65 @@ $("#next-question").addEventListener("click", () => {
     assignment.detail = `${questions.length} 题 · 已完成`;
     assignment.detailEn = `${questions.length} questions · Completed`;
     saveCompletedQuizReview(assignment, completedAt);
+    clearTimeout(quizCloudProgressTimer);
+    quizCloudProgressTimer = null;
+    let completionSavedToCloud = !Cloud?.enabled;
     if (Cloud?.enabled) {
       localStorage.setItem(ASSIGNMENTS_KEY, JSON.stringify(assignments));
-      syncCloud(() => Cloud.saveSubmission(assignment, questions, answers, { startedAt: quizStartedAt, completedAt }), "student answers");
+      const nextButton = $("#next-question");
+      nextButton.disabled = true;
+      nextButton.textContent = localized("Saving result…", "正在保存成绩…");
+      try {
+        // Finish any earlier autosave first, then persist the completed result
+        // directly so closing or refreshing the page cannot cancel it.
+        await flushCloudSync();
+        const saved = await Cloud.saveSubmission(assignment, questions, answers, { startedAt: quizStartedAt, completedAt });
+        if (!saved?.id || saved.status !== "completed") throw new Error("Completed submission was not confirmed by Supabase.");
+        completionSavedToCloud = true;
+        lastCloudSyncError = null;
+        const answersByQuestionId = {};
+        const correctnessByQuestionId = {};
+        questions.forEach((question, index) => {
+          if (!hasAnswer(answers[index])) return;
+          answersByQuestionId[question.id] = answers[index];
+          correctnessByQuestionId[question.id] = isQuestionAnswerCorrect(question, answers[index]);
+        });
+        cloudSubmissions = [
+          ...cloudSubmissions.filter((submission) => !(submission.assignmentId === assignment.id && submission.studentId === cloudProfile?.id)),
+          {
+            id: saved?.id || `local:${assignment.id}`,
+            assignmentId: assignment.id,
+            studentId: cloudProfile?.id || activeStudent?.id || "",
+            score: correctCount,
+            totalQuestions: questions.length,
+            answeredQuestions: questions.length,
+            status: "completed",
+            answersByQuestionId,
+            correctnessByQuestionId,
+            startedAt: quizStartedAt,
+            submittedAt: completedAt,
+            createdAt: completedAt,
+            updatedAt: completedAt
+          }
+        ];
+      } catch (error) {
+        console.error("Unable to save the completed result to Supabase", error);
+      } finally {
+        nextButton.disabled = false;
+      }
     } else {
       saveAssignments();
     }
-    clearTimeout(quizCloudProgressTimer);
-    clearQuizProgress(assignment.id);
+    if (completionSavedToCloud) clearQuizProgress(assignment.id);
     renderAssignments();
     renderQuizResult({ correctCount, total: questions.length, startedAt: quizStartedAt, completedAt });
     showView("quiz");
+    if (!completionSavedToCloud) {
+      showToast(localized(
+        "The result is safely stored on this device and will sync automatically after the next sign-in.",
+        "成绩已安全保存在此装置，下次登入后会自动补传云端。"
+      ));
+    }
   } else {
     currentQuestion += 1;
     saveCurrentQuizProgress();

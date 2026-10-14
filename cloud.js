@@ -650,6 +650,9 @@
     if (!session?.user?.id || !isUuid(assignment?.id) || !Array.isArray(questions) || !questions.length) return;
     const now = new Date().toISOString();
     const existing = await findLatestSubmission(assignment.id);
+    // A delayed autosave from another tab or an older device must never
+    // downgrade a completed submission back to in_progress.
+    if (existing?.status === "completed") return { id: existing.id, status: "completed", skipped: true };
     const answeredCount = answers.filter((answer) => answer !== null && answer !== undefined && String(answer).trim() !== "").length;
     const payload = {
       assignment_id: assignment.id,
@@ -663,9 +666,11 @@
       updated_at: now
     };
     const submission = existing
-      ? unwrap(await requireClient().from("submissions").update(payload).eq("id", existing.id).select("id").single(), "Update quiz progress")
-      : unwrap(await requireClient().from("submissions").insert(payload).select("id").single(), "Save quiz progress");
+      ? unwrap(await requireClient().from("submissions").update(payload).eq("id", existing.id).neq("status", "completed").select("id,status").maybeSingle(), "Update quiz progress")
+      : unwrap(await requireClient().from("submissions").insert(payload).select("id,status").single(), "Save quiz progress");
+    if (!submission?.id) return { id: existing?.id || "", status: "completed", skipped: true };
     await saveSubmissionAnswers(submission.id, questions, answers);
+    return { id: submission.id, status: "in_progress" };
   }
 
   async function saveSubmission(assignment, questions, answers, { startedAt = "", completedAt = "" } = {}) {
@@ -687,6 +692,7 @@
       ? unwrap(await requireClient().from("submissions").update(payload).eq("id", existing.id).select("id").single(), "Update submission")
       : unwrap(await requireClient().from("submissions").insert(payload).select("id").single(), "Save submission");
     await saveSubmissionAnswers(submission.id, questions, answers);
+    return { id: submission.id, status: "completed", score, totalQuestions: questions.length };
   }
 
   function subscribeToProgress(callback) {
