@@ -1284,6 +1284,7 @@ function showSessionBackdrop(session) {
   updateAccountUI();
   $("#ai-chat-launcher").hidden = session.role !== "student";
   setRole(session.role);
+  renderPapers(activePaperFilter);
   renderAssignments();
   restoreSessionView(session, { silentQuiz: true });
   document.documentElement.classList.remove("session-restore-app");
@@ -1301,6 +1302,7 @@ function enterApp(nextRole, student = null, restoredSession = null) {
   updateAccountUI();
   $("#ai-chat-launcher").hidden = nextRole !== "student";
   setRole(nextRole);
+  renderPapers(activePaperFilter);
   renderAssignments();
   if (restoredSession) restoreSessionView(restoredSession, { silentQuiz: true });
   saveSession();
