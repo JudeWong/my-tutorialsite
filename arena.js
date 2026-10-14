@@ -227,7 +227,7 @@ function ArenaApp() {
     const target = pair.find((player) => player.id !== myPlayer.id);
     const event = { id: `local-${Date.now()}`, roomId: room.id, playerId: myPlayer.id, round, type: "answer", questionId: question.id, correct, damage: correct ? 20 + Math.min(20, current.streak * 5) : 0, effect: nextStreak > 0 && nextStreak % 3 === 0 ? "shield" : "", createdAt: new Date().toISOString() };
     setAnsweredRound(round); setLocalEvents((items) => [...items, event]);
-    try { await cloud.submitBattleEvent({ roomId: room.id, playerId: myPlayer.id, round, questionId: question.id, correct, damage: event.damage, effect: event.effect }); await refreshRoom(room.id); }
+    try { await cloud.submitBattleEvent({ roomId: room.id, playerId: myPlayer.id, round, questionId: question.id, correct, damage: event.damage, effect: event.effect }); await refreshRoom(room.id); setLocalEvents([]); }
     catch (answerError) { setError(answerError.message || "答案无法同步，请检查网络。"); }
     if (target && nextStreak > 0 && nextStreak % 3 === 0) {
       try { await cloud.submitBattleEvent({ roomId: room.id, playerId: myPlayer.id, round, type: "skill", effect: "shield" }); } catch { /* answer event is still preserved */ }
