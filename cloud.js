@@ -335,7 +335,7 @@
       db.from("assignments").select("*").order("created_at", { ascending: false }),
       db.from("assignment_questions").select("*").order("position", { ascending: true }),
       db.from("submissions").select("*"),
-      db.from("student_answers").select("id,submission_id,question_id,is_correct,created_at")
+      db.from("student_answers").select("id,submission_id,question_id,student_answer,is_correct,created_at")
     ]);
     const [profiles, classes, materials, questions, notes, assignments, links, submissions, studentAnswers] = results.map((result, index) => unwrap(result, ["profiles", "classes", "materials", "questions", "notes", "assignments", "assignment questions", "submissions", "student answers"][index]));
     const questionIdsByAssignment = new Map();
@@ -368,6 +368,18 @@
       if (item.submission_id) counts.set(item.submission_id, (counts.get(item.submission_id) || 0) + 1);
       return counts;
     }, new Map());
+    const answersBySubmission = (studentAnswers || []).reduce((submissionsMap, item) => {
+      if (!item.submission_id || !item.question_id) return submissionsMap;
+      if (!submissionsMap.has(item.submission_id)) submissionsMap.set(item.submission_id, {});
+      let answer = item.student_answer;
+      try {
+        answer = JSON.parse(item.student_answer);
+      } catch {
+        answer = item.student_answer;
+      }
+      submissionsMap.get(item.submission_id)[item.question_id] = answer;
+      return submissionsMap;
+    }, new Map());
     const mappedSubmissions = (submissions || []).map((item) => ({
       id: item.id,
       assignmentId: item.assignment_id,
@@ -378,6 +390,7 @@
         ? Math.min(Number(item.total_questions) || 0, Number(item.score) || 0)
         : answeredCounts.get(item.id) || Number(item.total_questions) || 0,
       status: item.status || "completed",
+      answersByQuestionId: answersBySubmission.get(item.id) || {},
       startedAt: item.started_at || item.created_at || "",
       submittedAt: item.submitted_at || "",
       createdAt: item.created_at || "",
@@ -611,8 +624,10 @@
 
   async function saveSubmissionAnswers(submissionId, questions, answers) {
     const db = requireClient();
+    const existingRows = unwrap(await db.from("student_answers").select("question_id").eq("submission_id", submissionId), "Load saved student answers") || [];
+    const existingQuestionIds = new Set(existingRows.map((item) => item.question_id));
     const rows = questions.map((question, index) => ({ question, index, answer: answers[index] }))
-      .filter(({ question, answer }) => isUuid(question.id) && answer !== null && answer !== undefined && String(answer).trim() !== "")
+      .filter(({ question, answer }) => isUuid(question.id) && !existingQuestionIds.has(question.id) && answer !== null && answer !== undefined && String(answer).trim() !== "")
       .map(({ question, answer }) => {
         return {
           submission_id: submissionId,
@@ -643,6 +658,7 @@
     const submission = existing
       ? unwrap(await requireClient().from("submissions").update(payload).eq("id", existing.id).select("id").single(), "Update quiz progress")
       : unwrap(await requireClient().from("submissions").insert(payload).select("id").single(), "Save quiz progress");
+    await saveSubmissionAnswers(submission.id, questions, answers);
   }
 
   async function saveSubmission(assignment, questions, answers, { startedAt = "", completedAt = "" } = {}) {
@@ -663,7 +679,7 @@
     const submission = existing
       ? unwrap(await requireClient().from("submissions").update(payload).eq("id", existing.id).select("id").single(), "Update submission")
       : unwrap(await requireClient().from("submissions").insert(payload).select("id").single(), "Save submission");
-    if (existing?.status !== "completed") await saveSubmissionAnswers(submission.id, questions, answers);
+    await saveSubmissionAnswers(submission.id, questions, answers);
   }
 
   function subscribeToProgress(callback) {

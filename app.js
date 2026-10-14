@@ -4,6 +4,7 @@ const QUESTIONS_KEY = "tixi_questions_v1";
 const NOTES_KEY = "tixi_teacher_notes_v1";
 const SESSION_KEY = "tixi_session_v1";
 const QUIZ_PROGRESS_KEY = "tixi_quiz_progress_v1";
+const QUIZ_REVIEW_KEY = "tixi_quiz_reviews_v1";
 const Cloud = globalThis.personalAICloud;
 
 function createRecordId(prefix = "record") {
@@ -137,6 +138,8 @@ let activeQuizStudentKey = "";
 let answers = [];
 let draftAnswers = [];
 let selectedOption = null;
+let isQuizReviewMode = false;
+let activeQuizResultData = null;
 let pendingUploadFile = null;
 let pendingUploadVisuals = [];
 let toastTimer;
@@ -577,6 +580,13 @@ const UI_EN = Object.freeze({
   ,"答题用时": "Time spent"
   ,"完成时间": "Completed at"
   ,"返回学生首页": "Back to student home"
+  ,"查看作答解析": "Review answers"
+  ,"← 返回结算": "← Back to results"
+  ,"答题解析": "Answer review"
+  ,"你的答案：": "Your answer:"
+  ,"正确答案：": "Correct answer:"
+  ,"答对": "Correct"
+  ,"答错": "Incorrect"
   ,"学生实时进度": "Live student progress"
   ,"学生作答时自动更新": "Updates automatically while students answer"
   ,"实时": "LIVE"
@@ -3712,6 +3722,15 @@ function readQuizProgressStore() {
   }
 }
 
+function readQuizReviewStore() {
+  try {
+    const stored = JSON.parse(localStorage.getItem(QUIZ_REVIEW_KEY) || "{}");
+    return stored && typeof stored === "object" && !Array.isArray(stored) ? stored : {};
+  } catch {
+    return {};
+  }
+}
+
 function getQuizStudentKey() {
   if (activeStudent?.id) return String(activeStudent.id);
   if (!activeStudent) return "";
@@ -3726,9 +3745,73 @@ function getQuizProgressStorageKey(assignmentId, studentKey = getQuizStudentKey(
 
 function getStoredQuizProgress(assignmentId) {
   const key = getQuizProgressStorageKey(assignmentId);
-  if (!key) return null;
-  const progress = readQuizProgressStore()[key];
-  return progress && typeof progress === "object" ? progress : null;
+  const progress = key ? readQuizProgressStore()[key] : null;
+  if (progress && typeof progress === "object") return progress;
+  const cloudSubmission = getLatestInProgressSubmission(assignmentId);
+  if (!cloudSubmission) return null;
+  const assignment = assignments.find((item) => item.id === assignmentId);
+  return {
+    assignmentId,
+    questionIds: Array.isArray(assignment?.questionIds) ? assignment.questionIds : [],
+    currentQuestionId: "",
+    answersByQuestionId: cloudSubmission.answersByQuestionId || {},
+    draftAnswersByQuestionId: {},
+    startedAt: cloudSubmission.startedAt || cloudSubmission.createdAt || "",
+    updatedAt: cloudSubmission.updatedAt || cloudSubmission.createdAt || ""
+  };
+}
+
+function getLatestInProgressSubmission(assignmentId) {
+  const studentId = String(cloudProfile?.id || activeStudent?.id || "");
+  return cloudSubmissions
+    .filter((submission) => submission.assignmentId === assignmentId && submission.status === "in_progress")
+    .filter((submission) => !studentId || !submission.studentId || String(submission.studentId) === studentId)
+    .sort((left, right) => new Date(right.updatedAt || right.createdAt || 0) - new Date(left.updatedAt || left.createdAt || 0))[0] || null;
+}
+
+function getLatestCompletedSubmission(assignmentId) {
+  const studentId = String(cloudProfile?.id || activeStudent?.id || "");
+  return cloudSubmissions
+    .filter((submission) => submission.assignmentId === assignmentId && submission.status === "completed")
+    .filter((submission) => !studentId || !submission.studentId || String(submission.studentId) === studentId)
+    .sort((left, right) => new Date(right.submittedAt || right.updatedAt || right.createdAt || 0) - new Date(left.submittedAt || left.updatedAt || left.createdAt || 0))[0] || null;
+}
+
+function getCompletedQuizReview(assignment) {
+  const key = getQuizProgressStorageKey(assignment?.id);
+  const stored = key ? readQuizReviewStore()[key] : null;
+  const cloudSubmission = getLatestCompletedSubmission(assignment?.id);
+  if (cloudSubmission && Object.keys(cloudSubmission.answersByQuestionId || {}).length) {
+    return {
+      assignmentId: assignment.id,
+      answersByQuestionId: cloudSubmission.answersByQuestionId,
+      startedAt: cloudSubmission.startedAt || cloudSubmission.createdAt || "",
+      completedAt: cloudSubmission.submittedAt || cloudSubmission.updatedAt || cloudSubmission.createdAt || "",
+      correctCount: Number(cloudSubmission.score) || 0,
+      total: Number(cloudSubmission.totalQuestions) || 0
+    };
+  }
+  return stored && typeof stored === "object" ? stored : null;
+}
+
+function saveCompletedQuizReview(assignment, completedAt) {
+  const key = getQuizProgressStorageKey(assignment?.id, activeQuizStudentKey || getQuizStudentKey());
+  if (!key) return;
+  const answersByQuestionId = {};
+  questions.forEach((question, index) => {
+    if (hasAnswer(answers[index])) answersByQuestionId[question.id] = answers[index];
+  });
+  const store = readQuizReviewStore();
+  store[key] = {
+    assignmentId: assignment.id,
+    questionIds: questions.map((question) => question.id),
+    answersByQuestionId,
+    startedAt: quizStartedAt || completedAt,
+    completedAt,
+    correctCount: answers.filter((answer, index) => isQuestionAnswerCorrect(questions[index], answer)).length,
+    total: questions.length
+  };
+  localStorage.setItem(QUIZ_REVIEW_KEY, JSON.stringify(store));
 }
 
 function getLatestQuizProgressCandidate() {
@@ -3794,7 +3877,7 @@ function renderLastUnfinishedAssignment() {
 }
 
 function saveCurrentQuizProgress() {
-  if (role !== "student" || !questions.length) return;
+  if (role !== "student" || isQuizReviewMode || !questions.length) return;
   const assignment = assignments[activeAssignmentIndex];
   if (!assignment || assignment.done) return;
   const key = getQuizProgressStorageKey(assignment.id, activeQuizStudentKey || getQuizStudentKey());
@@ -3827,9 +3910,19 @@ function scheduleCloudQuizProgressSync() {
   clearTimeout(quizCloudProgressTimer);
   quizCloudProgressTimer = setTimeout(() => {
     quizCloudProgressTimer = null;
-    const currentAnswers = questions.map((_, index) => hasAnswer(answers[index]) ? answers[index] : draftAnswers[index]);
+    const currentAnswers = questions.map((_, index) => hasAnswer(answers[index]) ? answers[index] : null);
     syncCloud(() => Cloud.saveQuizProgress(assignment, questions, currentAnswers, { startedAt: quizStartedAt }), "student progress");
   }, 700);
+}
+
+function syncSubmittedQuizProgress() {
+  if (role !== "student" || !Cloud?.enabled || !cloudProfile || cloudProfile.role !== "student") return;
+  const assignment = assignments[activeAssignmentIndex];
+  if (!assignment || assignment.done || !questions.length) return;
+  clearTimeout(quizCloudProgressTimer);
+  quizCloudProgressTimer = null;
+  const submittedAnswers = questions.map((_, index) => hasAnswer(answers[index]) ? answers[index] : null);
+  syncCloud(() => Cloud.saveQuizProgress(assignment, questions, submittedAnswers, { startedAt: quizStartedAt }), "student progress");
 }
 
 function clearQuizProgress(assignmentId) {
@@ -3863,11 +3956,33 @@ function restoreQuizProgress(assignment) {
   });
   const savedIndex = questions.findIndex((question) => question.id === progress.currentQuestionId);
   const firstUnanswered = answers.findIndex((answer) => !hasAnswer(answer));
-  currentQuestion = savedIndex >= 0 ? savedIndex : firstUnanswered >= 0 ? firstUnanswered : 0;
+  currentQuestion = savedIndex >= 0 && !hasAnswer(answers[savedIndex])
+    ? savedIndex
+    : firstUnanswered >= 0 ? firstUnanswered : Math.max(0, questions.length - 1);
   return true;
 }
 
-function startQuiz(index = null, { silent = false } = {}) {
+function restoreCompletedQuizReview(assignment) {
+  const review = getCompletedQuizReview(assignment);
+  if (!review) return false;
+  const savedAnswers = review.answersByQuestionId || {};
+  answers = questions.map((question) => Object.prototype.hasOwnProperty.call(savedAnswers, question.id) ? savedAnswers[question.id] : null);
+  if (!answers.some(hasAnswer)) return false;
+  draftAnswers = [...answers];
+  currentQuestion = 0;
+  quizStartedAt = review.startedAt || review.completedAt || new Date().toISOString();
+  activeQuizResultData = {
+    correctCount: Number.isFinite(Number(review.correctCount))
+      ? Number(review.correctCount)
+      : answers.filter((answer, index) => isQuestionAnswerCorrect(questions[index], answer)).length,
+    total: Number(review.total) || questions.length,
+    startedAt: review.startedAt || review.completedAt || quizStartedAt,
+    completedAt: review.completedAt || new Date().toISOString()
+  };
+  return true;
+}
+
+function startQuiz(index = null, { silent = false, review = false } = {}) {
   if (!assignments.length) {
     showToast(localized("No interactive questions are available yet.", "目前还没有可作答的互动题目。"));
     return;
@@ -3885,7 +4000,15 @@ function startQuiz(index = null, { silent = false } = {}) {
     showToast(localized("This assignment does not contain generated questions yet.", "这份练习还没有生成题目。"));
     return;
   }
-  const restored = restoreQuizProgress(assignment);
+  isQuizReviewMode = Boolean(review || assignment.done);
+  activeQuizResultData = null;
+  if (isQuizReviewMode && !restoreCompletedQuizReview(assignment)) {
+    isQuizReviewMode = false;
+    showToast(localized("The saved answer review is not available yet.", "目前找不到已储存的答题解析。"));
+    return;
+  }
+  if (!isQuizReviewMode) restoreQuizProgress(assignment);
+  const restored = !isQuizReviewMode && Boolean(getStoredQuizProgress(assignment.id));
   $("#quiz-layout").hidden = false;
   $("#quiz-result").hidden = true;
   renderQuestion();
@@ -3928,6 +4051,8 @@ function formatQuizCompletionTime(value) {
 }
 
 function renderQuizResult({ correctCount, total, startedAt, completedAt }) {
+  activeQuizResultData = { correctCount, total, startedAt, completedAt };
+  isQuizReviewMode = false;
   const duration = Math.max(0, new Date(completedAt).getTime() - new Date(startedAt || completedAt).getTime());
   const accuracy = total ? Math.round((correctCount / total) * 100) : 0;
   $("#quiz-layout").hidden = true;
@@ -3938,6 +4063,8 @@ function renderQuizResult({ correctCount, total, startedAt, completedAt }) {
   $("#quiz-result-accuracy").textContent = `${accuracy}%`;
   $("#quiz-result-duration").textContent = formatQuizDuration(duration);
   $("#quiz-result-completed-at").textContent = formatQuizCompletionTime(completedAt);
+  $("#quiz-result-review").hidden = !answers.some(hasAnswer);
+  $("#exit-quiz").textContent = localized("← Back to student home", "← 返回学生首页");
   refreshLanguage();
 }
 
@@ -3957,6 +4084,42 @@ function isQuestionAnswerCorrect(question, answer) {
     return Boolean(normalizedAnswer) && acceptedAnswers.some((accepted) => normalizeAnswer(accepted) === normalizedAnswer);
   }
   return Number(answer) === Number(question.correct);
+}
+
+function getQuestionAnswerLabel(question, answer) {
+  if (!hasAnswer(answer)) return localized("No answer", "未作答");
+  if (question.type === "fill") return String(answer);
+  const options = currentLanguage === "en" ? question.optionsEn || question.options : question.options;
+  const index = Number(answer);
+  return `${String.fromCharCode(65 + index)}. ${options?.[index] || ""}`.trim();
+}
+
+function showQuestionFeedback(question, answer) {
+  const isCorrect = isQuestionAnswerCorrect(question, answer);
+  if (question.type === "fill") {
+    const fillInput = $("#fill-answer-input");
+    fillInput.disabled = true;
+    fillInput.classList.add(isCorrect ? "correct" : "wrong");
+  } else {
+    $$(".option").forEach((option, index) => {
+      option.disabled = true;
+      option.classList.remove("selected");
+      if (index === question.correct) option.classList.add("correct");
+      if (index === Number(answer) && index !== question.correct) option.classList.add("wrong");
+    });
+  }
+  const explanation = currentLanguage === "en" ? question.explanationEn : question.explanation;
+  const mistakeSource = currentLanguage === "en" ? question.mistakeEn : question.mistake;
+  const mistake = String(mistakeSource || "").replace("常见错误：", "");
+  const correctAnswer = question.type === "fill" ? question.correctAnswer : question.correct;
+  $("#answer-feedback").innerHTML = `
+    <h3>${isCorrect ? localized("Correct!", "回答正确！") : localized("Take another look", "再留意一下")}</h3>
+    <div class="review-answer-line"><strong>${localized("Your answer:", "你的答案：")}</strong> ${escapeHTML(getQuestionAnswerLabel(question, answer))}</div>
+    <div class="review-answer-line"><strong>${localized("Correct answer:", "正确答案：")}</strong> ${escapeHTML(getQuestionAnswerLabel(question, correctAnswer))}</div>
+    <div class="review-explanation">${escapeHTML(explanation || localized("No explanation provided.", "老师尚未提供解析。"))}</div>
+    <div class="mistake"><strong>${localized("Common mistake:", "易错提醒：")}</strong> ${escapeHTML(mistake || localized("Review the key conditions before answering.", "作答前请再次检查题目的关键条件。"))}</div>`;
+  $("#answer-feedback").classList.add("show");
+  return isCorrect;
 }
 
 function renderQuestion() {
@@ -3980,7 +4143,10 @@ function renderQuestion() {
     : question.level === "中等" ? localized("Intermediate", "中等") : localized("Basic", "基础");
   const isFill = question.type === "fill";
   const options = currentLanguage === "en" ? question.optionsEn : question.options;
-  selectedOption = hasAnswer(answers[currentQuestion]) ? answers[currentQuestion] : draftAnswers[currentQuestion];
+  const submitted = hasAnswer(answers[currentQuestion]);
+  selectedOption = submitted ? answers[currentQuestion] : draftAnswers[currentQuestion];
+  $("#quiz-mode-label").textContent = isQuizReviewMode ? localized("Answer review", "答题解析") : localized("Interactive Practice", "互动练习");
+  $("#exit-quiz").textContent = isQuizReviewMode ? localized("← Back to results", "← 返回结算") : localized("← Exit Practice", "← 退出练习");
   $("#current-number").textContent = currentQuestion + 1;
   $("#question-total").textContent = questions.length;
   $("#quiz-progress-bar").style.width = `${((currentQuestion + 1) / questions.length) * 100}%`;
@@ -4004,59 +4170,56 @@ function renderQuestion() {
   $("#code-block code").textContent = question.code;
   $("#code-block").style.display = question.code ? "block" : "none";
   $("#quiz-options").innerHTML = isFill ? "" : options.map((option, index) => `
-    <button class="option ${selectedOption === index ? "selected" : ""}" data-option="${index}">
+    <button class="option ${selectedOption === index ? "selected" : ""}" data-option="${index}" ${submitted || isQuizReviewMode ? "disabled" : ""}>
       <span class="letter">${String.fromCharCode(65 + index)}</span><span>${escapeHTML(formatRomanStatements(option))}</span>
     </button>`).join("");
   $("#quiz-options").classList.toggle("hidden", isFill);
   $("#fill-answer").classList.toggle("hidden", !isFill);
   const fillInput = $("#fill-answer-input");
   fillInput.value = isFill && hasAnswer(selectedOption) ? selectedOption : "";
-  fillInput.disabled = false;
+  fillInput.disabled = submitted || isQuizReviewMode;
   fillInput.classList.remove("correct", "wrong");
   $("#answer-feedback").className = "answer-feedback";
   $("#answer-feedback").innerHTML = "";
-  $("#submit-answer").classList.remove("hidden");
-  $("#submit-answer").disabled = !hasAnswer(selectedOption);
-  $("#next-question").classList.add("hidden");
-  $("#previous-question").disabled = currentQuestion === 0;
+  $("#submit-answer").classList.toggle("hidden", submitted || isQuizReviewMode);
+  $("#submit-answer").disabled = submitted || !hasAnswer(selectedOption);
+  $("#next-question").classList.toggle("hidden", !submitted && !isQuizReviewMode);
+  $("#previous-question").disabled = !isQuizReviewMode || currentQuestion === 0;
+  if (submitted || isQuizReviewMode) {
+    showQuestionFeedback(question, answers[currentQuestion]);
+    $("#next-question").textContent = isQuizReviewMode && currentQuestion === questions.length - 1
+      ? localized("Back to Results", "返回结算")
+      : currentQuestion === questions.length - 1
+        ? localized("Finish Practice ✓", "完成练习 ✓")
+        : localized("Next Question →", "下一题 →");
+  }
   renderQuestionMap();
   refreshLanguage();
 }
 
 function renderQuestionMap() {
-  $("#question-dots").innerHTML = questions.map((_, index) => `<button data-jump="${index}" class="${index === currentQuestion ? "current" : ""} ${hasAnswer(answers[index]) ? "answered" : ""}">${index + 1}</button>`).join("");
+  $("#question-dots").innerHTML = questions.map((question, index) => {
+    const answered = hasAnswer(answers[index]);
+    const resultClass = isQuizReviewMode && answered ? (isQuestionAnswerCorrect(question, answers[index]) ? "correct" : "wrong") : "";
+    return `<button type="button" data-jump="${index}" class="${index === currentQuestion ? "current" : ""} ${answered ? "answered" : ""} ${resultClass}" ${isQuizReviewMode ? "" : "disabled"}>${index + 1}</button>`;
+  }).join("");
+  $("#quiz-map-legend").innerHTML = isQuizReviewMode
+    ? `<span><i class="correct"></i>${localized("Correct", "答对")}</span><span><i class="wrong"></i>${localized("Incorrect", "答错")}</span>`
+    : `<span><i class="answered"></i>${localized("Answered", "已作答")}</span><span><i></i>${localized("Unanswered", "未作答")}</span>`;
 }
 
 function submitAnswer() {
-  if (!hasAnswer(selectedOption)) return;
+  if (isQuizReviewMode || hasAnswer(answers[currentQuestion]) || !hasAnswer(selectedOption)) return;
   const question = questions[currentQuestion];
   if (!question) return;
   answers[currentQuestion] = selectedOption;
   draftAnswers[currentQuestion] = selectedOption;
   saveCurrentQuizProgress();
-  const isCorrect = isQuestionAnswerCorrect(question, selectedOption);
-  if (question.type === "fill") {
-    const fillInput = $("#fill-answer-input");
-    fillInput.disabled = true;
-    fillInput.classList.add(isCorrect ? "correct" : "wrong");
-  } else {
-    $$(".option").forEach((option, index) => {
-      option.disabled = true;
-      option.classList.remove("selected");
-      if (index === question.correct) option.classList.add("correct");
-      if (index === selectedOption && index !== question.correct) option.classList.add("wrong");
-    });
-  }
-  const explanation = currentLanguage === "en" ? question.explanationEn : question.explanation;
-  const mistakeSource = currentLanguage === "en" ? question.mistakeEn : question.mistake;
-  const mistake = String(mistakeSource || "").replace("常见错误：", "");
-  const correctAnswerNote = question.type === "fill" && !isCorrect
-    ? `<div><strong>${localized("Correct answer:", "正确答案：")}</strong> ${escapeHTML(question.correctAnswer)}</div>`
-    : "";
-  $("#answer-feedback").innerHTML = `<h3>${isCorrect ? localized("Correct!", "回答正确！") : localized("Take another look", "再留意一下")}</h3>${correctAnswerNote}<div>${escapeHTML(explanation)}</div><div class="mistake"><strong>${localized("Common mistake:", "易错提醒：")}</strong> ${escapeHTML(mistake)}</div>`;
-  $("#answer-feedback").classList.add("show");
+  syncSubmittedQuizProgress();
+  showQuestionFeedback(question, selectedOption);
   $("#submit-answer").classList.add("hidden");
   $("#next-question").classList.remove("hidden");
+  $("#previous-question").disabled = true;
   $("#next-question").textContent = currentQuestion === questions.length - 1 ? localized("Finish Practice ✓", "完成练习 ✓") : localized("Next Question →", "下一题 →");
   renderQuestionMap();
   refreshLanguage();
@@ -4095,7 +4258,10 @@ $$(".language-select").forEach((select) => select.addEventListener("change", (ev
   updateNavigationLabels();
   updateStudentProgress();
   updateAIConfigStatus();
-  if ($("#quiz-view").classList.contains("active")) renderQuestion();
+  if ($("#quiz-view").classList.contains("active")) {
+    if (!$("#quiz-result").hidden && activeQuizResultData) renderQuizResult(activeQuizResultData);
+    else renderQuestion();
+  }
   if ($("#student-view").classList.contains("active") && !lastAIQuestion) resetAIChat();
   if (activeWorkspaceView) renderWorkspaceView(activeWorkspaceView);
 }));
@@ -4439,6 +4605,8 @@ $("#logout-button").addEventListener("click", async () => {
   questions = [];
   answers = [];
   draftAnswers = [];
+  isQuizReviewMode = false;
+  activeQuizResultData = null;
   currentQuestion = 0;
   $("#quiz-view").classList.remove("active");
   if (Cloud?.enabled) {
@@ -5045,14 +5213,14 @@ $("#workspace-content").addEventListener("click", async (event) => {
   const assignmentButton = event.target.closest("[data-start-assignment]");
   if (assignmentButton) {
     const index = Number(assignmentButton.dataset.startAssignment);
-    assignments[index]?.done ? showToast(localized("No saved answer review is available yet.", "目前没有已储存的答题解析。")) : startQuiz(index);
+    startQuiz(index, { review: Boolean(assignments[index]?.done) });
   }
 });
 $("#assignment-list").addEventListener("click", (event) => {
   const button = event.target.closest("[data-assignment]");
   if (!button) return;
   const index = Number(button.dataset.assignment);
-  assignments[index]?.done ? showToast(localized("No saved answer review is available yet.", "目前没有已储存的答题解析。")) : startQuiz(index);
+  startQuiz(index, { review: Boolean(assignments[index]?.done) });
 });
 $("#last-unfinished-assignment").addEventListener("click", (event) => {
   const button = event.target.closest("[data-resume-assignment]");
@@ -5065,6 +5233,11 @@ $("#exit-quiz").addEventListener("click", () => {
     showView("dashboard");
     return;
   }
+  if (isQuizReviewMode) {
+    renderQuizResult(activeQuizResultData);
+    showView("quiz");
+    return;
+  }
   saveCurrentQuizProgress();
   resetQuizResultView();
   renderAssignments();
@@ -5073,7 +5246,7 @@ $("#exit-quiz").addEventListener("click", () => {
 });
 $("#quiz-options").addEventListener("click", (event) => {
   const option = event.target.closest(".option");
-  if (!option || option.disabled) return;
+  if (isQuizReviewMode || hasAnswer(answers[currentQuestion]) || !option || option.disabled) return;
   selectedOption = Number(option.dataset.option);
   draftAnswers[currentQuestion] = selectedOption;
   $$(".option").forEach((item) => item.classList.remove("selected"));
@@ -5082,6 +5255,7 @@ $("#quiz-options").addEventListener("click", (event) => {
   saveCurrentQuizProgress();
 });
 $("#fill-answer-input").addEventListener("input", (event) => {
+  if (isQuizReviewMode || hasAnswer(answers[currentQuestion])) return;
   selectedOption = event.target.value;
   draftAnswers[currentQuestion] = selectedOption;
   $("#submit-answer").disabled = !hasAnswer(selectedOption);
@@ -5095,6 +5269,16 @@ $("#fill-answer-input").addEventListener("keydown", (event) => {
 });
 $("#submit-answer").addEventListener("click", submitAnswer);
 $("#next-question").addEventListener("click", () => {
+  if (isQuizReviewMode) {
+    if (currentQuestion === questions.length - 1) {
+      renderQuizResult(activeQuizResultData);
+      showView("quiz");
+    } else {
+      currentQuestion += 1;
+      renderQuestion();
+    }
+    return;
+  }
   if (currentQuestion === questions.length - 1) {
     const assignment = assignments[activeAssignmentIndex];
     if (!assignment) return;
@@ -5105,6 +5289,7 @@ $("#next-question").addEventListener("click", () => {
     assignment.actionEn = "Review Answers";
     assignment.detail = `${questions.length} 题 · 已完成`;
     assignment.detailEn = `${questions.length} questions · Completed`;
+    saveCompletedQuizReview(assignment, completedAt);
     if (Cloud?.enabled) {
       localStorage.setItem(ASSIGNMENTS_KEY, JSON.stringify(assignments));
       syncCloud(() => Cloud.saveSubmission(assignment, questions, answers, { startedAt: quizStartedAt, completedAt }), "student answers");
@@ -5126,13 +5311,31 @@ $("#quiz-result-back").addEventListener("click", () => {
   resetQuizResultView();
   showView("dashboard");
 });
-$("#previous-question").addEventListener("click", () => { if (currentQuestion > 0) { currentQuestion -= 1; saveCurrentQuizProgress(); renderQuestion(); } });
-$("#question-dots").addEventListener("click", (event) => { const button = event.target.closest("[data-jump]"); if (button) { currentQuestion = Number(button.dataset.jump); saveCurrentQuizProgress(); renderQuestion(); } });
+$("#quiz-result-review").addEventListener("click", () => {
+  if (!answers.some(hasAnswer)) return;
+  isQuizReviewMode = true;
+  currentQuestion = 0;
+  $("#quiz-layout").hidden = false;
+  $("#quiz-result").hidden = true;
+  renderQuestion();
+});
+$("#previous-question").addEventListener("click", () => {
+  if (isQuizReviewMode && currentQuestion > 0) {
+    currentQuestion -= 1;
+    renderQuestion();
+  }
+});
+$("#question-dots").addEventListener("click", (event) => {
+  const button = event.target.closest("[data-jump]");
+  if (!isQuizReviewMode || !button || button.disabled) return;
+  currentQuestion = Number(button.dataset.jump);
+  renderQuestion();
+});
 
 window.addEventListener("beforeunload", saveCurrentQuizProgress);
 
 window.addEventListener("keydown", (event) => {
-  if ($("#quiz-view").classList.contains("active") && /^[1-4]$/.test(event.key)) {
+  if (!isQuizReviewMode && $("#quiz-view").classList.contains("active") && /^[1-4]$/.test(event.key)) {
     const button = $(`[data-option="${Number(event.key) - 1}"]`);
     if (button && !button.disabled) button.click();
   }

@@ -835,8 +835,16 @@ html[lang="en"] .landing-section-label, html[lang="en"] .section-kicker { font-f
 .quiz-result-stats article { display: grid; gap: 7px; min-height: 94px; align-content: center; padding: 15px 10px; border: 1px solid #e8e4f0; border-radius: 16px; background: linear-gradient(145deg, #fff, #faf9fe); }
 .quiz-result-stats strong { color: #4e3eb3; font: 700 clamp(20px, 3vw, 29px) Arial, Helvetica, sans-serif; }
 .quiz-result-stats span { color: #77718a; font-size: 12px; }
-.quiz-result-actions { display: flex; justify-content: center; }
+.quiz-result-actions { display: flex; justify-content: center; gap: 12px; flex-wrap: wrap; }
 .quiz-result-actions button { min-width: 180px; }
+.review-answer-line { margin-top: 7px; }
+.review-explanation { margin-top: 13px; padding-top: 13px; border-top: 1px solid var(--line); }
+.question-dots button:disabled { cursor: not-allowed; opacity: .72; }
+.question-dots button.current:disabled { opacity: 1; }
+.question-dots button.correct { color: #fff; border-color: #2d8a67; background: #2d8a67; }
+.question-dots button.wrong { color: #fff; border-color: #c9674d; background: #c9674d; }
+.map-legend i.correct { border-color: #2d8a67; background: #2d8a67; }
+.map-legend i.wrong { border-color: #c9674d; background: #c9674d; }
 .teacher-live-progress { margin-top: 20px; }
 .live-progress-heading { display: flex; align-items: center; justify-content: space-between; gap: 14px; margin-bottom: 10px; }
 .live-progress-heading div { display: grid; gap: 3px; }

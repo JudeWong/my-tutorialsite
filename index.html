@@ -451,7 +451,7 @@
         <section id="quiz-view" class="view quiz-view">
           <div class="quiz-top">
             <button class="back-button" id="exit-quiz">← 退出练习</button>
-             <div><span>互动练习</span><strong>第 <b id="current-number">0</b> / <b id="question-total">0</b> 题</strong></div>
+             <div><span id="quiz-mode-label">互动练习</span><strong>第 <b id="current-number">0</b> / <b id="question-total">0</b> 题</strong></div>
           </div>
           <div class="quiz-progress"><i id="quiz-progress-bar"></i></div>
           <div class="quiz-layout" id="quiz-layout">
@@ -476,7 +476,7 @@
             <aside class="question-map panel">
               <p class="section-kicker">PROGRESS</p><h2>答题进度</h2>
               <div class="question-dots" id="question-dots"></div>
-              <div class="map-legend"><span><i class="answered"></i>已作答</span><span><i></i>未作答</span></div>
+              <div class="map-legend" id="quiz-map-legend"><span><i class="answered"></i>已作答</span><span><i></i>未作答</span></div>
               <div class="encourage"><span>✦</span><p><strong>慢慢来，想清楚再回答。</strong>提交后会显示完整解析。</p></div>
             </aside>
           </div>
@@ -493,7 +493,8 @@
               <article><strong id="quiz-result-completed-at">—</strong><span>完成时间</span></article>
             </div>
             <div class="quiz-result-actions">
-              <button class="primary-button" id="quiz-result-back" type="button">返回学生首页</button>
+              <button class="secondary-button" id="quiz-result-back" type="button">返回学生首页</button>
+              <button class="primary-button" id="quiz-result-review" type="button">查看作答解析</button>
             </div>
           </section>
         </section>
