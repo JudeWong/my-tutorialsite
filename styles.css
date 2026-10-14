@@ -904,6 +904,13 @@ html.session-loading-active,html.session-loading-active body { overflow: hidden;
 .live-indicator { display: inline-flex; align-items: center; gap: 7px; padding: 7px 10px; border-radius: 99px; color: #247e62; background: #e7f7f0; font: 700 10px Arial, Helvetica, sans-serif; letter-spacing: .08em; }
 .live-indicator i { width: 7px; height: 7px; border-radius: 50%; background: #2ba879; box-shadow: 0 0 0 4px rgba(43,168,121,.13); }
 .teacher-assignment-progress { display: grid; gap: 10px; }
+.assignment-class-group { display: grid; gap: 10px; padding: 16px; border: 1px solid #e6e3dc; border-radius: 18px; background: #faf9f6; }
+.assignment-class-group + .assignment-class-group { margin-top: 8px; }
+.assignment-class-group > header { display: flex; align-items: end; justify-content: space-between; gap: 14px; padding: 0 2px 3px; }
+.assignment-class-group > header span { color: #a45b1f; font: 700 10px Arial,Helvetica,sans-serif; letter-spacing: .12em; }
+.assignment-class-group > header h3 { margin: 3px 0 0; color: #242428; font-size: 19px; }
+.assignment-class-group > header p { margin: 0; color: #7c7c82; font-size: 12px; }
+.assignment-class-list { display: grid; gap: 9px; }
 .workspace-assignment-progress { margin-top: 18px; }
 .workspace-assignment-progress > h2 { margin-bottom: 18px; }
 .assignment-progress-card { overflow: hidden; border: 1px solid #dfdfdc; border-radius: 15px; background: #fff; }
@@ -934,6 +941,49 @@ html.session-loading-active,html.session-loading-active body { overflow: hidden;
 .assignment-status.active { color: #9c5319; background: #fff0e2; }
 .assignment-status.not-started { color: #727278; background: #eeeeec; }
 .assignment-progress-empty { padding: 22px; color: #85858b; font-size: 13px; text-align: center; }
+.class-roster-groups { display: grid; gap: 20px; }
+.class-roster-group { overflow: hidden; border: 1px solid #e8e4ee; border-radius: 16px; }
+.class-roster-group > header { display: flex; align-items: center; justify-content: space-between; gap: 12px; padding: 14px 17px; border-bottom: 1px solid #ece8f2; background: #faf9fc; }
+.class-roster-group > header h3 { margin: 0; font-size: 17px; }
+.class-roster-group > header span { color: #817a94; font-size: 12px; }
+.class-roster-group .workspace-table { padding: 0 17px; }
+
+/* Real teacher and student learning analytics. */
+.analytics-metrics { grid-template-columns: repeat(4,minmax(0,1fr)); }
+.analytics-grid { display: grid; grid-template-columns: minmax(0,1fr) minmax(0,1fr); gap: 18px; }
+.analytics-grid + .analytics-recent-panel { margin-top: 18px; }
+.analytics-panel-heading { display: flex; align-items: flex-start; justify-content: space-between; gap: 12px; margin-bottom: 18px; }
+.analytics-panel-heading span { color: #6d54e8; font: 700 10px Arial,Helvetica,sans-serif; letter-spacing: .12em; }
+.analytics-panel-heading h2 { margin: 4px 0 0; font-size: 23px; }
+.analytics-topic-list,.analytics-class-list,.analytics-result-list { display: grid; gap: 10px; }
+.analytics-topic-row { display: grid; grid-template-columns: minmax(120px,.75fr) minmax(180px,1.25fr); gap: 18px; align-items: center; padding: 13px 0; border-bottom: 1px solid #ece8f2; }
+.analytics-topic-row:last-child { border-bottom: 0; }
+.analytics-topic-row > div { display: grid; gap: 4px; }
+.analytics-topic-row strong { font-size: 14px; }
+.analytics-topic-row small { color: #898296; font-size: 11px; }
+.analytics-topic-row > span { display: grid; grid-template-columns: 1fr 42px; gap: 9px; align-items: center; }
+.analytics-topic-row i { display: block; height: 8px; overflow: hidden; border-radius: 99px; background: #ece8f3; }
+.analytics-topic-row i b { display: block; height: 100%; border-radius: inherit; background: linear-gradient(90deg,#6d54e8,#8e78f1); }
+.analytics-topic-row.needs-attention i b { background: linear-gradient(90deg,#e66b43,#f5a14a); }
+.analytics-topic-row em { color: #4e3eb3; font: 700 12px Arial,Helvetica,sans-serif; font-style: normal; text-align: right; }
+.analytics-class-list article { display: grid; grid-template-columns: minmax(0,1fr) auto auto; gap: 16px; align-items: center; padding: 13px 0; border-bottom: 1px solid #ece8f2; }
+.analytics-class-list article:last-child { border-bottom: 0; }
+.analytics-class-list article > div,.analytics-class-list article > span { display: grid; gap: 4px; }
+.analytics-class-list article > div small,.analytics-class-list article > span small { color: #898296; font-size: 11px; }
+.analytics-class-list article > span { min-width: 66px; text-align: right; }
+.analytics-class-list article > span b { color: #4e3eb3; font-size: 16px; }
+.analytics-result-list article { display: grid; grid-template-columns: minmax(0,1fr) auto; gap: 16px; align-items: center; padding: 13px 0; border-bottom: 1px solid #ece8f2; }
+.analytics-result-list article:last-child { border-bottom: 0; }
+.analytics-result-list article > div,.analytics-result-list article > span { display: grid; gap: 4px; }
+.analytics-result-list article small { color: #898296; font-size: 11px; }
+.analytics-result-list article > span { grid-template-columns: auto auto; gap: 10px; align-items: center; }
+.analytics-result-list article > span b { font-size: 14px; }
+.analytics-result-list article > span em { padding: 5px 8px; border-radius: 99px; color: #4e3eb3; background: #eeeafe; font: 700 11px Arial,Helvetica,sans-serif; font-style: normal; }
+.analytics-recommendation { display: grid; grid-template-columns: auto minmax(0,1fr); gap: 17px; align-content: start; background: linear-gradient(145deg,#fff9e9,#fff); }
+.analytics-recommendation > span { display: grid; width: 44px; height: 44px; place-items: center; border-radius: 13px; color: #fff; background: #f28a2f; font-size: 19px; }
+.analytics-recommendation small { color: #a45b1f; font: 700 10px Arial,Helvetica,sans-serif; letter-spacing: .12em; }
+.analytics-recommendation h2 { margin: 5px 0 9px; }
+.analytics-recommendation p { margin: 0; color: #6f687a; font-size: 14px; line-height: 1.7; }
 @media (max-width: 720px) {
   .teacher-assignment-progress-panel { padding: 22px 17px; }
   .teacher-assignment-progress-panel .panel-heading { gap: 12px; }
@@ -945,6 +995,14 @@ html.session-loading-active,html.session-loading-active body { overflow: hidden;
   .assignment-student-avatar { width: 32px; height: 32px; }
   .assignment-student-meter { grid-column: 2 / -1; }
   .assignment-status { grid-column: 3; grid-row: 1; }
+  .assignment-class-group { padding: 12px; }
+  .assignment-class-group > header { align-items: flex-start; }
+  .assignment-class-group > header p { text-align: right; }
+  .analytics-metrics,.analytics-grid { grid-template-columns: 1fr; }
+  .analytics-topic-row { grid-template-columns: 1fr; gap: 8px; }
+  .analytics-class-list article { grid-template-columns: minmax(0,1fr) auto; }
+  .analytics-class-list article > span:last-child { grid-column: 2; }
+  .class-roster-group .workspace-table { padding: 0 12px; }
 }
 @media (prefers-reduced-motion: reduce) {
   .session-loading-orbit,.session-loading-visual > i,.session-loading-bar i { animation-duration: .01ms; animation-iteration-count: 1; }

@@ -380,6 +380,12 @@
       submissionsMap.get(item.submission_id)[item.question_id] = answer;
       return submissionsMap;
     }, new Map());
+    const correctnessBySubmission = (studentAnswers || []).reduce((submissionsMap, item) => {
+      if (!item.submission_id || !item.question_id) return submissionsMap;
+      if (!submissionsMap.has(item.submission_id)) submissionsMap.set(item.submission_id, {});
+      submissionsMap.get(item.submission_id)[item.question_id] = item.is_correct === true;
+      return submissionsMap;
+    }, new Map());
     const mappedSubmissions = (submissions || []).map((item) => ({
       id: item.id,
       assignmentId: item.assignment_id,
@@ -391,6 +397,7 @@
         : answeredCounts.get(item.id) || Number(item.total_questions) || 0,
       status: item.status || "completed",
       answersByQuestionId: answersBySubmission.get(item.id) || {},
+      correctnessByQuestionId: correctnessBySubmission.get(item.id) || {},
       startedAt: item.started_at || item.created_at || "",
       submittedAt: item.submitted_at || "",
       createdAt: item.created_at || "",

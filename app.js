@@ -1046,12 +1046,61 @@ function getLatestCloudSubmissions() {
 
 function getStudentsForAssignment(assignment) {
   const students = getStudents().filter((student) => student.status !== "disabled");
-  if (!assignment?.classId) return students;
+  if (!assignment?.classId && !assignment?.className) return students;
   const assignedClass = cloudClasses.find((item) => item.id === assignment.classId);
   return students.filter((student) => (
-    student.classId === assignment.classId
+    (assignment.classId && student.classId === assignment.classId)
     || (assignedClass?.name && student.className === assignedClass.name)
+    || (assignment.className && student.className === assignment.className)
   ));
+}
+
+function getAssignmentClassLabel(assignment) {
+  return assignment?.className
+    || cloudClasses.find((item) => item.id === assignment?.classId)?.name
+    || localized("All Classes", "所有班级");
+}
+
+function assignmentProgressCardMarkup(assignment, latestByStudentAndAssignment, openAssignmentIds) {
+  const students = getStudentsForAssignment(assignment);
+  const studentRows = students.map((student) => ({
+    student,
+    submission: latestByStudentAndAssignment.get(`${assignment.id}:${student.id}`) || null
+  }));
+  const completedCount = studentRows.filter(({ submission }) => submission?.status === "completed").length;
+  const activeCount = studentRows.filter(({ submission }) => submission?.status === "in_progress").length;
+  const className = getAssignmentClassLabel(assignment);
+  const title = currentLanguage === "en" ? assignment.titleEn : assignment.title;
+  const totalQuestions = Number(assignment.questionCount) || assignment.questionIds?.length || 0;
+  const open = openAssignmentIds.has(assignment.id) ? " open" : "";
+  return `<details class="assignment-progress-card" data-assignment-progress-id="${escapeHTML(assignment.id)}"${open}>
+    <summary>
+      <span class="assignment-progress-icon">${escapeHTML(assignment.icon || "✦")}</span>
+      <span class="assignment-progress-title"><strong>${escapeHTML(title)}</strong><small>${escapeHTML(className)} · ${totalQuestions} ${localized("questions", "题")}</small></span>
+      <span class="assignment-progress-overview"><strong>${completedCount} / ${students.length}</strong><small>${localized("completed", "已完成")} · ${activeCount} ${localized("in progress", "进行中")}</small></span>
+      <span class="assignment-progress-chevron" aria-hidden="true">⌄</span>
+    </summary>
+    <div class="assignment-student-progress" aria-label="${localized("Student progress details", "学生作答明细")}">
+      ${studentRows.length ? studentRows.map(({ student, submission }) => {
+        const total = submission?.totalQuestions || totalQuestions;
+        const completed = submission?.status === "completed";
+        const active = submission?.status === "in_progress";
+        const answered = completed ? total : Math.min(total || submission?.answeredQuestions || 0, submission?.answeredQuestions || 0);
+        const percentage = completed ? 100 : total ? Math.round((answered / total) * 100) : 0;
+        const statusText = completed ? localized("Completed", "已完成") : active ? localized("In progress", "正在作答") : localized("Not started", "尚未开始");
+        const detail = completed
+          ? localized(`Score ${submission.score} / ${total}`, `成绩 ${submission.score} / ${total}`)
+          : active ? localized(`${answered} / ${total} answered`, `已作答 ${answered} / ${total} 题`) : localized(`0 / ${total} answered`, `已作答 0 / ${total} 题`);
+        const updated = submission?.updatedAt ? formatNoteDate(submission.updatedAt) : localized("No activity yet", "尚无活动");
+        return `<article class="assignment-student-row">
+          <span class="assignment-student-avatar">${escapeHTML(student.name?.slice(-1) || "学")}</span>
+          <span class="assignment-student-name"><strong>${escapeHTML(student.name || localized("Student", "学生"))}</strong><small>${escapeHTML(student.className || "—")} · ${escapeHTML(String(student.year || ""))}</small></span>
+          <span class="assignment-student-meter"><span><b>${escapeHTML(detail)}</b><small>${escapeHTML(updated)}</small></span><i><b style="width:${percentage}%"></b></i></span>
+          <em class="assignment-status ${completed ? "completed" : active ? "active" : "not-started"}">${escapeHTML(statusText)}</em>
+        </article>`;
+      }).join("") : `<div class="assignment-progress-empty">${localized("No students are assigned to this class yet.", "此班级尚未有学生账号。")}</div>`}
+    </div>
+  </details>`;
 }
 
 function teacherAssignmentProgressCardsMarkup(openAssignmentIds = openTeacherAssignmentProgressIds) {
@@ -1062,47 +1111,27 @@ function teacherAssignmentProgressCardsMarkup(openAssignmentIds = openTeacherAss
     `${submission.assignmentId}:${submission.studentId}`,
     submission
   ]));
-  return assignments.map((assignment) => {
-    const students = getStudentsForAssignment(assignment);
-    const studentRows = students.map((student) => ({
-      student,
-      submission: latestByStudentAndAssignment.get(`${assignment.id}:${student.id}`) || null
-    }));
-    const completedCount = studentRows.filter(({ submission }) => submission?.status === "completed").length;
-    const activeCount = studentRows.filter(({ submission }) => submission?.status === "in_progress").length;
-    const className = cloudClasses.find((item) => item.id === assignment.classId)?.name || localized("All classes", "所有班级");
-    const title = currentLanguage === "en" ? assignment.titleEn : assignment.title;
-    const totalQuestions = Number(assignment.questionCount) || assignment.questionIds?.length || 0;
-    const open = openAssignmentIds.has(assignment.id) ? " open" : "";
-    return `<details class="assignment-progress-card" data-assignment-progress-id="${escapeHTML(assignment.id)}"${open}>
-      <summary>
-        <span class="assignment-progress-icon">${escapeHTML(assignment.icon || "✦")}</span>
-        <span class="assignment-progress-title"><strong>${escapeHTML(title)}</strong><small>${escapeHTML(className)} · ${totalQuestions} ${localized("questions", "题")}</small></span>
-        <span class="assignment-progress-overview"><strong>${completedCount} / ${students.length}</strong><small>${localized("completed", "已完成")} · ${activeCount} ${localized("in progress", "进行中")}</small></span>
-        <span class="assignment-progress-chevron" aria-hidden="true">⌄</span>
-      </summary>
-      <div class="assignment-student-progress" aria-label="${localized("Student progress details", "学生作答明细")}">
-        ${studentRows.length ? studentRows.map(({ student, submission }) => {
-          const total = submission?.totalQuestions || totalQuestions;
-          const completed = submission?.status === "completed";
-          const active = submission?.status === "in_progress";
-          const answered = completed ? total : Math.min(total || submission?.answeredQuestions || 0, submission?.answeredQuestions || 0);
-          const percentage = completed ? 100 : total ? Math.round((answered / total) * 100) : 0;
-          const statusText = completed ? localized("Completed", "已完成") : active ? localized("In progress", "正在作答") : localized("Not started", "尚未开始");
-          const detail = completed
-            ? localized(`Score ${submission.score} / ${total}`, `成绩 ${submission.score} / ${total}`)
-            : active ? localized(`${answered} / ${total} answered`, `已作答 ${answered} / ${total} 题`) : localized(`0 / ${total} answered`, `已作答 0 / ${total} 题`);
-          const updated = submission?.updatedAt ? formatNoteDate(submission.updatedAt) : localized("No activity yet", "尚无活动");
-          return `<article class="assignment-student-row">
-            <span class="assignment-student-avatar">${escapeHTML(student.name?.slice(-1) || "学")}</span>
-            <span class="assignment-student-name"><strong>${escapeHTML(student.name || localized("Student", "学生"))}</strong><small>${escapeHTML(student.className || "—")} · ${escapeHTML(String(student.year || ""))}</small></span>
-            <span class="assignment-student-meter"><span><b>${escapeHTML(detail)}</b><small>${escapeHTML(updated)}</small></span><i><b style="width:${percentage}%"></b></i></span>
-            <em class="assignment-status ${completed ? "completed" : active ? "active" : "not-started"}">${escapeHTML(statusText)}</em>
-          </article>`;
-        }).join("") : `<div class="assignment-progress-empty">${localized("No students are assigned to this class yet.", "此班级尚未有学生账号。")}</div>`}
-      </div>
-    </details>`;
-  }).join("");
+  const groups = new Map();
+  assignments.forEach((assignment) => {
+    const label = getAssignmentClassLabel(assignment);
+    const key = assignment.classId ? `id:${assignment.classId}` : assignment.className ? `name:${assignment.className}` : "all";
+    if (!groups.has(key)) groups.set(key, { key, label, assignments: [] });
+    groups.get(key).assignments.push(assignment);
+  });
+  const classOrder = new Map(getClasses().map((className, index) => [className, index]));
+  return [...groups.values()]
+    .sort((left, right) => {
+      if (left.key === "all") return -1;
+      if (right.key === "all") return 1;
+      return (classOrder.get(left.label) ?? 999) - (classOrder.get(right.label) ?? 999) || left.label.localeCompare(right.label);
+    })
+    .map((group) => {
+      const groupStudents = new Set(group.assignments.flatMap((assignment) => getStudentsForAssignment(assignment).map((student) => student.id)));
+      return `<section class="assignment-class-group">
+        <header><div><span>${localized("CLASS", "班级")}</span><h3>${escapeHTML(group.label)}</h3></div><p>${group.assignments.length} ${localized("assignments", "份作业")} · ${groupStudents.size} ${localized("students", "名学生")}</p></header>
+        <div class="assignment-class-list">${group.assignments.map((assignment) => assignmentProgressCardMarkup(assignment, latestByStudentAndAssignment, openAssignmentIds)).join("")}</div>
+      </section>`;
+    }).join("");
 }
 
 function renderTeacherAssignmentProgress() {
@@ -1454,11 +1483,12 @@ function updateStudentProgress() {
   const level = Math.max(1, LEVEL_TARGETS.filter((target) => completed >= target).length + 1);
   $(".student-progress-card .level-chip").textContent = `LV. ${level}`;
   $("#student-level-number").textContent = level;
-  $("#student-accuracy").textContent = "—";
-  $("#student-progress-accuracy").textContent = "—";
-  $("#student-streak").textContent = localized("0 days", "0 天");
-  const completedQuestionCount = assignments.filter((assignment) => assignment.done).reduce((total, assignment) => total + (Number(assignment.questionCount) || 0), 0);
-  $("#student-question-count").textContent = completedQuestionCount;
+  const analytics = role === "student" ? calculateLearningAnalytics(getCompletedAnalyticsSubmissions()) : { accuracy: 0, totalQuestions: 0, streak: 0 };
+  const accuracyText = analytics.totalQuestions ? `${analytics.accuracy}%` : "—";
+  $("#student-accuracy").textContent = accuracyText;
+  $("#student-progress-accuracy").textContent = accuracyText;
+  $("#student-streak").textContent = localized(`${analytics.streak} days`, `${analytics.streak} 天`);
+  $("#student-question-count").textContent = analytics.totalQuestions;
   $("#student-rank").textContent = "—";
   $("#student-weekly-count").textContent = completed;
   $("#student-weekly-total").textContent = `/ ${assignments.length}`;
@@ -2014,6 +2044,11 @@ function showToast(message) {
   toastTimer = setTimeout(() => $("#toast").classList.remove("show"), 2800);
 }
 
+function confirmDestructiveAction(firstMessage, finalMessage) {
+  if (!window.confirm(firstMessage)) return false;
+  return window.confirm(finalMessage);
+}
+
 function localized(english, chinese) {
   return currentLanguage === "en" ? english : chinese;
 }
@@ -2076,6 +2111,202 @@ function closeNoteDialog() {
   $("#note-error").textContent = "";
 }
 
+function getCompletedAnalyticsSubmissions() {
+  const completed = getLatestCloudSubmissions().filter((submission) => submission.status === "completed");
+  if (role === "teacher") return completed;
+  const studentId = String(cloudProfile?.id || activeStudent?.id || "");
+  const scoped = completed.filter((submission) => !studentId || !submission.studentId || String(submission.studentId) === studentId);
+  const assignmentIds = new Set(scoped.map((submission) => submission.assignmentId));
+  assignments.filter((assignment) => assignment.done && !assignmentIds.has(assignment.id)).forEach((assignment) => {
+    const review = getCompletedQuizReview(assignment);
+    if (!review || !Object.keys(review.answersByQuestionId || {}).length) return;
+    scoped.push({
+      id: `local:${assignment.id}`,
+      assignmentId: assignment.id,
+      studentId,
+      score: Number(review.correctCount) || 0,
+      totalQuestions: Number(review.total) || assignment.questionCount || Object.keys(review.answersByQuestionId).length,
+      answeredQuestions: Object.keys(review.answersByQuestionId).length,
+      answersByQuestionId: review.answersByQuestionId,
+      status: "completed",
+      startedAt: review.startedAt || "",
+      submittedAt: review.completedAt || "",
+      createdAt: review.completedAt || "",
+      updatedAt: review.completedAt || ""
+    });
+  });
+  return scoped;
+}
+
+function calculateLearningStreak(submissions) {
+  const days = [...new Set(submissions.map((submission) => {
+    const date = new Date(submission.submittedAt || submission.updatedAt || submission.createdAt || 0);
+    if (Number.isNaN(date.getTime())) return "";
+    return `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, "0")}-${String(date.getDate()).padStart(2, "0")}`;
+  }).filter(Boolean))].sort().reverse();
+  if (!days.length) return 0;
+  let streak = 1;
+  for (let index = 1; index < days.length; index += 1) {
+    const previous = new Date(`${days[index - 1]}T00:00:00`);
+    const current = new Date(`${days[index]}T00:00:00`);
+    if (Math.round((previous - current) / 86400000) !== 1) break;
+    streak += 1;
+  }
+  return streak;
+}
+
+function calculateLearningAnalytics(submissions) {
+  const totalQuestions = submissions.reduce((total, submission) => total + (Number(submission.totalQuestions) || 0), 0);
+  const correctAnswers = submissions.reduce((total, submission) => total + (Number(submission.score) || 0), 0);
+  const topicMap = new Map();
+  const questionMap = new Map(questionBank.map((question) => [question.id, question]));
+  submissions.forEach((submission) => {
+    Object.entries(submission.answersByQuestionId || {}).forEach(([questionId, answer]) => {
+      const question = questionMap.get(questionId);
+      if (!question) return;
+      const topic = question.topic || localized("General", "综合");
+      if (!topicMap.has(topic)) topicMap.set(topic, { topic, correct: 0, total: 0 });
+      const item = topicMap.get(topic);
+      item.total += 1;
+      const savedCorrectness = submission.correctnessByQuestionId || {};
+      const isCorrect = Object.prototype.hasOwnProperty.call(savedCorrectness, questionId)
+        ? savedCorrectness[questionId]
+        : isQuestionAnswerCorrect(question, answer);
+      if (isCorrect) item.correct += 1;
+    });
+  });
+  const topics = [...topicMap.values()].map((item) => ({
+    ...item,
+    accuracy: item.total ? Math.round((item.correct / item.total) * 100) : 0
+  })).sort((left, right) => left.accuracy - right.accuracy || right.total - left.total);
+  return {
+    submissions,
+    completedAssignments: submissions.length,
+    totalQuestions,
+    correctAnswers,
+    accuracy: totalQuestions ? Math.round((correctAnswers / totalQuestions) * 100) : 0,
+    streak: calculateLearningStreak(submissions),
+    topics
+  };
+}
+
+function getTeacherClassAnalytics(completedSubmissions) {
+  const activeStudents = getStudents().filter((student) => student.status !== "disabled");
+  const knownClasses = [...new Set([...getClasses(), ...activeStudents.map((student) => student.className).filter(Boolean)])];
+  return knownClasses.map((className) => {
+    const classRecord = cloudClasses.find((item) => item.name === className);
+    const students = activeStudents.filter((student) => student.className === className || (classRecord?.id && student.classId === classRecord.id));
+    const studentIds = new Set(students.map((student) => student.id));
+    const classAssignments = assignments.filter((assignment) => (
+      (!assignment.classId && !assignment.className)
+      || assignment.className === className
+      || (classRecord?.id && assignment.classId === classRecord.id)
+    ));
+    const assignmentIds = new Set(classAssignments.map((assignment) => assignment.id));
+    const submissions = completedSubmissions.filter((submission) => studentIds.has(submission.studentId) && assignmentIds.has(submission.assignmentId));
+    const totalQuestions = submissions.reduce((total, submission) => total + (Number(submission.totalQuestions) || 0), 0);
+    const correctAnswers = submissions.reduce((total, submission) => total + (Number(submission.score) || 0), 0);
+    const expected = students.length * classAssignments.length;
+    return {
+      className,
+      students: students.length,
+      assignments: classAssignments.length,
+      completed: submissions.length,
+      completionRate: expected ? Math.min(100, Math.round((submissions.length / expected) * 100)) : 0,
+      accuracy: totalQuestions ? Math.round((correctAnswers / totalQuestions) * 100) : 0,
+      gradedQuestions: totalQuestions
+    };
+  });
+}
+
+function analyticsTopicMarkup(topics) {
+  if (!topics.length) {
+    return `<div class="data-empty"><strong>${localized("No topic results yet", "尚无知识点成绩")}</strong><p>${localized("Topic performance will appear after completed assignments contain saved answers.", "学生完成作业并储存答案后，知识点表现会显示在这里。")}</p></div>`;
+  }
+  return `<div class="analytics-topic-list">${topics.map((item) => `
+    <article class="analytics-topic-row ${item.accuracy < 60 ? "needs-attention" : ""}">
+      <div><strong>${escapeHTML(item.topic)}</strong><small>${item.correct} / ${item.total} ${localized("correct", "题正确")}</small></div>
+      <span><i><b style="width:${item.accuracy}%"></b></i><em>${item.accuracy}%</em></span>
+    </article>`).join("")}</div>`;
+}
+
+function teacherStudentRosterMarkup(students) {
+  if (!students.length) return `<div class="workspace-empty"><strong>${localized("No students registered yet", "暂时没有学生注册")}</strong><p>${localized("Share the hourly verification code with students to get started.", "把每小时验证码交给学生即可开始注册。")}</p></div>`;
+  const groups = new Map();
+  students.forEach((student) => {
+    const className = student.className || localized("Unassigned", "未分班");
+    if (!groups.has(className)) groups.set(className, []);
+    groups.get(className).push(student);
+  });
+  const order = new Map(getClasses().map((className, index) => [className, index]));
+  return `<div class="class-roster-groups">${[...groups.entries()].sort((left, right) => (order.get(left[0]) ?? 999) - (order.get(right[0]) ?? 999) || left[0].localeCompare(right[0])).map(([className, classStudents]) => `
+    <section class="class-roster-group">
+      <header><h3>${escapeHTML(className)}</h3><span>${classStudents.length} ${localized("students", "名学生")}</span></header>
+      <div class="workspace-table">${classStudents.map((student) => `<article><span class="student-initial">${escapeHTML(student.name?.slice(-1) || "S")}</span><div><strong>${escapeHTML(student.name)}</strong><small>${escapeHTML(student.className)} · ${escapeHTML(student.year)}</small></div><span class="status-pill ${student.status === "disabled" ? "status-disabled" : ""}">${student.status === "disabled" ? localized("Disabled", "已停用") : localized("Active", "启用中")}</span><button type="button" data-manage-student-id="${escapeHTML(student.id)}">${localized("Manage Account", "管理账号")}</button></article>`).join("")}</div>
+    </section>`).join("")}</div>`;
+}
+
+function analyticsRecentResultsMarkup(submissions, { teacher = false } = {}) {
+  const studentMap = new Map(getStudents().map((student) => [student.id, student]));
+  const assignmentMap = new Map(assignments.map((assignment) => [assignment.id, assignment]));
+  const rows = [...submissions]
+    .sort((left, right) => new Date(right.submittedAt || right.updatedAt || 0) - new Date(left.submittedAt || left.updatedAt || 0))
+    .slice(0, 10);
+  if (!rows.length) return `<div class="data-empty"><strong>${localized("No completed results yet", "尚无已完成成绩")}</strong><p>${localized("Completed assignments will be listed here.", "完成作业后，成绩会列在这里。")}</p></div>`;
+  return `<div class="analytics-result-list">${rows.map((submission) => {
+    const assignment = assignmentMap.get(submission.assignmentId);
+    const student = studentMap.get(submission.studentId);
+    const total = Number(submission.totalQuestions) || assignment?.questionCount || 0;
+    const score = Number(submission.score) || 0;
+    const percentage = total ? Math.round((score / total) * 100) : 0;
+    const title = assignment ? (currentLanguage === "en" ? assignment.titleEn : assignment.title) : localized("Practice", "练习");
+    const date = formatNoteDate(submission.submittedAt || submission.updatedAt || submission.createdAt);
+    return `<article><div><strong>${escapeHTML(teacher ? student?.name || localized("Student", "学生") : title)}</strong><small>${escapeHTML(teacher ? `${student?.className || "—"} · ${title} · ${date}` : date)}</small></div><span><b>${score} / ${total}</b><em>${percentage}%</em></span></article>`;
+  }).join("")}</div>`;
+}
+
+function teacherAnalyticsMarkup() {
+  const submissions = getCompletedAnalyticsSubmissions();
+  const analytics = calculateLearningAnalytics(submissions);
+  const classAnalytics = getTeacherClassAnalytics(submissions);
+  const participatingStudents = new Set(submissions.map((submission) => submission.studentId).filter(Boolean)).size;
+  return `
+    <div class="workspace-metrics analytics-metrics">
+      <article><strong>${analytics.totalQuestions ? `${analytics.accuracy}%` : "—"}</strong><span>${localized("Average accuracy", "平均正确率")}</span></article>
+      <article><strong>${analytics.completedAssignments}</strong><span>${localized("Completed submissions", "已完成作业")}</span></article>
+      <article><strong>${participatingStudents}</strong><span>${localized("Participating students", "参与学生")}</span></article>
+      <article><strong>${analytics.totalQuestions}</strong><span>${localized("Graded answers", "已评分题目")}</span></article>
+    </div>
+    <div class="analytics-grid">
+      <section class="panel workspace-panel"><div class="analytics-panel-heading"><div><span>${localized("BY CLASS", "按班级")}</span><h2>${localized("Class Performance", "班级表现")}</h2></div></div>
+        ${classAnalytics.length ? `<div class="analytics-class-list">${classAnalytics.map((item) => `<article><div><strong>${escapeHTML(item.className)}</strong><small>${item.students} ${localized("students", "名学生")} · ${item.assignments} ${localized("assignments", "份作业")}</small></div><span><b>${item.accuracy || 0}%</b><small>${localized("Accuracy", "正确率")}</small></span><span><b>${item.completionRate}%</b><small>${localized("Completion", "完成率")}</small></span></article>`).join("")}</div>` : `<div class="data-empty"><strong>${localized("No classes yet", "尚未建立班级")}</strong></div>`}
+      </section>
+      <section class="panel workspace-panel"><div class="analytics-panel-heading"><div><span>${localized("BY TOPIC", "按知识点")}</span><h2>${localized("Topic Performance", "知识点表现")}</h2></div></div>${analyticsTopicMarkup(analytics.topics)}</section>
+    </div>
+    <section class="panel workspace-panel analytics-recent-panel"><div class="analytics-panel-heading"><div><span>${localized("LATEST", "最近")}</span><h2>${localized("Recent Results", "最近成绩")}</h2></div></div>${analyticsRecentResultsMarkup(submissions, { teacher: true })}</section>`;
+}
+
+function studentAnalyticsMarkup() {
+  const submissions = getCompletedAnalyticsSubmissions();
+  const analytics = calculateLearningAnalytics(submissions);
+  const weakest = analytics.topics[0];
+  const recommendation = weakest
+    ? localized(`Focus next on ${weakest.topic}; your current accuracy is ${weakest.accuracy}%.`, `建议下一步加强“${weakest.topic}”，目前正确率为 ${weakest.accuracy}%。`)
+    : localized("Complete an assignment to receive a personalised learning recommendation.", "完成一份作业后，系统会提供个人化学习建议。");
+  return `
+    <div class="workspace-metrics analytics-metrics">
+      <article><strong>${analytics.totalQuestions ? `${analytics.accuracy}%` : "—"}</strong><span>${localized("Answer accuracy", "答题正确率")}</span></article>
+      <article><strong>${analytics.totalQuestions}</strong><span>${localized("Questions completed", "完成题数")}</span></article>
+      <article><strong>${analytics.completedAssignments}</strong><span>${localized("Assignments completed", "已完成作业")}</span></article>
+      <article><strong>${analytics.streak}</strong><span>${localized("Day streak", "连续学习天数")}</span></article>
+    </div>
+    <div class="analytics-grid">
+      <section class="panel workspace-panel"><div class="analytics-panel-heading"><div><span>${localized("MY TOPICS", "我的知识点")}</span><h2>${localized("Topic Performance", "知识点表现")}</h2></div></div>${analyticsTopicMarkup(analytics.topics)}</section>
+      <section class="panel workspace-panel analytics-recommendation"><span>✦</span><div><small>${localized("NEXT STEP", "下一步建议")}</small><h2>${localized("Learning Recommendation", "学习建议")}</h2><p>${escapeHTML(recommendation)}</p></div></section>
+    </div>
+    <section class="panel workspace-panel analytics-recent-panel"><div class="analytics-panel-heading"><div><span>${localized("HISTORY", "历史")}</span><h2>${localized("Recent Results", "最近成绩")}</h2></div></div>${analyticsRecentResultsMarkup(submissions)}</section>`;
+}
+
 function renderWorkspaceView(name) {
   activeWorkspaceView = name;
   const title = $("#placeholder-title");
@@ -2133,14 +2364,15 @@ function renderWorkspaceView(name) {
       const completionRate = expectedAssignments ? Math.round((completedAssignments / expectedAssignments) * 100) : 0;
       content.innerHTML = `
         <div class="workspace-metrics"><article><strong>${getClasses().length}</strong><span>${localized("Active classes", "启用班级")}</span></article><article><strong>${students.length}</strong><span>${localized("Registered students", "已注册学生")}</span></article><article><strong>${completionRate}%</strong><span>${localized("Completion rate", "完成率")}</span></article></div>
-        <section class="panel workspace-panel"><h2>${localized("Student Roster", "学生名册")}</h2>${students.length ? `<div class="workspace-table">${students.map((student) => `<article><span class="student-initial">${escapeHTML(student.name?.slice(-1) || "S")}</span><div><strong>${escapeHTML(student.name)}</strong><small>${escapeHTML(student.className)} · ${escapeHTML(student.year)}</small></div><span class="status-pill ${student.status === "disabled" ? "status-disabled" : ""}">${student.status === "disabled" ? localized("Disabled", "已停用") : localized("Active", "启用中")}</span><button type="button" data-manage-student-id="${escapeHTML(student.id)}">${localized("Manage Account", "管理账号")}</button></article>`).join("")}</div>` : `<div class="workspace-empty"><strong>${localized("No students registered yet", "暂时没有学生注册")}</strong><p>${localized("Share the hourly verification code with students to get started.", "把每小时验证码交给学生即可开始注册。")}</p></div>`}</section>
-        <section class="panel workspace-panel workspace-assignment-progress"><h2>${localized("Student Progress by Assignment", "每份作业的学生进度")}</h2><div class="teacher-assignment-progress">${teacherAssignmentProgressCardsMarkup()}</div></section>`;
+        <section class="panel workspace-panel"><h2>${localized("Student Roster by Class", "按班级分类的学生名册")}</h2>${teacherStudentRosterMarkup(students)}</section>
+        <section class="panel workspace-panel workspace-assignment-progress"><h2>${localized("Assignment Progress by Class", "按班级分类的作业进度")}</h2><div class="teacher-assignment-progress">${teacherAssignmentProgressCardsMarkup()}</div></section>`;
     } else {
       const completed = assignments.filter((item) => item.done).length;
       const level = Math.max(1, LEVEL_TARGETS.filter((target) => completed >= target).length + 1);
+      const analytics = calculateLearningAnalytics(getCompletedAnalyticsSubmissions());
       action.textContent = localized("Continue Learning →", "继续学习 →");
       action.dataset.action = "start-practice";
-      content.innerHTML = `<div class="workspace-metrics"><article><strong>LV. ${level}</strong><span>${localized("Current level", "目前等级")}</span></article><article><strong>${completed}/${assignments.length}</strong><span>${localized("Assignments completed", "已完成作业")}</span></article><article><strong>—</strong><span>${localized("Answer accuracy", "答题正确率")}</span></article></div><section class="panel workspace-panel"><h2>${localized("Learning Milestones", "学习里程碑")}</h2><div class="milestone-list"><span class="done">✓ ${localized("Registered an account", "完成账号注册")}</span>${completed ? `<span class="done">✓ ${localized(`${completed} assignments completed`, `完成 ${completed} 份练习`)}</span>` : ""}<span>${localized("Complete assignments to unlock more milestones", "完成练习以解锁更多里程碑")}</span></div></section>`;
+      content.innerHTML = `<div class="workspace-metrics"><article><strong>LV. ${level}</strong><span>${localized("Current level", "目前等级")}</span></article><article><strong>${completed}/${assignments.length}</strong><span>${localized("Assignments completed", "已完成作业")}</span></article><article><strong>${analytics.totalQuestions ? `${analytics.accuracy}%` : "—"}</strong><span>${localized("Answer accuracy", "答题正确率")}</span></article></div><section class="panel workspace-panel"><h2>${localized("Learning Milestones", "学习里程碑")}</h2><div class="milestone-list"><span class="done">✓ ${localized("Registered an account", "完成账号注册")}</span>${completed ? `<span class="done">✓ ${localized(`${completed} assignments completed`, `完成 ${completed} 份练习`)}</span>` : ""}<span>${localized("Complete assignments to unlock more milestones", "完成练习以解锁更多里程碑")}</span></div></section>`;
     }
   } else {
     title.textContent = role === "teacher" ? localized("Learning Analytics", "学习分析") : localized("Learning Report", "学习报告");
@@ -2149,14 +2381,27 @@ function renderWorkspaceView(name) {
       : localized("Review your performance and choose what to practise next.", "查看学习表现，并选择下一步要加强的内容。 ");
     action.textContent = role === "teacher" ? localized("Download CSV", "下载 CSV") : localized("Practise Weak Topics", "练习弱项");
     action.dataset.action = role === "teacher" ? "export" : "start-practice";
-    content.innerHTML = `<div class="workspace-metrics"><article><strong>—</strong><span>${localized("Average accuracy", "平均正确率")}</span></article><article><strong>${role === "teacher" ? getStudents().length : 0}</strong><span>${role === "teacher" ? localized("Registered students", "已注册学生") : localized("Questions completed", "完成题数")}</span></article><article><strong>${role === "teacher" ? assignments.length : 0}</strong><span>${role === "teacher" ? localized("Assignments", "练习套题") : localized("Day streak", "连续学习天数")}</span></article></div><section class="panel workspace-panel"><h2>${localized("Topic Performance", "知识点表现")}</h2><div class="data-empty"><strong>${localized("No graded data yet", "尚无评分数据")}</strong><p>${localized("Topic analytics will appear after students answer graded questions.", "学生完成评分题目后，知识点分析会显示在这里。")}</p></div></section>`;
+    content.innerHTML = role === "teacher" ? teacherAnalyticsMarkup() : studentAnalyticsMarkup();
   }
 }
 
 function downloadReport() {
+  const submissions = getCompletedAnalyticsSubmissions();
+  const analytics = calculateLearningAnalytics(submissions);
+  const classAnalytics = role === "teacher" ? getTeacherClassAnalytics(submissions) : [];
   const rows = [
-    ["Metric", "Value"], ["Questions in library", questionBank.length],
-    ["Registered students", getStudents().length], ["Classes", getClasses().length], ["Average accuracy", "N/A"]
+    ["Metric", "Value"],
+    ["Questions in library", questionBank.length],
+    ["Registered students", role === "teacher" ? getStudents().length : 1],
+    ["Classes", role === "teacher" ? getClasses().length : activeStudent?.className || ""],
+    ["Completed submissions", analytics.completedAssignments],
+    ["Graded answers", analytics.totalQuestions],
+    ["Correct answers", analytics.correctAnswers],
+    ["Average accuracy", analytics.totalQuestions ? `${analytics.accuracy}%` : "N/A"],
+    [],
+    ["Topic", "Correct", "Total", "Accuracy"],
+    ...analytics.topics.map((item) => [item.topic, item.correct, item.total, `${item.accuracy}%`]),
+    ...(classAnalytics.length ? [[], ["Class", "Students", "Assignments", "Completed", "Completion Rate", "Accuracy"], ...classAnalytics.map((item) => [item.className, item.students, item.assignments, item.completed, `${item.completionRate}%`, `${item.accuracy}%`])] : [])
   ];
   const csv = `\uFEFF${rows.map((row) => row.map((value) => `"${String(value).replace(/"/g, '""')}"`).join(",")).join("\n")}`;
   const url = URL.createObjectURL(new Blob([csv], { type: "text/csv;charset=utf-8" }));
@@ -3543,6 +3788,11 @@ async function updatePaperClassAssignments(paper, targets) {
   assignments = [...nextAssignments, ...assignments.filter((assignment) => assignment.paperId !== paper.id)];
 }
 
+function getRemovedPaperAssignments(paper, targets) {
+  const retainedTargets = new Set(targets.map((target) => target.classId ? `id:${target.classId}` : target.className ? `name:${target.className}` : "all"));
+  return assignments.filter((assignment) => assignment.paperId === paper.id && !retainedTargets.has(getAssignmentTargetKey(assignment)));
+}
+
 function openPaperEditor(paperId) {
   const paper = papers.find((item) => item.id === paperId);
   if (!paper) {
@@ -3572,10 +3822,16 @@ function openPaperEditor(paperId) {
 async function deletePaper(paperId) {
   const paper = papers.find((item) => item.id === paperId);
   if (!paper) return;
-  const confirmed = window.confirm(localized(
-    `Delete “${paper.title}” and all of its questions and assignments? This cannot be undone.`,
-    `确定删除“${paper.title}”及其所有题目与练习吗？此操作无法复原。`
-  ));
+  const confirmed = confirmDestructiveAction(
+    localized(
+      `Delete “${paper.title}” and all of its questions and assignments?`,
+      `要删除“${paper.title}”及其所有题目与作业吗？`
+    ),
+    localized(
+      `Final confirmation: all assignment progress for “${paper.title}” will also be permanently deleted. Continue?`,
+      `最终确认：与“${paper.title}”相关的所有作业进度也会永久删除。确定继续吗？`
+    )
+  );
   if (!confirmed) return;
   if (Cloud?.enabled) {
     try {
@@ -3693,10 +3949,16 @@ async function deleteStudentAccount() {
   const students = getStudents();
   const student = students.find((item) => item.id === studentId);
   if (!student) return;
-  const confirmed = window.confirm(localized(
-    `Delete the student account for ${student.name}? This cannot be undone.`,
-    `确定删除学生“${student.name}”的账号吗？此操作无法复原。`
-  ));
+  const confirmed = confirmDestructiveAction(
+    localized(
+      `Delete the student account for ${student.name}?`,
+      `要删除学生“${student.name}”的账号吗？`
+    ),
+    localized(
+      `Final confirmation: ${student.name}'s account and linked learning records cannot be recovered. Continue?`,
+      `最终确认：学生“${student.name}”的账号及关联学习记录将无法复原。确定继续吗？`
+    )
+  );
   if (!confirmed) return;
   if (Cloud?.enabled) {
     try {
@@ -4661,18 +4923,32 @@ $("#class-form").addEventListener("submit", async (event) => {
 $("#class-list").addEventListener("click", async (event) => {
   const button = event.target.closest("[data-remove-class]");
   if (!button) return;
+  const className = button.dataset.removeClass;
+  const studentCount = getStudents().filter((student) => student.className === className).length;
+  const assignmentCount = assignments.filter((assignment) => (
+    assignment.className === className
+    || (assignment.classId && cloudClasses.find((item) => item.id === assignment.classId)?.name === className)
+  )).length;
+  const confirmed = confirmDestructiveAction(
+    localized(`Delete class “${className}”?`, `要删除班级“${className}”吗？`),
+    localized(
+      `Final confirmation: this class has ${studentCount} students and ${assignmentCount} assignments. Existing accounts will lose this class link. Continue?`,
+      `最终确认：此班级目前有 ${studentCount} 名学生及 ${assignmentCount} 份作业；现有账号会失去班级关联。确定继续吗？`
+    )
+  );
+  if (!confirmed) return;
   if (Cloud?.enabled) {
     try {
-      await Cloud.deleteClass(button.dataset.removeClass);
+      await Cloud.deleteClass(className);
     } catch (error) {
       console.error("Unable to remove cloud class", error);
       showToast(localized("The class could not be removed from the cloud.", "无法从云端移除班级。"));
       return;
     }
   }
-  const classes = getClasses().filter((className) => className !== button.dataset.removeClass);
+  const classes = getClasses().filter((item) => item !== className);
   saveClasses(classes);
-  showToast(`${button.dataset.removeClass} ${localized("was removed", "已从列表移除")}`);
+  showToast(`${className} ${localized("was removed", "已从列表移除")}`);
 });
 
 $("#close-note").addEventListener("click", closeNoteDialog);
@@ -4930,6 +5206,25 @@ $("#edit-paper-form").addEventListener("submit", async (event) => {
   if (!classTargets.length) {
     $("#edit-paper-classes-error").textContent = localized("Select at least one class or All Classes.", "请至少选择一个班级或“所有班级”。");
     return;
+  }
+  const removedAssignments = getRemovedPaperAssignments(paper, classTargets);
+  if (removedAssignments.length) {
+    const removedClasses = removedAssignments.map((assignment) => (
+      assignment.className
+      || cloudClasses.find((item) => item.id === assignment.classId)?.name
+      || localized("All Classes", "所有班级")
+    )).join("、");
+    const confirmed = confirmDestructiveAction(
+      localized(
+        `Remove ${removedAssignments.length} assignment allocation(s) from: ${removedClasses}?`,
+        `要删除以下班级的 ${removedAssignments.length} 份作业吗：${removedClasses}？`
+      ),
+      localized(
+        "Final confirmation: the selected assignments and their student progress will be permanently deleted. Continue?",
+        "最终确认：所选作业及学生作答进度会永久删除。确定继续吗？"
+      )
+    );
+    if (!confirmed) return;
   }
   $("#edit-paper-classes-error").textContent = "";
   paper.title = title;
