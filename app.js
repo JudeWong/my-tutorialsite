@@ -861,18 +861,23 @@ function showSessionLoading(titleEn, titleZh, detailEn, detailZh) {
   setSessionLoadingInteractionBlocked(true);
 }
 
-function hideSessionLoading() {
+function hideSessionLoading({ waitForTransition = false } = {}) {
   const loader = $("#session-loading");
-  if (!loader || loader.hidden) return;
+  if (!loader || loader.hidden) return Promise.resolve();
   clearTimeout(sessionLoadingHideTimer);
   loader.classList.add("is-hiding");
-  sessionLoadingHideTimer = setTimeout(() => {
-    loader.hidden = true;
-    setSessionLoadingInteractionBlocked(false);
-  }, 260);
+  const transition = new Promise((resolve) => {
+    sessionLoadingHideTimer = setTimeout(() => {
+      loader.hidden = true;
+      setSessionLoadingInteractionBlocked(false);
+      resolve();
+    }, 260);
+  });
+  return waitForTransition ? transition : Promise.resolve();
 }
 
 async function initializeAppSession() {
+  let restoredProfile = null;
   try {
     if (!Cloud?.enabled) {
       restoreSession();
@@ -892,7 +897,7 @@ async function initializeAppSession() {
         return;
       }
       await activateCloudProfile(profile);
-      enterApp(profile.role, profile.role === "student" ? profile : null);
+      restoredProfile = profile;
     } catch (error) {
       console.error("Unable to restore cloud session", error);
       await Cloud.signOut().catch(() => {});
@@ -901,8 +906,9 @@ async function initializeAppSession() {
       showToast(error?.message || localized("Cloud sign-in could not be restored.", "无法恢复云端登入状态。"));
     }
   } finally {
-    hideSessionLoading();
+    await hideSessionLoading({ waitForTransition: true });
   }
+  if (restoredProfile) enterApp(restoredProfile.role, restoredProfile.role === "student" ? restoredProfile : null);
 }
 
 function getHourKey(date = new Date()) {
@@ -3889,6 +3895,7 @@ $("#teacher-login-form").addEventListener("submit", async (event) => {
   const submitButton = event.currentTarget.querySelector("button[type='submit']");
   if (Cloud?.enabled) {
     submitButton.disabled = true;
+    let authenticatedProfile = null;
     showSessionLoading(
       "Signing in to the teacher portal",
       "正在登入老师端",
@@ -3896,14 +3903,13 @@ $("#teacher-login-form").addEventListener("submit", async (event) => {
       "正在验证账号并载入云端学习资料……"
     );
     try {
-      const profile = await Cloud.signInTeacher(email, password);
-      await activateCloudProfile(profile);
+      authenticatedProfile = await Cloud.signInTeacher(email, password);
+      await activateCloudProfile(authenticatedProfile);
       $("#teacher-login-error").textContent = "";
-      enterApp("teacher");
-      showToast(localized("Welcome back, Teacher Jude", "欢迎回来，Teacher Jude"));
     } catch (error) {
       console.error("Teacher cloud sign-in failed", error);
       await Cloud.signOut().catch(() => {});
+      authenticatedProfile = null;
       cloudProfile = null;
       $("#teacher-login-error").textContent = error?.code === "CLOUD_SCHEMA_REQUIRED"
         ? error.message
@@ -3912,10 +3918,15 @@ $("#teacher-login-form").addEventListener("submit", async (event) => {
         : error?.message && !/invalid login credentials/i.test(error.message)
           ? error.message
           : localized("The cloud email or password is incorrect.", "云端账号或密码不正确，请重新检查。");
-    } finally {
-      submitButton.disabled = false;
+    }
+    if (authenticatedProfile) {
+      await hideSessionLoading({ waitForTransition: true });
+      enterApp("teacher");
+      showToast(localized("Welcome back, Teacher Jude", "欢迎回来，Teacher Jude"));
+    } else {
       hideSessionLoading();
     }
+    submitButton.disabled = false;
     return;
   }
   if (email !== SUPERADMIN_EMAIL || password !== getTeacherPassword()) {
@@ -3964,6 +3975,7 @@ $("#student-register-form").addEventListener("submit", async (event) => {
   if (Cloud?.enabled) {
     const submitButton = event.currentTarget.querySelector("button[type='submit']");
     submitButton.disabled = true;
+    let registeredStudent = null;
     showSessionLoading(
       "Creating your student account",
       "正在建立学生账号",
@@ -3971,13 +3983,12 @@ $("#student-register-form").addEventListener("submit", async (event) => {
       "正在验证注册资料并准备学习空间……"
     );
     try {
-      const student = await Cloud.registerStudent({ name, className, year, password, code });
-      await activateCloudProfile(student, { migrateLocal: false });
+      registeredStudent = await Cloud.registerStudent({ name, className, year, password, code });
+      await activateCloudProfile(registeredStudent, { migrateLocal: false });
       error.textContent = "";
-      enterApp("student", student);
-      showToast(localized("Registration successful. Welcome!", "注册成功，欢迎开始学习"));
     } catch (cloudError) {
       console.error("Student cloud registration failed", cloudError);
+      registeredStudent = null;
       error.textContent = cloudError?.code === "REGISTRATION_SCHEMA_REQUIRED"
         ? localized(
           "Student registration needs the latest Supabase cloud_schema.sql upgrade. Ask the teacher to run it once.",
@@ -4004,10 +4015,15 @@ $("#student-register-form").addEventListener("submit", async (event) => {
                 "密码至少需要 6 个字符。"
               )
             : cloudError?.message || localized("Cloud registration failed. Ask your teacher to check the connection.", "云端注册失败，请老师检查连接。 ");
-    } finally {
-      submitButton.disabled = false;
+    }
+    if (registeredStudent) {
+      await hideSessionLoading({ waitForTransition: true });
+      enterApp("student", registeredStudent);
+      showToast(localized("Registration successful. Welcome!", "注册成功，欢迎开始学习"));
+    } else {
       hideSessionLoading();
     }
+    submitButton.disabled = false;
     return;
   }
   const student = { id: "", name, className, year, password, status: "active", createdAt: new Date().toISOString() };
@@ -4028,6 +4044,7 @@ $("#student-login-form").addEventListener("submit", async (event) => {
   if (Cloud?.enabled) {
     const submitButton = event.currentTarget.querySelector("button[type='submit']");
     submitButton.disabled = true;
+    let authenticatedStudent = null;
     showSessionLoading(
       "Signing in to your learning space",
       "正在登入学习空间",
@@ -4035,24 +4052,28 @@ $("#student-login-form").addEventListener("submit", async (event) => {
       "正在验证账号并恢复学习进度……"
     );
     try {
-      const student = await Cloud.signInStudent(name, className, year, password);
-      await activateCloudProfile(student, { migrateLocal: false });
+      authenticatedStudent = await Cloud.signInStudent(name, className, year, password);
+      await activateCloudProfile(authenticatedStudent, { migrateLocal: false });
       $("#student-login-error").textContent = "";
-      enterApp("student", student);
-      showToast(`${localized("Welcome back", "欢迎回来")}，${student.name}`);
     } catch (error) {
       console.error("Student cloud sign-in failed", error);
       await Cloud.signOut().catch(() => {});
+      authenticatedStudent = null;
       cloudProfile = null;
       $("#student-login-error").textContent = error?.code === "ACCOUNT_DISABLED"
         ? localized("This account has been disabled. Contact your teacher.", "此账号已停用，请联系老师。")
         : error?.code === "CLOUD_SCHEMA_REQUIRED"
           ? error.message
           : localized("Student account details or password are incorrect.", "学生账号资料或密码不正确。");
-    } finally {
-      submitButton.disabled = false;
+    }
+    if (authenticatedStudent) {
+      await hideSessionLoading({ waitForTransition: true });
+      enterApp("student", authenticatedStudent);
+      showToast(`${localized("Welcome back", "欢迎回来")}，${authenticatedStudent.name}`);
+    } else {
       hideSessionLoading();
     }
+    submitButton.disabled = false;
     return;
   }
   const student = getStudents().find((item) => item.name === name && item.className === className && item.year === year);
