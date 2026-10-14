@@ -828,6 +828,23 @@ async function activateCloudProfile(profile, { migrateLocal = true } = {}) {
 }
 
 let sessionLoadingHideTimer = 0;
+const sessionLoadingInertState = new Map();
+
+function setSessionLoadingInteractionBlocked(blocked) {
+  const loader = $("#session-loading");
+  if (!loader) return;
+  if (blocked) {
+    for (const element of document.body.children) {
+      if (element === loader || sessionLoadingInertState.has(element)) continue;
+      sessionLoadingInertState.set(element, element.inert);
+      element.inert = true;
+    }
+  } else {
+    for (const [element, wasInert] of sessionLoadingInertState) element.inert = wasInert;
+    sessionLoadingInertState.clear();
+  }
+  document.documentElement.classList.toggle("session-loading-active", blocked);
+}
 
 function showSessionLoading(titleEn, titleZh, detailEn, detailZh) {
   const loader = $("#session-loading");
@@ -841,6 +858,7 @@ function showSessionLoading(titleEn, titleZh, detailEn, detailZh) {
   loader.setAttribute("aria-label", localizedTitle);
   loader.hidden = false;
   loader.classList.remove("is-hiding");
+  setSessionLoadingInteractionBlocked(true);
 }
 
 function hideSessionLoading() {
@@ -848,7 +866,10 @@ function hideSessionLoading() {
   if (!loader || loader.hidden) return;
   clearTimeout(sessionLoadingHideTimer);
   loader.classList.add("is-hiding");
-  sessionLoadingHideTimer = setTimeout(() => { loader.hidden = true; }, 260);
+  sessionLoadingHideTimer = setTimeout(() => {
+    loader.hidden = true;
+    setSessionLoadingInteractionBlocked(false);
+  }, 260);
 }
 
 async function initializeAppSession() {
@@ -4783,6 +4804,7 @@ window.addEventListener("keydown", (event) => {
   }
 });
 
+setSessionLoadingInteractionBlocked(true);
 initializeAppSession();
 
 const revealTargets = $$(".landing-vision .lined-copy, .vision-model, .services-intro, .service-row, .highlight-card, .landing-numbers > *, .advantage-strip article, .landing-footer > *");
