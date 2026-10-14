@@ -15,6 +15,7 @@
       detectSessionInUrl: true
     }
   }) : null;
+  let progressChannel = null;
 
   if (client) {
     client.auth.onAuthStateChange((_event, nextSession) => {
@@ -314,9 +315,10 @@
       db.from("notes").select("*").order("created_at", { ascending: false }),
       db.from("assignments").select("*").order("created_at", { ascending: false }),
       db.from("assignment_questions").select("*").order("position", { ascending: true }),
-      db.from("submissions").select("*")
+      db.from("submissions").select("*"),
+      db.from("student_answers").select("id,submission_id,question_id,is_correct,created_at")
     ]);
-    const [profiles, classes, materials, questions, notes, assignments, links, submissions] = results.map((result, index) => unwrap(result, ["profiles", "classes", "materials", "questions", "notes", "assignments", "assignment questions", "submissions"][index]));
+    const [profiles, classes, materials, questions, notes, assignments, links, submissions, studentAnswers] = results.map((result, index) => unwrap(result, ["profiles", "classes", "materials", "questions", "notes", "assignments", "assignment questions", "submissions", "student answers"][index]));
     const questionIdsByAssignment = new Map();
     for (const link of links || []) {
       if (!questionIdsByAssignment.has(link.assignment_id)) questionIdsByAssignment.set(link.assignment_id, []);
@@ -343,13 +345,33 @@
     const completed = new Set((submissions || [])
       .filter((item) => profile.role === "student" && item.student_id === profile.id && item.status === "completed")
       .map((item) => item.assignment_id));
+    const answeredCounts = (studentAnswers || []).reduce((counts, item) => {
+      if (item.submission_id) counts.set(item.submission_id, (counts.get(item.submission_id) || 0) + 1);
+      return counts;
+    }, new Map());
+    const mappedSubmissions = (submissions || []).map((item) => ({
+      id: item.id,
+      assignmentId: item.assignment_id,
+      studentId: item.student_id,
+      score: Number(item.score) || 0,
+      totalQuestions: Number(item.total_questions) || 0,
+      answeredQuestions: item.status === "in_progress"
+        ? Math.min(Number(item.total_questions) || 0, Number(item.score) || 0)
+        : answeredCounts.get(item.id) || Number(item.total_questions) || 0,
+      status: item.status || "completed",
+      startedAt: item.started_at || item.created_at || "",
+      submittedAt: item.submitted_at || "",
+      createdAt: item.created_at || "",
+      updatedAt: item.updated_at || item.created_at || ""
+    }));
     return {
       students: (profiles || []).filter((item) => item.role === "student").map(normalizeProfile),
       classes: (classes || []).map((item) => ({ id: item.id, name: item.class_name || item.name || "", year: item.year || "", active: item.active !== false })),
       papers: mappedMaterials,
       questions: mappedQuestions,
       notes: (notes || []).map((item) => ({ id: item.id, title: item.title || "", content: item.content || "", createdAt: item.created_at, updatedAt: item.updated_at || item.created_at })),
-      assignments: (assignments || []).map((item) => mapAssignment(item, questionIdsByAssignment.get(item.id) || [], completed))
+      assignments: (assignments || []).map((item) => mapAssignment(item, questionIdsByAssignment.get(item.id) || [], completed)),
+      submissions: mappedSubmissions
     };
   }
 
@@ -539,12 +561,92 @@
     unwrap(await requireClient().from("notes").delete().eq("id", noteId), "Delete note");
   }
 
-  async function saveSubmission(assignment, questions, answers) {
+  async function findLatestSubmission(assignmentId) {
+    if (!session?.user?.id || !isUuid(assignmentId)) return null;
+    const rows = unwrap(await requireClient().from("submissions")
+      .select("id,status,started_at,created_at")
+      .eq("assignment_id", assignmentId)
+      .eq("student_id", session.user.id)
+      .order("created_at", { ascending: false })
+      .limit(1), "Load submission") || [];
+    return rows[0] || null;
+  }
+
+  async function saveSubmissionAnswers(submissionId, questions, answers) {
+    const db = requireClient();
+    const rows = questions.map((question, index) => ({ question, index, answer: answers[index] }))
+      .filter(({ question, answer }) => isUuid(question.id) && answer !== null && answer !== undefined && String(answer).trim() !== "")
+      .map(({ question, answer }) => {
+        return {
+          submission_id: submissionId,
+          question_id: question.id,
+          student_answer: JSON.stringify(answer),
+          is_correct: isCorrectAnswer(question, answer)
+        };
+      });
+    if (rows.length) unwrap(await db.from("student_answers").insert(rows), "Save student answers");
+  }
+
+  async function saveQuizProgress(assignment, questions, answers, { startedAt = "" } = {}) {
+    if (!session?.user?.id || !isUuid(assignment?.id) || !Array.isArray(questions) || !questions.length) return;
+    const now = new Date().toISOString();
+    const existing = await findLatestSubmission(assignment.id);
+    const answeredCount = answers.filter((answer) => answer !== null && answer !== undefined && String(answer).trim() !== "").length;
+    const payload = {
+      assignment_id: assignment.id,
+      student_id: session.user.id,
+      // While a submission is in progress, score stores the number answered.
+      // The final correct score replaces it when the student finishes.
+      score: answeredCount,
+      total_questions: questions.length,
+      status: "in_progress",
+      started_at: startedAt || existing?.started_at || now,
+      updated_at: now
+    };
+    const submission = existing
+      ? unwrap(await requireClient().from("submissions").update(payload).eq("id", existing.id).select("id").single(), "Update quiz progress")
+      : unwrap(await requireClient().from("submissions").insert(payload).select("id").single(), "Save quiz progress");
+  }
+
+  async function saveSubmission(assignment, questions, answers, { startedAt = "", completedAt = "" } = {}) {
     if (!session?.user?.id || !isUuid(assignment?.id)) return;
+    const now = new Date().toISOString();
+    const existing = await findLatestSubmission(assignment.id);
     const score = questions.reduce((total, question, index) => total + (isCorrectAnswer(question, answers[index]) ? 1 : 0), 0);
-    const submission = unwrap(await requireClient().from("submissions").insert({ assignment_id: assignment.id, student_id: session.user.id, score, total_questions: questions.length, status: "completed", submitted_at: new Date().toISOString() }).select("id").single(), "Save submission");
-    const rows = questions.filter((question) => isUuid(question.id)).map((question, index) => ({ submission_id: submission.id, question_id: question.id, student_answer: answers[index] === null ? null : JSON.stringify(answers[index]), is_correct: isCorrectAnswer(question, answers[index]) }));
-    if (rows.length) unwrap(await requireClient().from("student_answers").insert(rows), "Save student answers");
+    const payload = {
+      assignment_id: assignment.id,
+      student_id: session.user.id,
+      score,
+      total_questions: questions.length,
+      status: "completed",
+      submitted_at: completedAt || now,
+      started_at: startedAt || existing?.started_at || now,
+      updated_at: now
+    };
+    const submission = existing
+      ? unwrap(await requireClient().from("submissions").update(payload).eq("id", existing.id).select("id").single(), "Update submission")
+      : unwrap(await requireClient().from("submissions").insert(payload).select("id").single(), "Save submission");
+    if (existing?.status !== "completed") await saveSubmissionAnswers(submission.id, questions, answers);
+  }
+
+  function subscribeToProgress(callback) {
+    if (!client) return () => {};
+    if (progressChannel) {
+      void client.removeChannel(progressChannel);
+      progressChannel = null;
+    }
+    const channel = client.channel(`teacher-progress-${Date.now()}`)
+      .on("postgres_changes", { event: "*", schema: "public", table: "submissions" }, callback)
+      .subscribe((status) => {
+        if (status === "CHANNEL_ERROR" || status === "TIMED_OUT") console.warn("Supabase realtime progress channel unavailable:", status);
+      });
+    progressChannel = channel;
+    return () => {
+      if (progressChannel === channel) {
+        void client.removeChannel(channel);
+        progressChannel = null;
+      }
+    };
   }
 
   async function saveChatConversation(threadId, messages, title = "AI 对话") {
@@ -653,6 +755,10 @@
   }
 
   async function signOut() {
+    if (progressChannel) {
+      await client?.removeChannel(progressChannel);
+      progressChannel = null;
+    }
     if (client) await client.auth.signOut();
     session = null;
   }
@@ -689,7 +795,9 @@
     deleteQuestion,
     deleteMaterial,
     deleteNote,
+    saveQuizProgress,
     saveSubmission,
+    subscribeToProgress,
     saveChatConversation,
     getRegistrationCode,
     checkSchema,

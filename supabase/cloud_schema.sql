@@ -87,6 +87,16 @@ alter table public.submissions add column if not exists updated_at timestamptz n
 
 alter table public.student_answers add column if not exists created_at timestamptz not null default now();
 
+-- Realtime is used by the teacher dashboard. These guarded statements are
+-- safe when the tables are already part of the Supabase realtime publication.
+do $$
+begin
+  begin
+    alter publication supabase_realtime add table public.submissions;
+  exception when duplicate_object or undefined_object then null;
+  end;
+end $$;
+
 -- Chat tables are kept compatible with the existing database names used by
 -- the application. Existing projects may already have these columns; the
 -- guards make this safe to run again.

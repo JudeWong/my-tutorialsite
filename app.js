@@ -135,6 +135,7 @@ let resumeUploadAfterAISetup = false;
 let cloudProfile = null;
 let cloudStudents = [];
 let cloudClasses = [];
+let cloudSubmissions = [];
 let cloudDataLoaded = false;
 let cloudRegistrationCode = "";
 let cloudRegistrationCodeExpiresAt = "";
@@ -142,6 +143,12 @@ let cloudChatThreadId = "";
 let lastCloudSyncErrorAt = 0;
 let lastCloudSyncError = null;
 let cloudSyncQueue = Promise.resolve();
+let quizStartedAt = "";
+let quizCloudProgressTimer = null;
+let stopProgressRealtime = null;
+let teacherProgressPollTimer = null;
+let progressRefreshTimer = null;
+let progressRefreshInFlight = false;
 let pendingQuestionImageData = "";
 let pendingQuestionImagePath = "";
 let pendingQuestionImageAlt = "题目图表";
@@ -519,6 +526,20 @@ const UI_EN = Object.freeze({
   ,"你好！我是你的生成式 AI 助理。你可以问我任何问题，也可以要求解释、写作、计算、翻译或编程协助。": "Hi! I'm your generative AI assistant. Ask me anything or request help with explanations, writing, calculations, translation, or programming."
   ,"老师尚未发布笔记": "No teacher notes yet"
   ,"老师发布笔记后会显示在这里。": "Notes published by your teacher will appear here."
+  ,"PRACTICE COMPLETE": "PRACTICE COMPLETE"
+  ,"练习完成！": "Practice complete!"
+  ,"你答对了": "You answered"
+  ,"题。": "questions correctly."
+  ,"答对题数": "Correct answers"
+  ,"正确率": "Accuracy"
+  ,"答题用时": "Time spent"
+  ,"完成时间": "Completed at"
+  ,"返回学生首页": "Back to student home"
+  ,"学生实时进度": "Live student progress"
+  ,"学生作答时自动更新": "Updates automatically while students answer"
+  ,"实时": "LIVE"
+  ,"已完成": "Completed"
+  ,"正在作答": "In progress"
 });
 
 function applyLanguage(language = "zh", { persist = true } = {}) {
@@ -739,6 +760,7 @@ function applyCloudSnapshot(snapshot) {
   teacherNotes = snapshot.notes || [];
   cloudStudents = snapshot.students || [];
   cloudClasses = snapshot.classes || [];
+  cloudSubmissions = snapshot.submissions || [];
   cloudDataLoaded = true;
   localStorage.setItem(PAPERS_KEY, JSON.stringify(papers));
   localStorage.setItem(QUESTIONS_KEY, JSON.stringify(questionBank));
@@ -858,18 +880,72 @@ function renderTeacherClasses() {
   refreshLanguage();
 }
 
+function getLatestCloudSubmissions() {
+  const latest = new Map();
+  cloudSubmissions.forEach((submission) => {
+    const key = `${submission.studentId || "unknown"}:${submission.assignmentId || submission.id}`;
+    const current = latest.get(key);
+    const submissionTime = new Date(submission.updatedAt || submission.createdAt || 0).getTime();
+    const currentTime = new Date(current?.updatedAt || current?.createdAt || 0).getTime();
+    if (!current || submissionTime >= currentTime) latest.set(key, submission);
+  });
+  return [...latest.values()];
+}
+
+function renderTeacherLiveProgress() {
+  const container = $("#teacher-live-progress");
+  if (!container || role !== "teacher") return;
+  const studentMap = new Map(getStudents().map((student) => [student.id, student]));
+  const assignmentMap = new Map(assignments.map((assignment) => [assignment.id, assignment]));
+  const selectedClass = $("#performance-class-select")?.value || "";
+  const rows = getLatestCloudSubmissions()
+    .filter((submission) => ["in_progress", "completed"].includes(submission.status))
+    .filter((submission) => !selectedClass || studentMap.get(submission.studentId)?.className === selectedClass)
+    .sort((a, b) => new Date(b.updatedAt || b.createdAt || 0) - new Date(a.updatedAt || a.createdAt || 0))
+    .slice(0, 10);
+  if (!rows.length) {
+    container.innerHTML = "";
+    return;
+  }
+  container.innerHTML = `
+    <div class="live-progress-heading"><div><strong>${localized("Live student progress", "学生实时进度")}</strong><small>${localized("Updates automatically while students answer", "学生作答时自动更新")}</small></div><span>● ${localized("LIVE", "实时")}</span></div>
+    <div class="live-progress-list">${rows.map((submission) => {
+      const student = studentMap.get(submission.studentId);
+      const assignment = assignmentMap.get(submission.assignmentId);
+      const total = submission.totalQuestions || assignment?.questionCount || 0;
+      const answered = Math.min(total || submission.answeredQuestions || 0, submission.answeredQuestions || 0);
+      const percentage = total ? Math.round((answered / total) * 100) : 0;
+      const completed = submission.status === "completed";
+      const title = assignment ? (currentLanguage === "en" ? assignment.titleEn : assignment.title) : localized("Practice", "练习");
+      const studentName = student?.name || `${localized("Student", "学生")} · ${String(submission.studentId || "").slice(-6)}`;
+      const updated = submission.updatedAt ? formatNoteDate(submission.updatedAt) : localized("just now", "刚刚");
+      return `<article class="live-progress-row"><div class="live-progress-avatar">${escapeHTML(studentName.slice(-1) || "学")}</div><div class="live-progress-copy"><strong>${escapeHTML(studentName)}</strong><small>${escapeHTML(title)} · ${completed ? localized("Completed", "已完成") : localized(`${answered} / ${total} answered`, `已作答 ${answered} / ${total} 题`)} · ${escapeHTML(updated)}</small><i><b style="width:${completed ? 100 : percentage}%"></b></i></div><em class="${completed ? "completed" : "active"}">${completed ? `${submission.score} / ${total}` : `${percentage}%`}</em></article>`;
+    }).join("")}</div>`;
+}
+
 function renderTeacherMetrics() {
   const questionCount = questionBank.length;
-  const completedAssignments = assignments.filter((assignment) => assignment.done).length;
-  const completionRate = assignments.length ? Math.round((completedAssignments / assignments.length) * 100) : 0;
   const students = getStudents();
   const classes = getClasses();
+  const latestSubmissions = getLatestCloudSubmissions();
+  const completedRows = latestSubmissions.filter((submission) => submission.status === "completed");
+  const completedSubmissions = completedRows.length;
+  const activeSubmissions = latestSubmissions.filter((submission) => submission.status === "in_progress").length;
+  const expectedSubmissions = assignments.length * Math.max(1, students.filter((student) => student.status !== "disabled").length);
+  const completedAssignments = cloudSubmissions.length ? completedSubmissions : assignments.filter((assignment) => assignment.done).length;
+  const completionRate = expectedSubmissions ? Math.round((completedAssignments / expectedSubmissions) * 100) : assignments.length ? Math.round((completedAssignments / assignments.length) * 100) : 0;
   $("#teacher-question-count").textContent = questionCount.toLocaleString();
   $("#teacher-paper-count").textContent = localized(`${papers.length} materials uploaded`, `${papers.length} 份资料已上传`);
-  $("#teacher-completion-rate").innerHTML = `${completionRate}<sup>%</sup>`;
-  $("#teacher-completion-note").textContent = localized(`${completedAssignments} of ${assignments.length} assignments completed`, `${completedAssignments} / ${assignments.length} 份练习已完成`);
-  $("#teacher-accuracy").textContent = "—";
-  $("#teacher-accuracy-note").textContent = localized("No graded results yet", "尚无评分记录");
+  $("#teacher-completion-rate").innerHTML = `${Math.min(100, completionRate)}<sup>%</sup>`;
+  $("#teacher-completion-note").textContent = cloudSubmissions.length
+    ? localized(`${activeSubmissions} active · ${completedSubmissions} completed`, `${activeSubmissions} 人正在作答 · ${completedSubmissions} 份已完成`)
+    : localized(`${completedAssignments} of ${assignments.length} assignments completed`, `${completedAssignments} / ${assignments.length} 份练习已完成`);
+  const gradedQuestions = completedRows.reduce((total, submission) => total + submission.totalQuestions, 0);
+  const correctAnswers = completedRows.reduce((total, submission) => total + submission.score, 0);
+  $("#teacher-accuracy").textContent = gradedQuestions ? `${Math.round((correctAnswers / gradedQuestions) * 100)}%` : "—";
+  $("#teacher-accuracy-note").textContent = gradedQuestions
+    ? localized(`${correctAnswers} of ${gradedQuestions} answers correct`, `${correctAnswers} / ${gradedQuestions} 题回答正确`)
+    : localized("No graded results yet", "尚无评分记录");
   $("#teacher-student-count").textContent = students.filter((student) => student.status !== "disabled").length;
   $("#teacher-class-count").textContent = localized(`${classes.length} classes`, `${classes.length} 个班级`);
 }
@@ -878,13 +954,58 @@ function renderClassPerformance() {
   const classes = getClasses();
   const select = $("#performance-class-select");
   if (!select) return;
+  const selectedClass = select.value;
   select.innerHTML = classes.length
-    ? classes.map((className) => `<option value="${escapeHTML(className)}">${escapeHTML(className)}</option>`).join("")
+    ? `<option value="">${localized("All classes", "全部班级")}</option>${classes.map((className) => `<option value="${escapeHTML(className)}">${escapeHTML(className)}</option>`).join("")}`
     : `<option value="">${localized("No classes", "暂无班级")}</option>`;
+  if (classes.includes(selectedClass)) select.value = selectedClass;
   select.disabled = !classes.length;
   $("#performance-empty").innerHTML = classes.length
-    ? `<strong>${localized("No performance data yet", "尚无学习表现数据")}</strong><p>${localized("Results will appear after students complete graded assignments.", "学生完成评分练习后，成绩会显示在这里。")}</p>`
+    ? (cloudSubmissions.length ? `<strong>${localized("Live progress is ready", "实时进度已开启")}</strong><p>${localized("Student answers and completion status appear below.", "学生的作答与完成状态会显示在下方。")}</p>` : `<strong>${localized("No performance data yet", "尚无学习表现数据")}</strong><p>${localized("Results will appear after students start graded assignments.", "学生开始评分练习后，成绩会显示在这里。")}</p>`)
     : `<strong>${localized("No classes yet", "尚未建立班级")}</strong><p>${localized("Add a class above to begin collecting learning data.", "请先在上方添加班级。")}</p>`;
+  renderTeacherLiveProgress();
+}
+
+async function refreshTeacherProgress() {
+  if (!Cloud?.enabled || !cloudProfile || cloudProfile.role !== "teacher" || progressRefreshInFlight) return;
+  progressRefreshInFlight = true;
+  try {
+    const snapshot = await Cloud.loadSnapshot(cloudProfile);
+    applyCloudSnapshot(snapshot);
+    renderPapers(activePaperFilter);
+    renderAssignments();
+    renderTeacherClasses();
+    renderClassPerformance();
+    renderTeacherMetrics();
+    if (activeWorkspaceView) renderWorkspaceView(activeWorkspaceView);
+  } catch (error) {
+    console.warn("Unable to refresh teacher progress", error);
+  } finally {
+    progressRefreshInFlight = false;
+  }
+}
+
+function scheduleTeacherProgressRefresh() {
+  clearTimeout(progressRefreshTimer);
+  progressRefreshTimer = setTimeout(() => void refreshTeacherProgress(), 450);
+}
+
+function startTeacherProgressRealtime() {
+  stopTeacherProgressRealtime();
+  if (!Cloud?.enabled || role !== "teacher" || !Cloud.subscribeToProgress) return;
+  stopProgressRealtime = Cloud.subscribeToProgress(scheduleTeacherProgressRefresh);
+  // Polling keeps the dashboard responsive if Realtime has not yet been enabled
+  // for submissions in the Supabase project.
+  teacherProgressPollTimer = setInterval(scheduleTeacherProgressRefresh, 10000);
+}
+
+function stopTeacherProgressRealtime() {
+  stopProgressRealtime?.();
+  stopProgressRealtime = null;
+  clearInterval(teacherProgressPollTimer);
+  teacherProgressPollTimer = null;
+  clearTimeout(progressRefreshTimer);
+  progressRefreshTimer = null;
 }
 
 function showPublicScreen(screen) {
@@ -937,8 +1058,13 @@ function enterApp(nextRole, student = null) {
   $("#ai-chat-launcher").hidden = nextRole !== "student";
   setRole(nextRole);
   renderAssignments();
-  if (nextRole === "teacher") startCodeTimer();
-  else clearInterval(codeTimer);
+  if (nextRole === "teacher") {
+    startCodeTimer();
+    startTeacherProgressRealtime();
+  } else {
+    clearInterval(codeTimer);
+    stopTeacherProgressRealtime();
+  }
   window.scrollTo({ top: 0, behavior: "auto" });
 }
 
@@ -3296,9 +3422,23 @@ function saveCurrentQuizProgress() {
     currentQuestionId: questions[currentQuestion]?.id || questions[0]?.id || "",
     answersByQuestionId,
     draftAnswersByQuestionId,
+    startedAt: quizStartedAt || new Date().toISOString(),
     updatedAt: new Date().toISOString()
   };
   localStorage.setItem(QUIZ_PROGRESS_KEY, JSON.stringify(store));
+  scheduleCloudQuizProgressSync();
+}
+
+function scheduleCloudQuizProgressSync() {
+  if (role !== "student" || !Cloud?.enabled || !cloudProfile || cloudProfile.role !== "student") return;
+  const assignment = assignments[activeAssignmentIndex];
+  if (!assignment || assignment.done || !questions.length) return;
+  clearTimeout(quizCloudProgressTimer);
+  quizCloudProgressTimer = setTimeout(() => {
+    quizCloudProgressTimer = null;
+    const currentAnswers = questions.map((_, index) => hasAnswer(answers[index]) ? answers[index] : draftAnswers[index]);
+    syncCloud(() => Cloud.saveQuizProgress(assignment, questions, currentAnswers, { startedAt: quizStartedAt }), "student progress");
+  }, 700);
 }
 
 function clearQuizProgress(assignmentId) {
@@ -3320,8 +3460,10 @@ function restoreQuizProgress(assignment) {
   draftAnswers = Array(questions.length).fill(null);
   if (!progress) {
     currentQuestion = 0;
+    quizStartedAt = new Date().toISOString();
     return false;
   }
+  quizStartedAt = progress.startedAt || progress.updatedAt || new Date().toISOString();
   const savedAnswers = progress.answersByQuestionId || {};
   const savedDrafts = progress.draftAnswersByQuestionId || {};
   questions.forEach((question, index) => {
@@ -3353,6 +3495,8 @@ function startQuiz(index = null) {
     return;
   }
   const restored = restoreQuizProgress(assignment);
+  $("#quiz-layout").hidden = false;
+  $("#quiz-result").hidden = true;
   renderQuestion();
   showView("quiz");
   if (restored) showToast(localized("Saved progress restored.", "已恢复上次作答进度。"));
@@ -3364,6 +3508,53 @@ function hasAnswer(answer) {
 
 function normalizeAnswer(answer) {
   return String(answer ?? "").normalize("NFKC").trim().replace(/\s+/g, " ").toLocaleLowerCase();
+}
+
+function formatRomanStatements(value) {
+  const source = String(value ?? "");
+  let formatted = source.replace(/([^\n])\s+(?=(?:IV|III|II|I|V)[.)、:：．])/g, "$1\n");
+  const plainStatementMarkers = source.match(/(?:^|\s)(?:IV|III|II|I)\s+[\u3400-\u9fff]/g) || [];
+  if (plainStatementMarkers.length >= 3) {
+    formatted = formatted.replace(/([^\n])\s+(?=(?:IV|III|II|I)\s+[\u3400-\u9fff])/g, "$1\n");
+  }
+  return formatted;
+}
+
+function formatQuizDuration(milliseconds) {
+  const totalSeconds = Math.max(0, Math.floor(Number(milliseconds) / 1000));
+  const hours = Math.floor(totalSeconds / 3600);
+  const minutes = Math.floor((totalSeconds % 3600) / 60);
+  const seconds = totalSeconds % 60;
+  return hours ? `${hours}:${String(minutes).padStart(2, "0")}:${String(seconds).padStart(2, "0")}` : `${minutes}:${String(seconds).padStart(2, "0")}`;
+}
+
+function formatQuizCompletionTime(value) {
+  const date = new Date(value || Date.now());
+  if (Number.isNaN(date.getTime())) return "—";
+  return new Intl.DateTimeFormat(currentLanguage === "en" ? "en-MY" : "zh-CN", {
+    year: "numeric", month: "2-digit", day: "2-digit", hour: "2-digit", minute: "2-digit"
+  }).format(date);
+}
+
+function renderQuizResult({ correctCount, total, startedAt, completedAt }) {
+  const duration = Math.max(0, new Date(completedAt).getTime() - new Date(startedAt || completedAt).getTime());
+  const accuracy = total ? Math.round((correctCount / total) * 100) : 0;
+  $("#quiz-layout").hidden = true;
+  $("#quiz-result").hidden = false;
+  $("#quiz-result-title").textContent = localized("Practice complete!", "练习完成！");
+  $("#quiz-result-summary").textContent = localized(`You answered ${correctCount} of ${total} questions correctly.`, `你答对了 ${correctCount} / ${total} 题。`);
+  $("#quiz-result-correct").textContent = `${correctCount} / ${total}`;
+  $("#quiz-result-accuracy").textContent = `${accuracy}%`;
+  $("#quiz-result-duration").textContent = formatQuizDuration(duration);
+  $("#quiz-result-completed-at").textContent = formatQuizCompletionTime(completedAt);
+  refreshLanguage();
+}
+
+function resetQuizResultView() {
+  const layout = $("#quiz-layout");
+  const result = $("#quiz-result");
+  if (layout) layout.hidden = false;
+  if (result) result.hidden = true;
 }
 
 function isQuestionAnswerCorrect(question, answer) {
@@ -3401,7 +3592,7 @@ function renderQuestion() {
   $("#question-topic").textContent = topic;
   $("#question-level").textContent = level;
   $("#question-type-label").textContent = isFill ? localized("Fill in the Answer", "填充题") : localized("Multiple Choice", "选择题");
-  $("#question-title").textContent = currentLanguage === "en" ? question.titleEn : question.title;
+  $("#question-title").textContent = formatRomanStatements(currentLanguage === "en" ? question.titleEn : question.title);
   const questionImage = $("#question-image");
   const questionImageFigure = $("#question-image-figure");
   const imageSource = question.imageUrl || question.imageData || "";
@@ -3419,7 +3610,7 @@ function renderQuestion() {
   $("#code-block").style.display = question.code ? "block" : "none";
   $("#quiz-options").innerHTML = isFill ? "" : options.map((option, index) => `
     <button class="option ${selectedOption === index ? "selected" : ""}" data-option="${index}">
-      <span class="letter">${String.fromCharCode(65 + index)}</span><span>${escapeHTML(option)}</span>
+      <span class="letter">${String.fromCharCode(65 + index)}</span><span>${escapeHTML(formatRomanStatements(option))}</span>
     </button>`).join("");
   $("#quiz-options").classList.toggle("hidden", isFill);
   $("#fill-answer").classList.toggle("hidden", !isFill);
@@ -3486,6 +3677,7 @@ applyLanguage(localStorage.getItem(LANGUAGE_KEY) || "en", { persist: false });
 renderStudentNotesPreview();
 renderTeacherMetrics();
 renderClassPerformance();
+$("#performance-class-select")?.addEventListener("change", renderTeacherLiveProgress);
 updateStudentProgress();
 updateAIConfigStatus();
 
@@ -3790,7 +3982,11 @@ $("#verification-code-dialog").addEventListener("click", (event) => {
 
 $("#logout-button").addEventListener("click", async () => {
   clearInterval(codeTimer);
+  stopTeacherProgressRealtime();
+  clearTimeout(quizCloudProgressTimer);
   saveCurrentQuizProgress();
+  clearTimeout(quizCloudProgressTimer);
+  quizCloudProgressTimer = null;
   activeQuizStudentKey = "";
   questions = [];
   answers = [];
@@ -3803,6 +3999,7 @@ $("#logout-button").addEventListener("click", async () => {
   }
   cloudProfile = null;
   cloudDataLoaded = false;
+  cloudSubmissions = [];
   cloudRegistrationCode = "";
   cloudRegistrationCodeExpiresAt = "";
   activeStudent = null;
@@ -4352,7 +4549,13 @@ $("#last-unfinished-assignment").addEventListener("click", (event) => {
 });
 $("#continue-quiz").addEventListener("click", () => startQuiz());
 $("#exit-quiz").addEventListener("click", () => {
+  if (!$("#quiz-result").hidden) {
+    resetQuizResultView();
+    showView("dashboard");
+    return;
+  }
   saveCurrentQuizProgress();
+  resetQuizResultView();
   renderAssignments();
   showView("dashboard");
   showToast(localized("Progress saved. You can continue later.", "作答进度已保存，可稍后继续。"));
@@ -4384,6 +4587,8 @@ $("#next-question").addEventListener("click", () => {
   if (currentQuestion === questions.length - 1) {
     const assignment = assignments[activeAssignmentIndex];
     if (!assignment) return;
+    const completedAt = new Date().toISOString();
+    const correctCount = answers.filter((answer, index) => isQuestionAnswerCorrect(questions[index], answer)).length;
     assignment.done = true;
     assignment.action = "查看解析";
     assignment.actionEn = "Review Answers";
@@ -4391,22 +4596,24 @@ $("#next-question").addEventListener("click", () => {
     assignment.detailEn = `${questions.length} questions · Completed`;
     if (Cloud?.enabled) {
       localStorage.setItem(ASSIGNMENTS_KEY, JSON.stringify(assignments));
-      syncCloud(() => Cloud.saveSubmission(assignment, questions, answers), "student answers");
+      syncCloud(() => Cloud.saveSubmission(assignment, questions, answers, { startedAt: quizStartedAt, completedAt }), "student answers");
     } else {
       saveAssignments();
     }
+    clearTimeout(quizCloudProgressTimer);
     clearQuizProgress(assignment.id);
     renderAssignments();
-    showView("dashboard");
-    showToast(localized(
-      `Practice complete: ${answers.filter((answer, index) => isQuestionAnswerCorrect(questions[index], answer)).length} of ${questions.length} correct.`,
-      `练习完成，答对 ${answers.filter((answer, index) => isQuestionAnswerCorrect(questions[index], answer)).length} / ${questions.length} 题。`
-    ));
+    renderQuizResult({ correctCount, total: questions.length, startedAt: quizStartedAt, completedAt });
+    showView("quiz");
   } else {
     currentQuestion += 1;
     saveCurrentQuizProgress();
     renderQuestion();
   }
+});
+$("#quiz-result-back").addEventListener("click", () => {
+  resetQuizResultView();
+  showView("dashboard");
 });
 $("#previous-question").addEventListener("click", () => { if (currentQuestion > 0) { currentQuestion -= 1; saveCurrentQuizProgress(); renderQuestion(); } });
 $("#question-dots").addEventListener("click", (event) => { const button = event.target.closest("[data-jump]"); if (button) { currentQuestion = Number(button.dataset.jump); saveCurrentQuizProgress(); renderQuestion(); } });

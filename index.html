@@ -308,6 +308,7 @@
                   <strong>尚未建立班级</strong>
                   <p>请先在上方添加班级。</p>
                 </div>
+                <div id="teacher-live-progress" class="teacher-live-progress" aria-live="polite"></div>
               </section>
 
               <section class="panel quick-panel">
@@ -407,7 +408,7 @@
              <div><span>互动练习</span><strong>第 <b id="current-number">0</b> / <b id="question-total">0</b> 题</strong></div>
           </div>
           <div class="quiz-progress"><i id="quiz-progress-bar"></i></div>
-          <div class="quiz-layout">
+          <div class="quiz-layout" id="quiz-layout">
             <section class="quiz-card">
               <div class="question-meta"><span id="question-topic">程序设计</span><span id="question-level">中等</span><span id="question-type-label">选择题</span></div>
               <h1 id="question-title"></h1>
@@ -433,6 +434,22 @@
               <div class="encourage"><span>✦</span><p><strong>慢慢来，想清楚再回答。</strong>提交后会显示完整解析。</p></div>
             </aside>
           </div>
+          <section id="quiz-result" class="quiz-result panel" hidden>
+            <div class="quiz-result-hero">
+              <span class="section-kicker">PRACTICE COMPLETE</span>
+              <h2 id="quiz-result-title">练习完成！</h2>
+              <p id="quiz-result-summary"></p>
+            </div>
+            <div class="quiz-result-stats">
+              <article><strong id="quiz-result-correct">0 / 0</strong><span>答对题数</span></article>
+              <article><strong id="quiz-result-accuracy">0%</strong><span>正确率</span></article>
+              <article><strong id="quiz-result-duration">0:00</strong><span>答题用时</span></article>
+              <article><strong id="quiz-result-completed-at">—</strong><span>完成时间</span></article>
+            </div>
+            <div class="quiz-result-actions">
+              <button class="primary-button" id="quiz-result-back" type="button">返回学生首页</button>
+            </div>
+          </section>
         </section>
       </main>
 
