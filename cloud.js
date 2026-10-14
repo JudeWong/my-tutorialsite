@@ -493,6 +493,20 @@
     }
   }
 
+  async function deleteAssignments(assignmentIds) {
+    if (!session?.user?.id) return;
+    const ids = [...new Set((assignmentIds || []).filter(isUuid))];
+    if (!ids.length) return;
+    const submissionRows = unwrap(await requireClient().from("submissions").select("id").in("assignment_id", ids), "Load assignment progress") || [];
+    const submissionIds = submissionRows.map((item) => item.id).filter(isUuid);
+    if (submissionIds.length) {
+      unwrap(await requireClient().from("student_answers").delete().in("submission_id", submissionIds), "Delete assignment answers");
+      unwrap(await requireClient().from("submissions").delete().in("id", submissionIds), "Delete assignment progress");
+    }
+    unwrap(await requireClient().from("assignment_questions").delete().in("assignment_id", ids), "Delete assignment questions");
+    unwrap(await requireClient().from("assignments").delete().in("id", ids), "Delete class assignments");
+  }
+
   async function upsertNotes(notes) {
     if (!session?.user?.id) return;
     const rows = notes.filter((item) => isUuid(item.id)).map((item) => ({ id: item.id, teacher_id: session.user.id, title: item.title, content: item.content, updated_at: item.updatedAt || new Date().toISOString() }));
@@ -501,7 +515,11 @@
 
   async function addClass(className) {
     if (!session?.user?.id) return;
-    unwrap(await requireClient().from("classes").upsert({ class_name: className, teacher_id: session.user.id, active: true }, { onConflict: "class_name" }), "Save class");
+    const row = unwrap(await requireClient().from("classes")
+      .upsert({ class_name: className, teacher_id: session.user.id, active: true }, { onConflict: "class_name" })
+      .select("id,class_name,year,active")
+      .single(), "Save class");
+    return { id: row?.id || "", name: row?.class_name || className, year: row?.year || "", active: row?.active !== false };
   }
 
   async function deleteClass(className) {
@@ -802,6 +820,7 @@
     upsertPapers,
     upsertQuestions,
     upsertAssignments,
+    deleteAssignments,
     upsertNotes,
     addClass,
     deleteClass,

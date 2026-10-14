@@ -382,6 +382,9 @@ const UI_EN = Object.freeze({
   "初中": "Junior Secondary",
   "高中资讯科技": "Senior Information Technology",
   "初中电脑与资讯工艺": "Junior Computer and Information Technology",
+  "发布给班级": "Assign to Classes",
+  "可同时选择多个班级；只有获分配的班级能在学生端看到并回答此资料。": "Select multiple classes. Only assigned classes can see and answer this material.",
+  "所有班级": "All Classes",
   "综合试卷": "General Paper",
   "电脑网络": "Computer Networking",
   "取消": "Cancel",
@@ -1136,7 +1139,7 @@ function renderTeacherMetrics() {
   const completedRows = latestSubmissions.filter((submission) => submission.status === "completed");
   const completedSubmissions = completedRows.length;
   const activeSubmissions = latestSubmissions.filter((submission) => submission.status === "in_progress").length;
-  const expectedSubmissions = assignments.length * Math.max(1, students.filter((student) => student.status !== "disabled").length);
+  const expectedSubmissions = assignments.reduce((total, assignment) => total + getStudentsForAssignment(assignment).length, 0);
   const completedAssignments = cloudSubmissions.length ? completedSubmissions : assignments.filter((assignment) => assignment.done).length;
   const completionRate = expectedSubmissions ? Math.round((completedAssignments / expectedSubmissions) * 100) : assignments.length ? Math.round((completedAssignments / assignments.length) * 100) : 0;
   $("#teacher-question-count").textContent = questionCount.toLocaleString();
@@ -2089,7 +2092,7 @@ function renderWorkspaceView(name) {
       action.textContent = localized("＋ Add Class", "＋ 添加班级");
       action.dataset.action = "dashboard-classes";
       const completedAssignments = getLatestCloudSubmissions().filter((item) => item.status === "completed").length;
-      const expectedAssignments = assignments.length * Math.max(1, students.filter((student) => student.status !== "disabled").length);
+      const expectedAssignments = assignments.reduce((total, assignment) => total + getStudentsForAssignment(assignment).length, 0);
       const completionRate = expectedAssignments ? Math.round((completedAssignments / expectedAssignments) * 100) : 0;
       content.innerHTML = `
         <div class="workspace-metrics"><article><strong>${getClasses().length}</strong><span>${localized("Active classes", "启用班级")}</span></article><article><strong>${students.length}</strong><span>${localized("Registered students", "已注册学生")}</span></article><article><strong>${completionRate}%</strong><span>${localized("Completion rate", "完成率")}</span></article></div>
@@ -3177,11 +3180,11 @@ function openQuestionDialog({ questionId = "", paperId = "" } = {}) {
 }
 
 function addQuestionToAssignment(question, paper) {
-  let assignment = paper
-    ? assignments.find((item) => item.paperId === paper.id)
-    : assignments.find((item) => item.paperId === "manual");
-  if (!assignment) {
-    assignment = {
+  let targetAssignments = paper
+    ? assignments.filter((item) => item.paperId === paper.id)
+    : assignments.filter((item) => item.paperId === "manual");
+  if (!targetAssignments.length) {
+    const assignment = {
       id: createRecordId("assignment"),
       paperId: paper?.id || "manual",
       questionIds: [],
@@ -3191,15 +3194,18 @@ function addQuestionToAssignment(question, paper) {
       done: false
     };
     assignments.unshift(assignment);
+    targetAssignments = [assignment];
   }
-  if (!Array.isArray(assignment.questionIds)) assignment.questionIds = [];
-  if (!assignment.questionIds.includes(question.id)) assignment.questionIds.push(question.id);
-  assignment.questionCount = assignment.questionIds.length;
-  assignment.detail = `${assignment.questionCount} 题 · 可开始`;
-  assignment.detailEn = `${assignment.questionCount} questions · Ready`;
-  assignment.action = "开始练习";
-  assignment.actionEn = "Start Practice";
-  assignment.done = false;
+  targetAssignments.forEach((assignment) => {
+    if (!Array.isArray(assignment.questionIds)) assignment.questionIds = [];
+    if (!assignment.questionIds.includes(question.id)) assignment.questionIds.push(question.id);
+    assignment.questionCount = assignment.questionIds.length;
+    assignment.detail = `${assignment.questionCount} 题 · 可开始`;
+    assignment.detailEn = `${assignment.questionCount} questions · Ready`;
+    assignment.action = "开始练习";
+    assignment.actionEn = "Start Practice";
+    assignment.done = false;
+  });
 }
 
 async function saveManualQuestion(event) {
@@ -3434,18 +3440,86 @@ function openQuestionManager(paperId) {
   $("#question-list-dialog").showModal();
 }
 
+function getAssignableClasses() {
+  const activeCloudClasses = cloudClasses.filter((item) => item.active !== false && item.name);
+  if (activeCloudClasses.length) return activeCloudClasses.map((item) => ({ id: item.id || "", name: item.name }));
+  return getClasses().map((name) => ({ id: "", name }));
+}
+
+function getAssignmentTargetKey(assignment) {
+  if (assignment?.classId) return `id:${assignment.classId}`;
+  if (assignment?.className) return `name:${assignment.className}`;
+  return "all";
+}
+
+function renderPaperClassOptions(paperId) {
+  const paperAssignments = assignments.filter((assignment) => assignment.paperId === paperId);
+  const selectedTargets = new Set(paperAssignments.map(getAssignmentTargetKey));
+  const classes = getAssignableClasses();
+  const allSelected = selectedTargets.has("all");
+  $("#edit-paper-classes").innerHTML = `
+    <label class="material-class-option"><input type="checkbox" data-paper-class-all ${allSelected ? "checked" : ""}><span>${localized("All Classes", "所有班级")}</span></label>
+    ${classes.map((item) => {
+      const key = item.id ? `id:${item.id}` : `name:${item.name}`;
+      return `<label class="material-class-option"><input type="checkbox" data-paper-class data-class-id="${escapeHTML(item.id)}" data-class-name="${escapeHTML(item.name)}" ${!allSelected && selectedTargets.has(key) ? "checked" : ""}><span>${escapeHTML(item.name)}</span></label>`;
+    }).join("")}`;
+  $("#edit-paper-classes-error").textContent = "";
+}
+
+function getSelectedPaperClassTargets() {
+  if ($("[data-paper-class-all]", $("#edit-paper-classes"))?.checked) return [{ classId: "", className: "" }];
+  return $$("[data-paper-class]:checked", $("#edit-paper-classes")).map((input) => ({
+    classId: input.dataset.classId || "",
+    className: input.dataset.className || ""
+  }));
+}
+
+async function updatePaperClassAssignments(paper, targets) {
+  const currentAssignments = assignments.filter((assignment) => assignment.paperId === paper.id);
+  const currentByTarget = new Map(currentAssignments.map((assignment) => [getAssignmentTargetKey(assignment), assignment]));
+  const questionIds = getOrderedMaterialQuestions(paper.id).map((question) => question.id);
+  const nextAssignments = targets.map((target) => {
+    const targetKey = target.classId ? `id:${target.classId}` : target.className ? `name:${target.className}` : "all";
+    const existing = currentByTarget.get(targetKey);
+    return {
+      ...(existing || {}),
+      id: existing?.id || createRecordId("assignment"),
+      paperId: paper.id,
+      classId: target.classId,
+      className: target.className,
+      questionIds: [...questionIds],
+      questionCount: questionIds.length,
+      icon: existing?.icon || "✦",
+      title: paper.title,
+      titleEn: paper.titleEn,
+      detail: `${questionIds.length} 题 · 可开始`,
+      detailEn: `${questionIds.length} questions · Ready`,
+      action: existing?.done ? "查看解析" : "开始练习",
+      actionEn: existing?.done ? "Review Answers" : "Start Practice",
+      done: existing?.done || false,
+      createdAt: existing?.createdAt || new Date().toISOString()
+    };
+  });
+  const retainedIds = new Set(nextAssignments.map((assignment) => assignment.id));
+  const removedIds = currentAssignments.filter((assignment) => !retainedIds.has(assignment.id)).map((assignment) => assignment.id);
+  if (Cloud?.enabled && cloudProfile && removedIds.length) await Cloud.deleteAssignments(removedIds);
+  assignments = [...nextAssignments, ...assignments.filter((assignment) => assignment.paperId !== paper.id)];
+}
+
 function openPaperEditor(paperId) {
   const paper = papers.find((item) => item.id === paperId);
   if (!paper) {
     showToast(localized("Material not found", "找不到这份学习资料"));
     return;
   }
+  $("#edit-paper-error").textContent = "";
   $("#edit-paper-id").value = paper.id;
   $("#edit-paper-title").value = paper.title;
   $("#edit-paper-year").value = paper.year;
   $("#edit-paper-topic").value = getPaperMainCategory(paper);
   $("#edit-paper-subject").value = getPaperSubject(paper);
   $("#edit-paper-status").value = paper.status;
+  renderPaperClassOptions(paper.id);
   $("#edit-paper-file").textContent = paper.fileName
     ? `${paper.fileName} · ${(paper.fileSize / 1024 / 1024).toFixed(1)} MB`
     : localized("No source filename recorded", "没有记录来源文件名");
@@ -4375,7 +4449,8 @@ $("#class-form").addEventListener("submit", async (event) => {
   }
   if (Cloud?.enabled) {
     try {
-      await Cloud.addClass(className);
+      const createdClass = await Cloud.addClass(className);
+      if (createdClass?.id) cloudClasses = [...cloudClasses.filter((item) => item.name !== className), createdClass];
     } catch (error) {
       console.error("Unable to add cloud class", error);
       showToast(localized("The class could not be saved to the cloud.", "班级无法储存到云端。"));
@@ -4648,7 +4723,7 @@ $("#manage-paper-questions").addEventListener("click", () => {
   $("#edit-paper-dialog").close();
   openQuestionManager(paperId);
 });
-$("#edit-paper-form").addEventListener("submit", (event) => {
+$("#edit-paper-form").addEventListener("submit", async (event) => {
   event.preventDefault();
   const paper = papers.find((item) => item.id === $("#edit-paper-id").value);
   const title = $("#edit-paper-title").value.trim();
@@ -4656,6 +4731,12 @@ $("#edit-paper-form").addEventListener("submit", (event) => {
     $("#edit-paper-error").textContent = localized("Enter a material title.", "请输入资料名称。 ");
     return;
   }
+  const classTargets = getSelectedPaperClassTargets();
+  if (!classTargets.length) {
+    $("#edit-paper-classes-error").textContent = localized("Select at least one class or All Classes.", "请至少选择一个班级或“所有班级”。");
+    return;
+  }
+  $("#edit-paper-classes-error").textContent = "";
   paper.title = title;
   paper.titleEn = title;
   paper.year = $("#edit-paper-year").value;
@@ -4675,14 +4756,38 @@ $("#edit-paper-form").addEventListener("submit", (event) => {
     question.topic = paper.mainCategory;
     question.updatedAt = new Date().toISOString();
   });
-  savePapers();
-  saveQuestions();
-  saveAssignments();
-  renderPapers(activePaperFilter);
-  if (activeWorkspaceView === "library") renderWorkspaceView("library");
-  $("#edit-paper-error").textContent = "";
-  $("#edit-paper-dialog").close();
-  showToast(localized("Material details saved.", "学习资料已储存。"));
+  const submitButton = event.currentTarget.querySelector("button[type='submit']");
+  submitButton.disabled = true;
+  lastCloudSyncError = null;
+  try {
+    await updatePaperClassAssignments(paper, classTargets);
+    savePapers();
+    saveQuestions();
+    saveAssignments();
+    await flushCloudSync({ throwOnError: true });
+    renderPapers(activePaperFilter);
+    renderAssignments();
+    renderTeacherMetrics();
+    if (activeWorkspaceView === "library") renderWorkspaceView("library");
+    $("#edit-paper-error").textContent = "";
+    $("#edit-paper-dialog").close();
+    showToast(localized("Material details and class assignments saved.", "学习资料与班级分配已储存。"));
+  } catch (error) {
+    console.error("Unable to save material class assignments", error);
+    $("#edit-paper-error").textContent = error?.message || localized("Class assignments could not be saved.", "无法储存班级分配，请稍后再试。 ");
+  } finally {
+    submitButton.disabled = false;
+  }
+});
+
+$("#edit-paper-classes").addEventListener("change", (event) => {
+  const allClasses = $("[data-paper-class-all]", event.currentTarget);
+  if (event.target.matches("[data-paper-class-all]") && event.target.checked) {
+    $$("[data-paper-class]", event.currentTarget).forEach((input) => { input.checked = false; });
+  } else if (event.target.matches("[data-paper-class]") && event.target.checked && allClasses) {
+    allClasses.checked = false;
+  }
+  $("#edit-paper-classes-error").textContent = "";
 });
 
 $("#close-student-account").addEventListener("click", closeStudentAccountEditor);

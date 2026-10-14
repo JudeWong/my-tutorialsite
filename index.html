@@ -648,6 +648,12 @@
           <label>科系<select id="edit-paper-subject"><option value="高中资讯科技">高中资讯科技</option><option value="初中电脑与资讯工艺">初中电脑与资讯工艺</option></select></label>
           <label>整理状态<select id="edit-paper-status"><option value="待校对">待校对</option><option value="已整理">已整理</option></select></label>
         </div>
+        <fieldset class="material-class-assignment">
+          <legend>发布给班级</legend>
+          <p>可同时选择多个班级；只有获分配的班级能在学生端看到并回答此资料。</p>
+          <div id="edit-paper-classes" class="material-class-options"></div>
+          <p class="form-error" id="edit-paper-classes-error"></p>
+        </fieldset>
         <p class="paper-source" id="edit-paper-file"></p>
         <p class="form-error" id="edit-paper-error"></p>
         <div class="modal-actions">
