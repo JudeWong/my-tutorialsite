@@ -876,7 +876,10 @@ html[lang="en"] .landing-section-label, html[lang="en"] .section-kicker { font-f
   .mobile-nav-group {
     display: grid;
     min-width: 0;
+    height: 100%;
     align-items: center;
+    position: relative;
+    z-index: 2;
   }
 
   .mobile-nav-left {
@@ -896,14 +899,23 @@ html[lang="en"] .landing-section-label, html[lang="en"] .section-kicker { font-f
   }
 
   .mobile-nav button {
+    position: relative;
     width: 100%;
     min-width: 0;
-    height: 54px;
+    height: 100%;
+    min-height: 54px;
     padding: 3px 1px;
     gap: 2px;
     font-size: 9px;
     line-height: 1.1;
     white-space: nowrap;
+    touch-action: manipulation;
+    -webkit-tap-highlight-color: transparent;
+  }
+
+  .mobile-nav .nav-glyph,
+  .mobile-nav .nav-glyph * {
+    pointer-events: none;
   }
 
   .mobile-nav .mobile-nav-label {
