@@ -1897,3 +1897,24 @@ html:is(:lang(en), :lang(zh-Hans)) body code *:not(:root),
 html:is(:lang(en), :lang(zh-Hans)) body pre *:not(:root) {
   font-family: Consolas, "Courier New", monospace !important;
 }
+
+/* Keep Chinese text visually even on desktop: regular copy + one emphasis weight. */
+@media (min-width: 761px) {
+  html:lang(zh-Hans) body,
+  html:lang(zh-Hans) body *:not(:root) {
+    font-weight: 450 !important;
+    font-synthesis: none;
+  }
+  html:lang(zh-Hans) body :is(
+    h1, h2, h3, h4, h5, h6, strong, b, button,
+    .section-kicker, .landing-section-label, .landing-eyebrow, .auth-kicker,
+    .paper-access-label, .status-pill, .account-role, .class-chip, .level-chip
+  ),
+  html:lang(zh-Hans) body :is(
+    h1, h2, h3, h4, h5, h6, strong, b, button,
+    .section-kicker, .landing-section-label, .landing-eyebrow, .auth-kicker,
+    .paper-access-label, .status-pill, .account-role, .class-chip, .level-chip
+  ) * {
+    font-weight: 600 !important;
+  }
+}
