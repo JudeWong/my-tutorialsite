@@ -122,7 +122,7 @@ const LANGUAGE_KEY = "tixi_language_v2";
 const GEMINI_KEY = "tixi_gemini_api_key";
 const GEMINI_MODEL_KEY = "tixi_gemini_model";
 const GEMINI_KEY_STATUS_KEY = "tixi_gemini_key_status";
-const DEFAULT_GEMINI_MODEL = "gemini-3.8-flash";
+const DEFAULT_GEMINI_MODEL = "gemini-3.6-flash";
 const LEVEL_TARGETS = [2, 5, 8];
 let currentLanguage = "en";
 let lastAIQuestion = "";
@@ -1366,15 +1366,44 @@ async function requestChatFromGemini(apiKey, question) {
   throw lastError || new Error("Gemini chat failed");
 }
 
-async function cloudAuthorizationHeaders() {
+async function cloudAuthorizationHeaders({ forceRefresh = false } = {}) {
   if (!Cloud?.enabled) return {};
   let session = await Cloud.getSession();
   const expiresSoon = Number(session?.expires_at) > 0
     && Number(session.expires_at) <= Math.floor(Date.now() / 1000) + 60;
-  if ((!session?.access_token || expiresSoon) && Cloud.refreshSession) {
+  if ((forceRefresh || !session?.access_token || expiresSoon) && Cloud.refreshSession) {
     session = await Cloud.refreshSession().catch(() => session);
   }
   return session?.access_token ? { Authorization: `Bearer ${session.access_token}` } : {};
+}
+
+async function requestConfiguredAI(endpoint, payload) {
+  const request = async (authorization) => fetch(endpoint, {
+    method: "POST",
+    headers: { "Content-Type": "application/json", ...authorization },
+    body: JSON.stringify(payload)
+  });
+
+  let authorization = await cloudAuthorizationHeaders();
+  let response = await request(authorization);
+  // Supabase sessions can expire while the app remains open. Refresh once and
+  // retry the same request so the student does not have to reload the app.
+  if ((response.status === 401 || response.status === 403) && Cloud?.refreshSession) {
+    const refreshed = await Cloud.refreshSession().catch(() => null);
+    if (refreshed?.access_token) {
+      authorization = await cloudAuthorizationHeaders({ forceRefresh: true });
+      response = await request(authorization);
+    }
+  }
+
+  const data = await response.json().catch(() => ({}));
+  if (!response.ok) {
+    const error = new Error(data?.error || `AI endpoint returned ${response.status}`);
+    error.httpStatus = response.status;
+    throw error;
+  }
+  if (!data?.reply || typeof data.reply !== "string") throw new Error("AI response was empty");
+  return data;
 }
 
 function isTouchInputDevice() {
@@ -1406,19 +1435,12 @@ async function askAI(question, { repeatUser = true } = {}) {
 
     if (configuredEndpoint || canTrySameOrigin) {
       try {
-        const response = await fetch(configuredEndpoint || "./api/chat", {
-          method: "POST",
-          headers: { "Content-Type": "application/json", ...(await cloudAuthorizationHeaders()) },
-          body: JSON.stringify({
-            message: trimmed,
-            messages: aiConversation.slice(-16),
-            mode: $("#ai-model-select")?.value || "general",
-            language: currentLanguage
-          })
+        data = await requestConfiguredAI(configuredEndpoint || "./api/chat", {
+          message: trimmed,
+          messages: aiConversation.slice(-16),
+          mode: $("#ai-model-select")?.value || "general",
+          language: currentLanguage
         });
-        if (!response.ok) throw new Error(`AI endpoint returned ${response.status}`);
-        data = await response.json();
-        if (!data.reply || typeof data.reply !== "string") throw new Error("AI response was empty");
       } catch (error) {
         endpointError = error;
       }
@@ -1445,10 +1467,14 @@ async function askAI(question, { repeatUser = true } = {}) {
     }
   } catch (error) {
     typingMessage.remove();
-    const unavailable = localized(
-      "I could not connect to the generative AI service. Ask your teacher to check the Gemini connection, API key, and model, then try again. Your question was not answered by a scripted demo.",
-      "目前无法连接生成式 AI 服务。请老师检查 Gemini 连接、API Key 与模型后再试。系统不会再用固定示范答案代替真正的 AI 回答。"
-    );
+    const unavailable = error?.httpStatus === 401
+      ? localized("Your cloud session has expired. Sign in again before using AI.", "云端登入已过期，请重新登入后再使用 AI。")
+      : error?.httpStatus === 503
+        ? localized("The AI service is temporarily busy. Please try again shortly.", "AI 服务目前繁忙，请稍后再试。")
+        : localized(
+          "I could not connect to the generative AI service. Ask your teacher to check the Gemini connection, API key, and model, then try again. Your question was not answered by a scripted demo.",
+          "目前无法连接生成式 AI 服务。请老师检查 Gemini 连接、API Key 与模型后再试。系统不会再用固定示范答案代替真正的 AI 回答。"
+        );
     aiConversation.push({ role: "assistant", content: unavailable });
     appendChatMessage("ai", unavailable);
     if (Cloud?.enabled && cloudProfile) {
@@ -2118,7 +2144,7 @@ function getGeminiApiKey() {
 
 function normalizeGeminiModel(value = "") {
   const model = String(value).trim().replace(/^models\//i, "");
-  return !model || model === "gemini-2.5-flash" ? DEFAULT_GEMINI_MODEL : model;
+  return !model || model === "gemini-2.5-flash" || model === "gemini-3.8-flash" ? DEFAULT_GEMINI_MODEL : model;
 }
 
 function getGeminiModel() {
