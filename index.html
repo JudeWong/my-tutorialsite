@@ -12,9 +12,28 @@
     <meta name="apple-mobile-web-app-status-bar-style" content="default" />
     <meta name="apple-mobile-web-app-title" content="Personal AI" />
     <title>你的私人AI助理 · 电脑科互动学习平台</title>
+    <script>
+      try {
+        const savedSession = JSON.parse(localStorage.getItem("tixi_session_v1") || "null");
+        const validRole = savedSession && (savedSession.role === "teacher" || savedSession.role === "student");
+        const validStudent = savedSession?.role !== "student" || Boolean(savedSession.student?.name);
+        if (validRole && validStudent) {
+          document.documentElement.classList.add("session-restore-app");
+          document.documentElement.dataset.sessionRole = savedSession.role;
+        }
+      } catch {
+        localStorage.removeItem("tixi_session_v1");
+      }
+    </script>
     <link rel="stylesheet" href="styles.css" />
   </head>
   <body>
+    <script>
+      if (document.documentElement.classList.contains("session-restore-app")) {
+        document.body.classList.add("app-active");
+        document.body.classList.toggle("student-app", document.documentElement.dataset.sessionRole === "student");
+      }
+    </script>
     <div id="session-loading" class="session-loading" role="status" aria-live="polite" aria-label="正在恢复登入状态">
       <div class="session-loading-card">
         <div class="session-loading-visual" aria-hidden="true">

@@ -1179,6 +1179,8 @@ function stopTeacherProgressRealtime() {
 
 function showPublicScreen(screen) {
   closeAIChat();
+  document.documentElement.classList.remove("session-restore-app");
+  delete document.documentElement.dataset.sessionRole;
   $("#landing-page").classList.toggle("screen-hidden", screen !== "landing");
   $("#auth-screen").classList.toggle("screen-hidden", screen !== "auth");
   $("#learning-app").classList.add("screen-hidden");
@@ -1243,6 +1245,8 @@ function showSessionBackdrop(session) {
   setRole(session.role);
   renderAssignments();
   restoreSessionView(session, { silentQuiz: true });
+  document.documentElement.classList.remove("session-restore-app");
+  delete document.documentElement.dataset.sessionRole;
 }
 
 function enterApp(nextRole, student = null, restoredSession = null) {

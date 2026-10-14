@@ -27,6 +27,11 @@ button { color: inherit; }
 [lang="en"], .section-kicker, .landing-eyebrow, .auth-kicker, code, pre { font-family: "Times New Roman", Times, serif !important; }
 button:focus-visible, select:focus-visible, input:focus-visible { outline: 3px solid rgba(22, 119, 102, .25); outline-offset: 2px; }
 .screen-hidden { display: none !important; }
+html.session-restore-app #landing-page,
+html.session-restore-app #auth-screen { display: none !important; }
+html.session-restore-app #learning-app.screen-hidden { display: block !important; }
+html.session-restore-app[data-session-role="student"] #teacher-view { display: none !important; }
+html.session-restore-app[data-session-role="student"] #student-view { display: block !important; }
 
 /* Public landing and authentication */
 .public-screen { min-height: 100vh; color: #eaf9f3; background: #07110f; position: relative; overflow: hidden; }
