@@ -7,7 +7,7 @@
  */
 import React, { useEffect, useMemo, useRef, useState } from "https://esm.sh/react@18.3.1";
 import { createRoot } from "https://esm.sh/react-dom@18.3.1/client";
-import { Canvas, useFrame } from "https://esm.sh/@react-three/fiber@8.17.10?deps=react@18.3.1,react-dom@18.3.1,three@0.160.0";
+import { Canvas, useFrame, useThree } from "https://esm.sh/@react-three/fiber@8.17.10?deps=react@18.3.1,react-dom@18.3.1,three@0.160.0";
 import * as THREE from "https://esm.sh/three@0.160.0";
 import { GLTFLoader } from "https://esm.sh/three@0.160.0/examples/jsm/loaders/GLTFLoader.js?deps=three@0.160.0";
 
@@ -103,8 +103,21 @@ function GlbCharacter({ path, color, action }) {
   return h("group", { ref: group }, h("primitive", { object: gltf.scene, scale: fit.scale, position: fit.position, dispose: null }));
 }
 
+function ArenaCamera() {
+  const { camera } = useThree();
+  useEffect(() => {
+    // Three.js otherwise looks at the world origin (the fighters' feet),
+    // which crops the upper body and makes the arena appear to show only
+    // shoes. Keep the camera target at the model's chest height.
+    camera.lookAt(0, 1.3, 0);
+    camera.updateProjectionMatrix();
+  }, [camera]);
+  return null;
+}
+
 function ArenaScene({ leftAction, rightAction, winner }) {
   return h(Canvas, { shadows: true, camera: { position: [0, 4.3, 8.2], fov: 36 }, dpr: [1, 1.4], className: "arena-canvas" },
+    h(ArenaCamera),
     h("color", { attach: "background", args: ["#111525"] }),
     h("ambientLight", { intensity: 1.3 }),
     h("directionalLight", { position: [0, 6, 4], intensity: 2.4, castShadow: true }),
