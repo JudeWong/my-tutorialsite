@@ -13,11 +13,11 @@ import { GLTFLoader } from "https://esm.sh/three@0.160.0/examples/jsm/loaders/GL
 
 const h = React.createElement;
 const MODEL_PATHS = {
-  // These are full GLB character assets, rather than the old primitive
-  // capsule placeholder. Soldier includes a rig and animation clips; the
-  // expressive robot has a detailed mesh plus punch/death/victory clips.
-  warrior: "./assets/models/soldier.glb",
-  mage: "./assets/models/personal-ai-robot.glb"
+  // KayKit's CC0 Adventurers are complete, lightweight GLB characters (not
+  // primitive placeholders). They have a consistent Rig_Medium skeleton and
+  // read much better as a knight-versus-mage battle pair on mobile screens.
+  warrior: "./assets/models/kaykit-knight.glb",
+  mage: "./assets/models/kaykit-mage.glb"
 };
 const ROOM_STORAGE_KEY = "personal-ai-battle-room";
 const ROUND_SECONDS = 10;
@@ -40,7 +40,7 @@ function ModelLoadingMarker({ color = "#63e6be", failed = false }) {
   );
 }
 
-function GlbCharacter({ path, color, action }) {
+function GlbCharacter({ path, color, action, direction = 1 }) {
   const group = useRef();
   const [gltf, setGltf] = useState(null);
   const [failed, setFailed] = useState(false);
@@ -99,12 +99,20 @@ function GlbCharacter({ path, color, action }) {
     selected.reset().fadeIn(0.12).play();
     return () => selected.fadeOut(0.16);
   }, [action, gltf]);
-  useFrame((_, delta) => {
+  useFrame(({ clock }, delta) => {
     mixer.current?.update(delta);
     if (!group.current) return;
-    const target = action === "attack" ? 0.28 : action === "hit" ? -0.15 : 0;
-    group.current.rotation.z = THREE.MathUtils.damp(group.current.rotation.z, target, 7, delta);
-    group.current.position.y = THREE.MathUtils.damp(group.current.position.y, action === "hit" ? 0.1 : 0, 7, delta);
+    // KayKit's character meshes are intentionally lightweight and do not ship
+    // with battle-specific clips. These short procedural moves are the
+    // fallback animation: lunge for an attack, stagger/fall for a hit, and
+    // settle back to idle without affecting the real GLB proportions.
+    const pulse = Math.sin(clock.elapsedTime * 18) * 0.025;
+    const rotationTarget = direction * (action === "attack" ? -0.22 : action === "hit" ? 1.05 : 0);
+    const movementTarget = direction * (action === "attack" ? 0.22 + pulse : action === "hit" ? -0.16 : 0);
+    group.current.rotation.z = THREE.MathUtils.damp(group.current.rotation.z, rotationTarget, 7, delta);
+    group.current.position.x = THREE.MathUtils.damp(group.current.position.x, movementTarget, 9, delta);
+    const heightTarget = action === "hit" ? -0.13 : action === "victory" ? 0.08 + Math.abs(Math.sin(clock.elapsedTime * 5)) * 0.05 : 0;
+    group.current.position.y = THREE.MathUtils.damp(group.current.position.y, heightTarget, 7, delta);
   });
   if (failed || !gltf?.scene) return h(ModelLoadingMarker, { color, failed });
   return h("group", { ref: group }, h("primitive", { object: gltf.scene, scale: fit.scale, position: fit.position, dispose: null }));
@@ -133,8 +141,8 @@ function ArenaScene({ leftAction, rightAction, winner }) {
     h("mesh", { rotation: [-Math.PI / 2, 0, 0], receiveShadow: true }, h("planeGeometry", { args: [14, 7] }), h("meshStandardMaterial", { color: "#1a2034", roughness: 0.8 })),
     h("mesh", { position: [0, 0.02, -1.3], rotation: [-Math.PI / 2, 0, 0] }, h("ringGeometry", { args: [2.3, 2.55, 64] }), h("meshBasicMaterial", { color: "#4c65b9", transparent: true, opacity: 0.55 })),
     h("mesh", { position: [0, 2.35, -0.8] }, h("boxGeometry", { args: [7, 0.06, 0.06] }), h("meshBasicMaterial", { color: "#65dfc2" })),
-    h("group", { position: [-2.25, 0, 0], rotation: [0, 0.32, 0] }, h(GlbCharacter, { path: MODEL_PATHS.warrior, color: "#5ee7c1", action: leftAction })),
-    h("group", { position: [2.25, 0, 0], rotation: [0, -0.32, 0] }, h(GlbCharacter, { path: MODEL_PATHS.mage, color: "#a88bff", action: rightAction })),
+    h("group", { position: [-2.25, 0, 0], rotation: [0, 0.32, 0] }, h(GlbCharacter, { path: MODEL_PATHS.warrior, color: "#5ee7c1", action: leftAction, direction: 1 })),
+    h("group", { position: [2.25, 0, 0], rotation: [0, -0.32, 0] }, h(GlbCharacter, { path: MODEL_PATHS.mage, color: "#a88bff", action: rightAction, direction: -1 })),
     winner ? h("mesh", { position: [0, 3, 0] }, h("torusGeometry", { args: [0.75, 0.04, 8, 40] }), h("meshBasicMaterial", { color: "#ffd166" })) : null
   );
 }
@@ -167,15 +175,32 @@ function battleStats(players, events) {
     }
     const opponent = players.find((player) => player.id !== event.playerId);
     if (event.correct && opponent && stats.has(opponent.id)) {
-      const shield = shields.get(opponent.id) || 0;
-      if (shield) shields.set(opponent.id, shield - 1);
+      // New events carry the exact target. The fallback keeps old rows made
+      // before this column was added compatible with the two-player pairing.
+      const targetId = event.targetPlayerId && stats.has(event.targetPlayerId) ? event.targetPlayerId : opponent.id;
+      const shield = shields.get(targetId) || 0;
+      if (shield) shields.set(targetId, shield - 1);
       else {
-        stats.get(opponent.id).hp = Math.max(0, stats.get(opponent.id).hp - (event.damage || 20));
-        stats.get(opponent.id).lastAction = "hit";
+        const damage = Math.max(1, Number(event.damage) || 20);
+        stats.get(targetId).hp = Math.max(0, stats.get(targetId).hp - damage);
+        stats.get(targetId).lastAction = "hit";
       }
     }
   });
   return stats;
+}
+
+function mergeBattleEvents(remoteEvents, localEvents) {
+  const merged = new Map();
+  [...(remoteEvents || []), ...(localEvents || [])].forEach((event) => {
+    // One optimistic local answer and its later Supabase row represent the
+    // same move. De-duplicate them before calculating damage.
+    const key = [event.roomId || "", event.playerId || "", event.round ?? "", event.type || "", event.questionId || "", event.effect || ""].join("|");
+    const current = merged.get(key);
+    // Prefer the server copy when the optimistic event has already arrived.
+    if (!current || (!String(event.id || "").startsWith("local-") && String(current.id || "").startsWith("local-"))) merged.set(key, event);
+  });
+  return [...merged.values()].sort((a, b) => new Date(a.createdAt || 0) - new Date(b.createdAt || 0));
 }
 
 function ArenaApp() {
@@ -222,7 +247,7 @@ function ArenaApp() {
   useEffect(() => { if (roomData?.room) setRoom(roomData.room); }, [roomData?.room?.status, roomData?.room?.startedAt]);
 
   const players = roomData?.players || [];
-  const events = [...(roomData?.events || []), ...localEvents];
+  const events = mergeBattleEvents(roomData?.events, localEvents);
   const myPlayer = players.find((player) => player.studentId === profile.id);
   const pair = useMemo(() => {
     if (!players.length) return [];
@@ -270,9 +295,9 @@ function ArenaApp() {
     const current = stats.get(myPlayer.id) || { streak: 0 };
     const nextStreak = correct ? current.streak + 1 : 0;
     const target = pair.find((player) => player.id !== myPlayer.id);
-    const event = { id: `local-${Date.now()}`, roomId: room.id, playerId: myPlayer.id, round, type: "answer", questionId: question.id, correct, damage: correct ? 20 + Math.min(20, current.streak * 5) : 0, effect: nextStreak > 0 && nextStreak % 3 === 0 ? "shield" : "", createdAt: new Date().toISOString() };
+    const event = { id: `local-${Date.now()}`, roomId: room.id, playerId: myPlayer.id, targetPlayerId: target?.id || "", round, type: "answer", questionId: question.id, correct, damage: correct ? 20 + Math.min(20, current.streak * 5) : 0, effect: nextStreak > 0 && nextStreak % 3 === 0 ? "shield" : "", createdAt: new Date().toISOString() };
     setAnsweredRound(round); setLocalEvents((items) => [...items, event]);
-    try { await cloud.submitBattleEvent({ roomId: room.id, playerId: myPlayer.id, round, questionId: question.id, correct, damage: event.damage, effect: event.effect }); await refreshRoom(room.id); setLocalEvents([]); }
+    try { await cloud.submitBattleEvent({ roomId: room.id, playerId: myPlayer.id, targetPlayerId: target?.id || "", round, questionId: question.id, correct, damage: event.damage, effect: event.effect }); await refreshRoom(room.id); setLocalEvents([]); }
     catch (answerError) { setError(answerError.message || "答案无法同步，请检查网络。"); }
     if (target && nextStreak > 0 && nextStreak % 3 === 0) {
       try { await cloud.submitBattleEvent({ roomId: room.id, playerId: myPlayer.id, round, type: "skill", effect: "shield" }); } catch { /* answer event is still preserved */ }
@@ -284,7 +309,9 @@ function ArenaApp() {
     const recent = [...pairEvents].reverse().find((event) => event.type === "answer");
     if (!recent || now - new Date(recent.createdAt || 0).getTime() > 1100) return "idle";
     if (!recent.correct) return "idle";
-    return recent.playerId === playerId ? "attack" : "hit";
+    if (recent.playerId === playerId) return "attack";
+    const targetId = recent.targetPlayerId || pair.find((player) => player.id !== recent.playerId)?.id;
+    return targetId === playerId ? "hit" : "idle";
   };
   const scene = h("div", { className: "arena-scene" }, h(ArenaScene, { leftAction: actionFor(pair[0]?.id), rightAction: actionFor(pair[1]?.id), winner }));
   if (!room) return h("div", { className: "arena-lobby" },

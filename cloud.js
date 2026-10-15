@@ -728,6 +728,7 @@
       id: row.id,
       roomId: row.room_id,
       playerId: row.player_id,
+      targetPlayerId: row.target_player_id || "",
       round: Number(row.round_number) || 0,
       type: row.event_type || "answer",
       questionId: row.question_id || "",
@@ -791,18 +792,27 @@
     return await loadBattleRoom(roomId);
   }
 
-  async function submitBattleEvent({ roomId, playerId, round = 0, type = "answer", questionId = "", correct = false, damage = 0, effect = "" } = {}) {
+  async function submitBattleEvent({ roomId, playerId, targetPlayerId = "", round = 0, type = "answer", questionId = "", correct = false, damage = 0, effect = "" } = {}) {
     if (!session?.user?.id || !isUuid(roomId) || !isUuid(playerId)) return null;
-    const row = unwrap(await requireClient().from("battle_events").insert({
+    const payload = {
       room_id: roomId,
       player_id: playerId,
+      target_player_id: isUuid(targetPlayerId) ? targetPlayerId : null,
       round_number: Number(round) || 0,
       event_type: type,
       question_id: isUuid(questionId) ? questionId : null,
       is_correct: Boolean(correct),
       damage: Math.max(0, Number(damage) || 0),
       effect: String(effect || "")
-    }).select("*").single(), "Save battle answer");
+    };
+    let result = await requireClient().from("battle_events").insert(payload).select("*").single();
+    // Older Supabase projects may not have run the target-column migration;
+    // keep the battle playable while the explicit-target SQL is being applied.
+    if (result?.error && /target_player_id|column .* does not exist/i.test(result.error.message || "")) {
+      delete payload.target_player_id;
+      result = await requireClient().from("battle_events").insert(payload).select("*").single();
+    }
+    const row = unwrap(result, "Save battle answer");
     return mapBattleEvent(row);
   }
 

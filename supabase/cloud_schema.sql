@@ -453,6 +453,12 @@ create index if not exists battle_rooms_code_idx on public.battle_rooms(room_cod
 create index if not exists battle_players_room_idx on public.battle_players(room_id, joined_at);
 create index if not exists battle_events_room_idx on public.battle_events(room_id, created_at);
 
+-- The target is stored explicitly so a correct answer can only damage the
+-- opponent in that pair. This migration is safe to run on existing projects.
+alter table public.battle_events
+  add column if not exists target_player_id uuid references public.battle_players(id) on delete cascade;
+create index if not exists battle_events_target_idx on public.battle_events(target_player_id, created_at);
+
 alter table public.battle_rooms enable row level security;
 alter table public.battle_players enable row level security;
 alter table public.battle_events enable row level security;
