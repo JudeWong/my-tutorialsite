@@ -64,11 +64,18 @@ function GlbCharacter({ path, color, action }) {
     });
     // GLB files often use different authoring scales. Fit the real model to
     // the same arena height and ground it so it cannot render off-camera.
+    gltf.scene.updateMatrixWorld(true);
     const box = new THREE.Box3().setFromObject(gltf.scene);
     const size = box.getSize(new THREE.Vector3());
     const center = box.getCenter(new THREE.Vector3());
-    const scale = 2.65 / Math.max(size.y, 0.01);
-    setFit({ scale, position: [-center.x * scale, -box.min.y * scale, -center.z * scale] });
+    const height = Number.isFinite(size.y) && size.y > 0.01 ? size.y : 1.8;
+    const scale = 2.65 / height;
+    const position = [
+      Number.isFinite(center.x) ? -center.x * scale : 0,
+      Number.isFinite(box.min.y) ? -box.min.y * scale : 0,
+      Number.isFinite(center.z) ? -center.z * scale : 0
+    ];
+    setFit({ scale, position });
   }, [gltf]);
   useEffect(() => {
     if (!gltf?.scene) return undefined;
