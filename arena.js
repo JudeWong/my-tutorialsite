@@ -216,6 +216,65 @@ function Torch({ position }) {
   );
 }
 
+function ArenaBanner({ position, color, accent, phase = 0 }) {
+  const banner = useRef();
+  useFrame(({ clock }) => {
+    if (!banner.current) return;
+    banner.current.rotation.z = Math.sin(clock.elapsedTime * 0.85 + phase) * 0.018;
+  });
+  return h("group", { ref: banner, position },
+    h("mesh", { position: [0, 0.72, -0.02], castShadow: true }, h("cylinderGeometry", { args: [0.035, 0.035, 1.15, 10] }), h("meshStandardMaterial", { color: "#b89352", metalness: 0.75, roughness: 0.3 })),
+    h("mesh", { position: [0, 0, 0], castShadow: true }, h("planeGeometry", { args: [0.9, 1.55] }), h("meshStandardMaterial", { color, roughness: 0.72, metalness: 0.04, side: THREE.DoubleSide })),
+    h("mesh", { position: [0, 0.12, 0.025] }, h("ringGeometry", { args: [0.21, 0.28, 6] }), h("meshStandardMaterial", { color: accent, emissive: accent, emissiveIntensity: 0.38, metalness: 0.5, roughness: 0.32, side: THREE.DoubleSide })),
+    h("mesh", { position: [0, -0.72, 0] }, h("coneGeometry", { args: [0.46, 0.38, 3] }), h("meshStandardMaterial", { color, roughness: 0.72, side: THREE.DoubleSide }))
+  );
+}
+
+const CROWD_MEMBERS = Array.from({ length: 30 }, (_, index) => ({
+  x: -5.15 + (index % 10) * 1.14,
+  y: 2.78 + Math.floor(index / 10) * 0.55,
+  scale: 0.72 + (index % 4) * 0.055,
+  color: ["#34415d", "#493958", "#304b49", "#5a4238", "#3f3c55"][index % 5]
+}));
+
+function ArenaCrowd() {
+  const crowd = useRef();
+  useFrame(({ clock }) => {
+    if (crowd.current) crowd.current.position.y = Math.sin(clock.elapsedTime * 1.8) * 0.025;
+  });
+  return h("group", { ref: crowd }, CROWD_MEMBERS.map((member, index) => h("group", { key: `crowd-${index}`, position: [member.x, member.y, -3.05], scale: member.scale },
+    h("mesh", { position: [0, 0.27, 0], castShadow: false }, h("sphereGeometry", { args: [0.13, 10, 8] }), h("meshStandardMaterial", { color: "#bba995", roughness: 0.92 })),
+    h("mesh", null, h("coneGeometry", { args: [0.22, 0.46, 8] }), h("meshStandardMaterial", { color: member.color, roughness: 0.9, emissive: member.color, emissiveIntensity: 0.08 }))
+  )));
+}
+
+function EmberField() {
+  const particles = useRef();
+  const positions = useMemo(() => {
+    const values = new Float32Array(72 * 3);
+    let seed = 19;
+    const random = () => {
+      seed = (seed * 16807) % 2147483647;
+      return (seed - 1) / 2147483646;
+    };
+    for (let index = 0; index < values.length; index += 3) {
+      values[index] = (random() - 0.5) * 10.5;
+      values[index + 1] = 0.25 + random() * 4.3;
+      values[index + 2] = -3 + random() * 5.5;
+    }
+    return values;
+  }, []);
+  useFrame(({ clock }) => {
+    if (!particles.current) return;
+    particles.current.rotation.y = Math.sin(clock.elapsedTime * 0.12) * 0.08;
+    particles.current.position.y = Math.sin(clock.elapsedTime * 0.55) * 0.12;
+  });
+  return h("points", { ref: particles },
+    h("bufferGeometry", null, h("bufferAttribute", { attach: "attributes-position", args: [positions, 3] })),
+    h("pointsMaterial", { color: "#ffb45c", size: 0.055, transparent: true, opacity: 0.62, depthWrite: false, blending: THREE.AdditiveBlending })
+  );
+}
+
 const STONE_BLOCKS = Array.from({ length: 18 }, (_, index) => ({
   x: -5.3 + (index % 6) * 2.12,
   y: 0.55 + Math.floor(index / 6) * 0.88,
@@ -227,12 +286,21 @@ function StoneArena() {
     h("mesh", { position: [0, -0.28, -0.35], receiveShadow: true }, h("cylinderGeometry", { args: [5.5, 5.8, 0.5, 64] }), h("meshStandardMaterial", { color: "#3b3b3a", roughness: 0.94, metalness: 0.02 })),
     h("mesh", { position: [0, -0.015, -0.35], rotation: [-Math.PI / 2, 0, 0], receiveShadow: true }, h("circleGeometry", { args: [5.25, 64] }), h("meshStandardMaterial", { color: "#58544d", roughness: 0.92, metalness: 0.03 })),
     h("mesh", { position: [0, 0.005, -0.35], rotation: [-Math.PI / 2, 0, 0] }, h("ringGeometry", { args: [2.25, 2.34, 64] }), h("meshStandardMaterial", { color: "#b59456", metalness: 0.48, roughness: 0.38 })),
+    h("mesh", { position: [0, 0.018, -0.35], rotation: [-Math.PI / 2, 0, 0] }, h("ringGeometry", { args: [1.15, 1.2, 48] }), h("meshStandardMaterial", { color: "#6ce9c3", emissive: "#257b70", emissiveIntensity: 1.15, transparent: true, opacity: 0.78 })),
+    Array.from({ length: 12 }, (_, index) => {
+      const angle = (index / 12) * Math.PI * 2;
+      return h("mesh", { key: `rune-${index}`, position: [Math.cos(angle) * 1.72, 0.024, -0.35 + Math.sin(angle) * 1.72], rotation: [-Math.PI / 2, 0, -angle] }, h("boxGeometry", { args: [0.24, 0.055, 0.055] }), h("meshStandardMaterial", { color: index % 2 ? "#8d75ff" : "#6ce9c3", emissive: index % 2 ? "#624bd4" : "#247b68", emissiveIntensity: 1.6 }));
+    }),
     h("mesh", { position: [0, 1.65, -3.65], receiveShadow: true }, h("boxGeometry", { args: [12, 3.5, 0.45] }), h("meshStandardMaterial", { color: "#292b2d", roughness: 0.97 })),
     STONE_BLOCKS.map((stone, index) => h("mesh", { key: `stone-${index}`, position: [stone.x, stone.y, -3.38], scale: [stone.scale, 1, 1], castShadow: true, receiveShadow: true }, h("boxGeometry", { args: [1.92, 0.72, 0.38] }), h("meshStandardMaterial", { color: index % 2 ? "#4b4a46" : "#55534d", roughness: 0.96 }))),
     [-4.75, 4.75].map((x) => h("group", { key: `pillar-${x}`, position: [x, 0, -2.95] },
       h("mesh", { position: [0, 1.4, 0], castShadow: true, receiveShadow: true }, h("cylinderGeometry", { args: [0.4, 0.52, 2.8, 12] }), h("meshStandardMaterial", { color: "#4a4945", roughness: 0.93 })),
       h("mesh", { position: [0, 2.88, 0], castShadow: true }, h("boxGeometry", { args: [1.05, 0.24, 0.9] }), h("meshStandardMaterial", { color: "#5d5a53", roughness: 0.9 }))
     )),
+    [-3.75, -1.25, 1.25, 3.75].map((x, index) => h("mesh", { key: `arch-${x}`, position: [x, 2.25, -3.08], rotation: [0, 0, Math.PI] }, h("torusGeometry", { args: [0.72, 0.11, 8, 24, Math.PI] }), h("meshStandardMaterial", { color: "#777066", roughness: 0.88 }))),
+    h(ArenaCrowd),
+    h(ArenaBanner, { position: [-2.05, 2.2, -3.02], color: "#294f68", accent: "#6ce9c3", phase: 0 }),
+    h(ArenaBanner, { position: [2.05, 2.2, -3.02], color: "#4a3470", accent: "#b79cff", phase: 1.7 }),
     h(Torch, { position: [-3.55, 2.05, -3] }),
     h(Torch, { position: [3.55, 2.05, -3] })
   );
@@ -265,7 +333,10 @@ function ArenaScene({ leftAction, rightAction, winner }) {
     h("hemisphereLight", { intensity: 0.72, color: "#b9d4ff", groundColor: "#201713" }),
     h("directionalLight", { position: [-3, 7, 5], intensity: 2.3, color: "#d9e7ff", castShadow: true, "shadow-mapSize-width": 1024, "shadow-mapSize-height": 1024 }),
     h("spotLight", { position: [0, 7, 2], intensity: 16, angle: 0.65, penumbra: 0.75, distance: 16, color: "#dce7ff", castShadow: true }),
+    h("spotLight", { position: [-5, 4.5, 1], intensity: 7, angle: 0.42, penumbra: 0.9, distance: 12, color: "#5ee7c1" }),
+    h("spotLight", { position: [5, 4.5, 1], intensity: 7, angle: 0.42, penumbra: 0.9, distance: 12, color: "#a88bff" }),
     h(StoneArena),
+    h(EmberField),
     h("group", { position: [-2.15, 0, 0.1], rotation: [0, 0.3, 0] }, h(GlbCharacter, { path: MODEL_PATHS.warrior, color: "#5ee7c1", action: leftAction, direction: 1, weapon: "sword" })),
     h("group", { position: [2.15, 0, 0.1], rotation: [0, -0.3, 0] }, h(GlbCharacter, { path: MODEL_PATHS.mage, color: "#a88bff", action: rightAction, direction: -1, weapon: "staff" })),
     h(AttackEffect, { side: "left", action: leftAction, kind: "slash" }),
@@ -380,6 +451,86 @@ function canonicalBattlePair(players, events, myPlayer, role) {
     : [myPlayer, pairing.opponent];
 }
 
+function buildBattleMatches(players, events, timeLeft) {
+  const matches = [];
+  for (let index = 0; index < players.length; index += 2) {
+    const matchPlayers = players.slice(index, index + 2);
+    const playerIds = new Set(matchPlayers.map((player) => player.id));
+    const matchEvents = events.filter((event) => playerIds.has(event.playerId));
+    const matchStats = battleStats(matchPlayers, matchEvents);
+    const left = matchStats.get(matchPlayers[0]?.id) || { hp: 100, score: 0, streak: 0, lastRound: -1 };
+    const right = matchStats.get(matchPlayers[1]?.id) || { hp: 100, score: 0, streak: 0, lastRound: -1 };
+    const completedByHp = left.hp <= 0 || right.hp <= 0;
+    const finished = matchPlayers.length === 2 && (completedByHp || timeLeft <= 0);
+    let winner = null;
+    let tied = false;
+    if (finished) {
+      if (left.hp <= 0 && right.hp > 0) winner = matchPlayers[1];
+      else if (right.hp <= 0 && left.hp > 0) winner = matchPlayers[0];
+      else if (left.score === right.score) tied = true;
+      else winner = left.score > right.score ? matchPlayers[0] : matchPlayers[1];
+    }
+    matches.push({
+      number: Math.floor(index / 2) + 1,
+      players: matchPlayers,
+      stats: [left, right],
+      answerCount: matchEvents.filter((event) => event.type === "answer").length,
+      currentRound: Math.max(left.lastRound, right.lastRound) + 1,
+      finished,
+      tied,
+      winner
+    });
+  }
+  return matches;
+}
+
+function TeacherPlayerMetric({ player, stat, side, winner }) {
+  const lowHealth = stat.hp <= 30;
+  const isWinner = winner?.id === player?.id;
+  return h("div", { className: `arena-monitor-player ${side}${isWinner ? " winner" : ""}` },
+    h("div", { className: "arena-monitor-player-head" },
+      h("span", { className: "arena-monitor-avatar" }, side === "left" ? "⚔" : "✦"),
+      h("div", null,
+        h("strong", null, player?.name || "等待玩家"),
+        h("small", null, player?.className || "尚未加入")
+      )
+    ),
+    h("div", { className: "arena-monitor-score" }, h("b", null, stat.score), h("span", null, "分")),
+    h("div", { className: "arena-monitor-health-label" }, h("span", null, "生命值"), h("strong", null, `${stat.hp}%`)),
+    h("div", { className: `arena-monitor-health ${side}${lowHealth ? " danger" : ""}` }, h("i", { style: { width: `${stat.hp}%` } })),
+    h("small", { className: "arena-monitor-streak" }, stat.streak > 1 ? `连对 ${stat.streak} 题` : "等待连击")
+  );
+}
+
+function TeacherBattleDashboard({ players, events, timeLeft, roomStatus }) {
+  const matches = useMemo(() => buildBattleMatches(players, events, timeLeft), [players, events, timeLeft]);
+  const finishedCount = matches.filter((match) => match.finished).length;
+  const totalAnswers = matches.reduce((sum, match) => sum + match.answerCount, 0);
+  return h("section", { className: "arena-teacher-dashboard" },
+    h("div", { className: "arena-monitor-summary" },
+      h("article", null, h("span", null, "对战组数"), h("strong", null, matches.length), h("small", null, `${players.length} 名学生`)),
+      h("article", null, h("span", null, "正在进行"), h("strong", null, Math.max(0, matches.length - finishedCount)), h("small", null, roomStatus === "battle" ? "实时同步中" : "等待开始")),
+      h("article", null, h("span", null, "全班作答"), h("strong", null, totalAnswers), h("small", null, `已完成 ${finishedCount} 组`)),
+      h("article", { className: "arena-monitor-clock" }, h("span", null, "剩余时间"), h("strong", null, `${Math.floor(timeLeft / 60)}:${String(timeLeft % 60).padStart(2, "0")}`), h("small", null, "所有对战同步计时"))
+    ),
+    h("div", { className: "arena-monitor-heading" },
+      h("div", null, h("span", { className: "arena-kicker" }, "CLASS LIVE MONITOR"), h("h3", null, "全班对战总览")),
+      h("p", null, "所有配对、血量与分数会自动更新，无需逐一进入对战。")
+    ),
+    h("div", { className: "arena-monitor-grid" }, matches.map((match) => h("article", { className: `arena-monitor-card${match.finished ? " finished" : ""}`, key: `match-${match.number}` },
+      h("header", null,
+        h("div", null, h("span", null, `对战 ${String(match.number).padStart(2, "0")}`), h("small", null, match.currentRound > 0 ? `进行至第 ${match.currentRound} 题` : "等待首次作答")),
+        h("b", { className: match.finished ? "done" : "live" }, match.finished ? (match.tied ? "平手" : `${match.winner?.name || ""} 获胜`) : "进行中")
+      ),
+      h("div", { className: "arena-monitor-versus" },
+        h(TeacherPlayerMetric, { player: match.players[0], stat: match.stats[0], side: "left", winner: match.winner }),
+        h("div", { className: "arena-monitor-vs" }, h("span", null, "VS"), h("small", null, `${match.answerCount} 次作答`)),
+        h(TeacherPlayerMetric, { player: match.players[1], stat: match.stats[1], side: "right", winner: match.winner })
+      )
+    )))
+  );
+}
+
 function ArenaApp() {
   const context = globalThis.personalAIAppContext?.() || {};
   const [room, setRoom] = useState(null);
@@ -487,11 +638,20 @@ function ArenaApp() {
     const targetId = recent.targetPlayerId || pair.find((player) => player.id !== recent.playerId)?.id;
     return targetId === playerId ? "hit" : "idle";
   };
-  const scene = h("div", { className: "arena-scene" }, h(ArenaScene, { leftAction: actionFor(pair[0]?.id), rightAction: actionFor(pair[1]?.id), winner }));
+  const scene = h("div", { className: "arena-scene" },
+    h("div", { className: "arena-scene-status" }, h("span", null, "LIVE ARENA"), h("i"), h("small", null, "魔法遗迹竞技场")),
+    h(ArenaScene, { leftAction: actionFor(pair[0]?.id), rightAction: actionFor(pair[1]?.id), winner })
+  );
   if (!room) return h("div", { className: "arena-lobby" },
     h("div", { className: "arena-intro" }, h("span", { className: "arena-kicker" }, "LIVE 1V1"), h("h2", null, "联机对战竞技场"), h("p", null, context.role === "teacher" ? "老师先开设房间，学生使用验证码加入。系统只会在人数为偶数时开始配对。" : "输入老师提供的房间验证码，等待系统把你和另一名同学配对。")),
     context.role === "teacher" ? h("div", { className: "arena-form-card" }, h("label", null, "选择班级", h("select", { value: className, onChange: (event) => setClassName(event.target.value) }, h("option", { value: "" }, "所有班级"), (context.classes || []).map((item) => h("option", { key: item, value: item }, item)))), h("label", null, "使用题目", h("select", { value: assignmentId, onChange: (event) => setAssignmentId(event.target.value) }, (context.assignments || []).map((item) => h("option", { key: item.id, value: item.id }, item.title)))), h("button", { className: "arena-primary-button", disabled: busy || !cloud?.enabled, onClick: createRoom }, busy ? "正在开设…" : "开设对战房间")) : h("div", { className: "arena-form-card" }, h("label", null, "房间验证码", h("input", { value: code, onChange: (event) => setCode(event.target.value.replace(/\D/g, "").slice(0, 6)), inputMode: "numeric", placeholder: "输入 6 位数字" })), h("button", { className: "arena-primary-button", disabled: busy || code.length !== 6 || !cloud?.enabled, onClick: joinRoom }, busy ? "正在加入…" : "加入竞技场")),
-    h("div", { className: "arena-lobby-preview" }, scene),
+    context.role === "teacher"
+      ? h("div", { className: "arena-teacher-intro-cards" },
+        h("article", null, h("span", null, "01"), h("strong", null, "开设房间"), h("small", null, "选择班级和题目后生成验证码")),
+        h("article", null, h("span", null, "02"), h("strong", null, "自动配对"), h("small", null, "系统按照加入顺序完成 1 对 1 配对")),
+        h("article", null, h("span", null, "03"), h("strong", null, "全班总览"), h("small", null, "在同一页监察所有血量、分数和胜负"))
+      )
+      : h("div", { className: "arena-lobby-preview" }, scene),
     !cloud?.enabled ? h("p", { className: "arena-warning" }, "云端功能尚未连接，无法进行跨装置联机对战。") : null,
     error ? h("p", { className: "arena-error" }, error) : null
   );
@@ -500,7 +660,7 @@ function ArenaApp() {
   const answered = answeredRound === round;
   return h("div", { className: "arena-battle-shell" },
     h("div", { className: "arena-room-bar" }, h("div", null, h("span", { className: "arena-kicker" }, room.status === "battle" ? "BATTLE LIVE" : "WAITING ROOM"), h("h2", null, `房间 ${room.code}`), h("p", null, room.className ? `${room.className} · ${visiblePlayerCount} 人在线` : `${visiblePlayerCount} 人在线`)), h("div", { className: "arena-room-actions" }, room.status === "lobby" && context.role === "teacher" ? h("button", { className: "arena-primary-button", disabled: busy || !readyToStart, onClick: startRoom }, readyToStart ? "开始战斗" : "需要偶数人数") : null, h("button", { className: "arena-ghost-button", onClick: () => { localStorage.removeItem(ROOM_STORAGE_KEY); setRoom(null); setRoomData(null); } }, "离开房间"))),
-    room.status === "lobby" ? h("div", { className: "arena-waiting" }, h("div", { className: "arena-code-display" }, h("small", null, "学生加入验证码"), h("strong", null, room.code)), h("div", { className: "arena-player-list" }, players.map((player, index) => h("div", { className: "arena-player-chip", key: player.id }, h("span", null, index % 2 ? "♟" : "♞"), h("strong", null, player.name), h("small", null, index % 2 ? "等待配对" : "已加入")))), h("p", { className: "arena-hint" }, "配对规则：按照加入顺序每两人一组；人数必须是 2、4、6……才能开始。")) : h(React.Fragment, null,
+    room.status === "lobby" ? h("div", { className: "arena-waiting" }, h("div", { className: "arena-code-display" }, h("small", null, "学生加入验证码"), h("strong", null, room.code)), h("div", { className: "arena-player-list" }, players.map((player, index) => h("div", { className: "arena-player-chip", key: player.id }, h("span", null, index % 2 ? "♟" : "♞"), h("strong", null, player.name), h("small", null, index % 2 ? "等待配对" : "已加入")))), h("p", { className: "arena-hint" }, "配对规则：按照加入顺序每两人一组；人数必须是 2、4、6……才能开始。")) : context.role === "teacher" ? h(TeacherBattleDashboard, { players, events, timeLeft, roomStatus: room.status }) : h(React.Fragment, null,
       scene,
       h("div", { className: "arena-hud" }, h("div", { className: "arena-fighter-card left" }, h("strong", null, pair[0]?.name || "玩家 A"), h("div", { className: "arena-health" }, h("i", { style: { width: `${leftStats.hp}%` } })), h("span", null, `生命 ${leftStats.hp} · 得分 ${leftStats.score}`)), h("div", { className: "arena-timer" }, h("strong", null, `${Math.floor(timeLeft / 60)}:${String(timeLeft % 60).padStart(2, "0")}`), h("small", null, `第 ${round + 1} 回合`)), h("div", { className: "arena-fighter-card right" }, h("strong", null, pair[1]?.name || "玩家 B"), h("div", { className: "arena-health purple" }, h("i", { style: { width: `${rightStats.hp}%` } })), h("span", null, `生命 ${rightStats.hp} · 得分 ${rightStats.score}`))),
       h("div", { className: "arena-question-card" }, h("div", { className: "arena-question-head" }, h("span", null, "快速答题攻击"), h("small", null, answered ? "已作答，等待下一回合" : "答对即可攻击对手")), h("h3", null, question?.title || "老师尚未准备题目"), question?.type === "fill" ? h("div", { className: "arena-fill-row" }, h("input", { id: "arena-fill-answer", disabled: answered || !myPlayer || Boolean(winner), placeholder: "输入答案" }), h("button", { className: "arena-primary-button", disabled: answered || !myPlayer || Boolean(winner), onClick: () => submitAnswer(document.querySelector("#arena-fill-answer")?.value || "") }, "出招")) : h("div", { className: "arena-options" }, (question?.options || []).map((option, index) => h("button", { key: `${question.id}-${index}`, disabled: answered || !myPlayer || Boolean(winner), className: "arena-option", onClick: () => submitAnswer(index) }, h("b", null, String.fromCharCode(65 + index)), option))), h("p", { className: "arena-skill-note" }, "连对 3 题：触发保护盾；答错不会攻击。")),
