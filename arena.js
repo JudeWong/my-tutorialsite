@@ -41,7 +41,31 @@ function ModelLoadingMarker({ color = "#63e6be", failed = false }) {
   );
 }
 
-function GlbCharacter({ path, color, action, direction = 1 }) {
+function FighterWeapon({ kind, direction, action }) {
+  const weapon = useRef();
+  const glow = kind === "staff" ? "#9b7bff" : "#ffc86b";
+  useFrame(({ clock }, delta) => {
+    if (!weapon.current) return;
+    const attacking = action === "attack";
+    const swing = attacking ? 1 + Math.sin(clock.elapsedTime * 15) * 0.16 : 0.25;
+    weapon.current.rotation.z = THREE.MathUtils.damp(weapon.current.rotation.z, -direction * swing, 12, delta);
+    weapon.current.position.y = THREE.MathUtils.damp(weapon.current.position.y, attacking ? 1.26 : 1.35, 10, delta);
+  });
+  const sword = h(React.Fragment, null,
+    h("mesh", { position: [0, -0.2, 0], castShadow: true }, h("cylinderGeometry", { args: [0.055, 0.065, 0.38, 12] }), h("meshStandardMaterial", { color: "#4b2e1e", roughness: 0.65 })),
+    h("mesh", { position: [0, 0.02, 0], castShadow: true }, h("boxGeometry", { args: [0.42, 0.07, 0.1] }), h("meshStandardMaterial", { color: "#c99b42", metalness: 0.8, roughness: 0.24 })),
+    h("mesh", { position: [0, 0.56, 0], castShadow: true }, h("boxGeometry", { args: [0.13, 1.02, 0.065] }), h("meshStandardMaterial", { color: "#d9e0e8", metalness: 0.95, roughness: 0.16, emissive: "#37445a", emissiveIntensity: action === "attack" ? 0.85 : 0.1 })),
+    h("mesh", { position: [0, 1.17, 0], rotation: [0, 0, Math.PI] }, h("coneGeometry", { args: [0.09, 0.25, 4] }), h("meshStandardMaterial", { color: "#edf3f8", metalness: 0.95, roughness: 0.12 }))
+  );
+  const staff = h(React.Fragment, null,
+    h("mesh", { position: [0, 0.28, 0], castShadow: true }, h("cylinderGeometry", { args: [0.045, 0.065, 1.55, 12] }), h("meshStandardMaterial", { color: "#3b241b", roughness: 0.8 })),
+    h("mesh", { position: [0, 1.12, 0], castShadow: true }, h("octahedronGeometry", { args: [0.22, 0] }), h("meshStandardMaterial", { color: "#bba8ff", emissive: glow, emissiveIntensity: action === "attack" ? 3.2 : 1.3, metalness: 0.1, roughness: 0.18 })),
+    h("pointLight", { position: [0, 1.12, 0.15], color: glow, intensity: action === "attack" ? 7 : 2, distance: 3 })
+  );
+  return h("group", { ref: weapon, position: [direction * 0.72, 1.35, 0.18], rotation: [0.05, 0, -direction * 0.25] }, kind === "staff" ? staff : sword);
+}
+
+function GlbCharacter({ path, color, action, direction = 1, weapon = "sword" }) {
   const group = useRef();
   const [gltf, setGltf] = useState(null);
   const [failed, setFailed] = useState(false);
@@ -116,7 +140,102 @@ function GlbCharacter({ path, color, action, direction = 1 }) {
     group.current.position.y = THREE.MathUtils.damp(group.current.position.y, heightTarget, 7, delta);
   });
   if (failed || !gltf?.scene) return h(ModelLoadingMarker, { color, failed });
-  return h("group", { ref: group }, h("primitive", { object: gltf.scene, scale: fit.scale, position: fit.position, dispose: null }));
+  return h("group", { ref: group },
+    h("primitive", { object: gltf.scene, scale: fit.scale, position: fit.position, dispose: null }),
+    h(FighterWeapon, { kind: weapon, direction, action })
+  );
+}
+
+function AttackEffect({ side, action, kind }) {
+  const effect = useRef();
+  const material = useRef();
+  const elapsed = useRef(99);
+  useEffect(() => { if (action === "attack") elapsed.current = 0; }, [action]);
+  useFrame((_, delta) => {
+    if (!effect.current) return;
+    elapsed.current += delta;
+    const duration = kind === "magic" ? 0.85 : 0.65;
+    const t = elapsed.current / duration;
+    effect.current.visible = action === "attack" && t <= 1;
+    if (!effect.current.visible) return;
+    const direction = side === "left" ? 1 : -1;
+    effect.current.position.x = direction * (-1.45 + Math.min(1, t) * 3.05);
+    effect.current.position.y = 1.35 + Math.sin(Math.min(1, t) * Math.PI) * (kind === "magic" ? 0.42 : 0.18);
+    effect.current.rotation.z += delta * direction * 8;
+    const scale = 0.68 + Math.sin(Math.min(1, t) * Math.PI) * 0.45;
+    effect.current.scale.setScalar(scale);
+    if (material.current) material.current.opacity = Math.max(0, 1 - t);
+  });
+  const color = kind === "magic" ? "#a78bfa" : "#ffd27a";
+  return h("group", { ref: effect, visible: false, position: [0, 1.35, 0.5] },
+    kind === "magic"
+      ? h("mesh", null, h("icosahedronGeometry", { args: [0.22, 1] }), h("meshStandardMaterial", { ref: material, color: "#e1d7ff", emissive: color, emissiveIntensity: 4.5, transparent: true, opacity: 1 }))
+      : h("mesh", { rotation: [0.12, 0, 0.25] }, h("torusGeometry", { args: [0.42, 0.055, 8, 32, Math.PI * 1.45] }), h("meshBasicMaterial", { ref: material, color, transparent: true, opacity: 1, blending: THREE.AdditiveBlending })),
+    h("pointLight", { color, intensity: kind === "magic" ? 12 : 7, distance: 3.5 })
+  );
+}
+
+function ImpactEffect({ side, action, color }) {
+  const burst = useRef();
+  const elapsed = useRef(99);
+  useEffect(() => { if (action === "hit") elapsed.current = 0; }, [action]);
+  useFrame((_, delta) => {
+    if (!burst.current) return;
+    elapsed.current += delta;
+    const t = elapsed.current / 0.8;
+    burst.current.visible = action === "hit" && t <= 1;
+    if (!burst.current.visible) return;
+    burst.current.rotation.z += delta * 4;
+    burst.current.scale.setScalar(0.25 + t * 1.35);
+    burst.current.traverse((object) => {
+      if (object.material) object.material.opacity = Math.max(0, 1 - t);
+    });
+  });
+  const fragments = Array.from({ length: 9 }, (_, index) => {
+    const angle = (index / 9) * Math.PI * 2;
+    return h("mesh", { key: index, position: [Math.cos(angle) * 0.42, Math.sin(angle) * 0.42, 0] }, h("sphereGeometry", { args: [0.055, 8, 8] }), h("meshBasicMaterial", { color, transparent: true, opacity: 1, blending: THREE.AdditiveBlending }));
+  });
+  return h("group", { ref: burst, visible: false, position: [side === "left" ? -2.05 : 2.05, 1.35, 0.65] },
+    h("mesh", null, h("ringGeometry", { args: [0.22, 0.3, 24] }), h("meshBasicMaterial", { color, transparent: true, opacity: 1, side: THREE.DoubleSide, blending: THREE.AdditiveBlending })),
+    fragments
+  );
+}
+
+function Torch({ position }) {
+  const flame = useRef();
+  const light = useRef();
+  useFrame(({ clock }) => {
+    const flicker = 1 + Math.sin(clock.elapsedTime * 10 + position[0]) * 0.12 + Math.sin(clock.elapsedTime * 17) * 0.07;
+    if (flame.current) flame.current.scale.set(0.75, flicker, 0.75);
+    if (light.current) light.current.intensity = 7.5 * flicker;
+  });
+  return h("group", { position },
+    h("mesh", { position: [0, -0.35, 0], castShadow: true }, h("cylinderGeometry", { args: [0.045, 0.06, 0.9, 10] }), h("meshStandardMaterial", { color: "#2f221d", metalness: 0.45, roughness: 0.55 })),
+    h("mesh", { ref: flame, position: [0, 0.2, 0] }, h("coneGeometry", { args: [0.13, 0.42, 10] }), h("meshBasicMaterial", { color: "#ffb14a" })),
+    h("pointLight", { ref: light, position: [0, 0.22, 0.3], color: "#ff9b4a", intensity: 8, distance: 7, decay: 2 })
+  );
+}
+
+const STONE_BLOCKS = Array.from({ length: 18 }, (_, index) => ({
+  x: -5.3 + (index % 6) * 2.12,
+  y: 0.55 + Math.floor(index / 6) * 0.88,
+  scale: index % 3 === 0 ? 1.06 : 0.98
+}));
+
+function StoneArena() {
+  return h("group", null,
+    h("mesh", { position: [0, -0.28, -0.35], receiveShadow: true }, h("cylinderGeometry", { args: [5.5, 5.8, 0.5, 64] }), h("meshStandardMaterial", { color: "#3b3b3a", roughness: 0.94, metalness: 0.02 })),
+    h("mesh", { position: [0, -0.015, -0.35], rotation: [-Math.PI / 2, 0, 0], receiveShadow: true }, h("circleGeometry", { args: [5.25, 64] }), h("meshStandardMaterial", { color: "#58544d", roughness: 0.92, metalness: 0.03 })),
+    h("mesh", { position: [0, 0.005, -0.35], rotation: [-Math.PI / 2, 0, 0] }, h("ringGeometry", { args: [2.25, 2.34, 64] }), h("meshStandardMaterial", { color: "#b59456", metalness: 0.48, roughness: 0.38 })),
+    h("mesh", { position: [0, 1.65, -3.65], receiveShadow: true }, h("boxGeometry", { args: [12, 3.5, 0.45] }), h("meshStandardMaterial", { color: "#292b2d", roughness: 0.97 })),
+    STONE_BLOCKS.map((stone, index) => h("mesh", { key: `stone-${index}`, position: [stone.x, stone.y, -3.38], scale: [stone.scale, 1, 1], castShadow: true, receiveShadow: true }, h("boxGeometry", { args: [1.92, 0.72, 0.38] }), h("meshStandardMaterial", { color: index % 2 ? "#4b4a46" : "#55534d", roughness: 0.96 }))),
+    [-4.75, 4.75].map((x) => h("group", { key: `pillar-${x}`, position: [x, 0, -2.95] },
+      h("mesh", { position: [0, 1.4, 0], castShadow: true, receiveShadow: true }, h("cylinderGeometry", { args: [0.4, 0.52, 2.8, 12] }), h("meshStandardMaterial", { color: "#4a4945", roughness: 0.93 })),
+      h("mesh", { position: [0, 2.88, 0], castShadow: true }, h("boxGeometry", { args: [1.05, 0.24, 0.9] }), h("meshStandardMaterial", { color: "#5d5a53", roughness: 0.9 }))
+    )),
+    h(Torch, { position: [-3.55, 2.05, -3] }),
+    h(Torch, { position: [3.55, 2.05, -3] })
+  );
 }
 
 function ArenaCamera() {
@@ -132,19 +251,31 @@ function ArenaCamera() {
 }
 
 function ArenaScene({ leftAction, rightAction, winner }) {
-  return h(Canvas, { shadows: true, camera: { position: [0, 4.3, 8.2], fov: 36 }, dpr: [1, 1.4], className: "arena-canvas" },
+  return h(Canvas, {
+    shadows: true,
+    camera: { position: [0, 4.05, 8.7], fov: 38 },
+    dpr: [1, 1.45],
+    gl: { antialias: true, powerPreference: "high-performance" },
+    onCreated: ({ gl }) => { gl.toneMapping = THREE.ACESFilmicToneMapping; gl.toneMappingExposure = 1.08; },
+    className: "arena-canvas"
+  },
     h(ArenaCamera),
-    h("color", { attach: "background", args: ["#111525"] }),
-    h("ambientLight", { intensity: 1.3 }),
-    h("directionalLight", { position: [0, 6, 4], intensity: 2.4, castShadow: true }),
-    h("pointLight", { position: [-4, 2, 2], intensity: 18, distance: 12, color: "#5ee7c1" }),
-    h("pointLight", { position: [4, 2, 2], intensity: 18, distance: 12, color: "#a88bff" }),
-    h("mesh", { rotation: [-Math.PI / 2, 0, 0], receiveShadow: true }, h("planeGeometry", { args: [14, 7] }), h("meshStandardMaterial", { color: "#1a2034", roughness: 0.8 })),
-    h("mesh", { position: [0, 0.02, -1.3], rotation: [-Math.PI / 2, 0, 0] }, h("ringGeometry", { args: [2.3, 2.55, 64] }), h("meshBasicMaterial", { color: "#4c65b9", transparent: true, opacity: 0.55 })),
-    h("mesh", { position: [0, 2.35, -0.8] }, h("boxGeometry", { args: [7, 0.06, 0.06] }), h("meshBasicMaterial", { color: "#65dfc2" })),
-    h("group", { position: [-2.25, 0, 0], rotation: [0, 0.32, 0] }, h(GlbCharacter, { path: MODEL_PATHS.warrior, color: "#5ee7c1", action: leftAction, direction: 1 })),
-    h("group", { position: [2.25, 0, 0], rotation: [0, -0.32, 0] }, h(GlbCharacter, { path: MODEL_PATHS.mage, color: "#a88bff", action: rightAction, direction: -1 })),
-    winner ? h("mesh", { position: [0, 3, 0] }, h("torusGeometry", { args: [0.75, 0.04, 8, 40] }), h("meshBasicMaterial", { color: "#ffd166" })) : null
+    h("color", { attach: "background", args: ["#080a0d"] }),
+    h("fog", { attach: "fog", args: ["#080a0d", 7.5, 17] }),
+    h("hemisphereLight", { intensity: 0.72, color: "#b9d4ff", groundColor: "#201713" }),
+    h("directionalLight", { position: [-3, 7, 5], intensity: 2.3, color: "#d9e7ff", castShadow: true, "shadow-mapSize-width": 1024, "shadow-mapSize-height": 1024 }),
+    h("spotLight", { position: [0, 7, 2], intensity: 16, angle: 0.65, penumbra: 0.75, distance: 16, color: "#dce7ff", castShadow: true }),
+    h(StoneArena),
+    h("group", { position: [-2.15, 0, 0.1], rotation: [0, 0.3, 0] }, h(GlbCharacter, { path: MODEL_PATHS.warrior, color: "#5ee7c1", action: leftAction, direction: 1, weapon: "sword" })),
+    h("group", { position: [2.15, 0, 0.1], rotation: [0, -0.3, 0] }, h(GlbCharacter, { path: MODEL_PATHS.mage, color: "#a88bff", action: rightAction, direction: -1, weapon: "staff" })),
+    h(AttackEffect, { side: "left", action: leftAction, kind: "slash" }),
+    h(AttackEffect, { side: "right", action: rightAction, kind: "magic" }),
+    h(ImpactEffect, { side: "left", action: leftAction, color: "#b79cff" }),
+    h(ImpactEffect, { side: "right", action: rightAction, color: "#ffd27a" }),
+    winner ? h("group", { position: [0, 3.05, 0.2] },
+      h("mesh", null, h("torusGeometry", { args: [0.75, 0.045, 8, 40] }), h("meshBasicMaterial", { color: "#ffd166" })),
+      h("pointLight", { color: "#ffd166", intensity: 7, distance: 5 })
+    ) : null
   );
 }
 
@@ -204,6 +335,27 @@ function mergeBattleEvents(remoteEvents, localEvents) {
   return [...merged.values()].sort((a, b) => new Date(a.createdAt || 0) - new Date(b.createdAt || 0));
 }
 
+function opponentFromPairing(events, myPlayer) {
+  if (!myPlayer) return null;
+  const pairing = [...(events || [])].reverse().find((event) => event.playerId === myPlayer.id && event.type === "skill" && String(event.effect || "").startsWith("pairing:"));
+  if (!pairing) return null;
+  try {
+    const stored = JSON.parse(String(pairing.effect).slice("pairing:".length));
+    if (!stored.opponentId || !stored.opponentName) return null;
+    return {
+      id: stored.opponentId,
+      studentId: stored.opponentStudentId || "",
+      name: stored.opponentName,
+      className: stored.opponentClassName || "",
+      roomId: myPlayer.roomId,
+      status: "playing",
+      virtual: true
+    };
+  } catch {
+    return null;
+  }
+}
+
 function ArenaApp() {
   const context = globalThis.personalAIAppContext?.() || {};
   const [room, setRoom] = useState(null);
@@ -254,11 +406,13 @@ function ArenaApp() {
     if (!players.length) return [];
     if (context.role === "student" && myPlayer) {
       const index = players.findIndex((player) => player.id === myPlayer.id);
-      return [myPlayer, players[index % 2 === 0 ? index + 1 : index - 1]].filter(Boolean);
+      const visibleOpponent = players[index % 2 === 0 ? index + 1 : index - 1];
+      return [myPlayer, visibleOpponent || opponentFromPairing(events, myPlayer)].filter(Boolean);
     }
     return players.slice(0, 2);
-  }, [players, myPlayer, context.role]);
+  }, [players, events, myPlayer, context.role]);
   const pairEvents = events.filter((event) => pair.some((player) => player.id === event.playerId));
+  const visiblePlayerCount = context.role === "student" ? Math.max(players.length, pair.length) : players.length;
   const stats = battleStats(pair, pairEvents);
   const leftStats = stats.get(pair[0]?.id) || { hp: 100, score: 0, streak: 0, lastAction: "idle" };
   const rightStats = stats.get(pair[1]?.id) || { hp: 100, score: 0, streak: 0, lastAction: "idle" };
@@ -326,7 +480,7 @@ function ArenaApp() {
   const readyToStart = players.length >= 2 && players.length % 2 === 0;
   const answered = answeredRound === round;
   return h("div", { className: "arena-battle-shell" },
-    h("div", { className: "arena-room-bar" }, h("div", null, h("span", { className: "arena-kicker" }, room.status === "battle" ? "BATTLE LIVE" : "WAITING ROOM"), h("h2", null, `房间 ${room.code}`), h("p", null, room.className ? `${room.className} · ${players.length} 人在线` : `${players.length} 人在线`)), h("div", { className: "arena-room-actions" }, room.status === "lobby" && context.role === "teacher" ? h("button", { className: "arena-primary-button", disabled: busy || !readyToStart, onClick: startRoom }, readyToStart ? "开始战斗" : "需要偶数人数") : null, h("button", { className: "arena-ghost-button", onClick: () => { localStorage.removeItem(ROOM_STORAGE_KEY); setRoom(null); setRoomData(null); } }, "离开房间"))),
+    h("div", { className: "arena-room-bar" }, h("div", null, h("span", { className: "arena-kicker" }, room.status === "battle" ? "BATTLE LIVE" : "WAITING ROOM"), h("h2", null, `房间 ${room.code}`), h("p", null, room.className ? `${room.className} · ${visiblePlayerCount} 人在线` : `${visiblePlayerCount} 人在线`)), h("div", { className: "arena-room-actions" }, room.status === "lobby" && context.role === "teacher" ? h("button", { className: "arena-primary-button", disabled: busy || !readyToStart, onClick: startRoom }, readyToStart ? "开始战斗" : "需要偶数人数") : null, h("button", { className: "arena-ghost-button", onClick: () => { localStorage.removeItem(ROOM_STORAGE_KEY); setRoom(null); setRoomData(null); } }, "离开房间"))),
     room.status === "lobby" ? h("div", { className: "arena-waiting" }, h("div", { className: "arena-code-display" }, h("small", null, "学生加入验证码"), h("strong", null, room.code)), h("div", { className: "arena-player-list" }, players.map((player, index) => h("div", { className: "arena-player-chip", key: player.id }, h("span", null, index % 2 ? "♟" : "♞"), h("strong", null, player.name), h("small", null, index % 2 ? "等待配对" : "已加入")))), h("p", { className: "arena-hint" }, "配对规则：按照加入顺序每两人一组；人数必须是 2、4、6……才能开始。")) : h(React.Fragment, null,
       scene,
       h("div", { className: "arena-hud" }, h("div", { className: "arena-fighter-card left" }, h("strong", null, pair[0]?.name || "玩家 A"), h("div", { className: "arena-health" }, h("i", { style: { width: `${leftStats.hp}%` } })), h("span", null, `生命 ${leftStats.hp} · 得分 ${leftStats.score}`)), h("div", { className: "arena-timer" }, h("strong", null, `${Math.floor(timeLeft / 60)}:${String(timeLeft % 60).padStart(2, "0")}`), h("small", null, `第 ${round + 1} 回合`)), h("div", { className: "arena-fighter-card right" }, h("strong", null, pair[1]?.name || "玩家 B"), h("div", { className: "arena-health purple" }, h("i", { style: { width: `${rightStats.hp}%` } })), h("span", null, `生命 ${rightStats.hp} · 得分 ${rightStats.score}`))),

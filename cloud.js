@@ -786,8 +786,30 @@
   async function startBattleRoom(roomId) {
     if (!session?.user?.id || !isUuid(roomId)) return null;
     const db = requireClient();
-    const players = unwrap(await db.from("battle_players").select("id").eq("room_id", roomId), "Count battle players") || [];
+    const players = unwrap(await db.from("battle_players").select("*").eq("room_id", roomId).order("joined_at", { ascending: true }), "Count battle players") || [];
     if (players.length < 2 || players.length % 2 !== 0) throw new Error("An even number of players is required to start the battle.");
+    // Persist each student's opponent in an event that every room member can
+    // read. This also supports older Supabase projects whose battle_players
+    // SELECT policy has not yet been migrated to expose the paired row.
+    const pairingRows = players.map((player, index) => {
+      const opponent = players[index % 2 === 0 ? index + 1 : index - 1];
+      return {
+        room_id: roomId,
+        player_id: player.id,
+        round_number: 0,
+        event_type: "skill",
+        question_id: null,
+        is_correct: false,
+        damage: 0,
+        effect: `pairing:${JSON.stringify({
+          opponentId: opponent.id,
+          opponentStudentId: opponent.student_id,
+          opponentName: opponent.display_name || "对手",
+          opponentClassName: opponent.class_name || ""
+        })}`
+      };
+    });
+    unwrap(await db.from("battle_events").insert(pairingRows), "Save battle pairings");
     unwrap(await db.from("battle_rooms").update({ status: "battle", started_at: new Date().toISOString(), updated_at: new Date().toISOString() }).eq("id", roomId).eq("teacher_id", session.user.id), "Start battle room");
     return await loadBattleRoom(roomId);
   }

@@ -480,20 +480,36 @@ create policy battle_rooms_teacher_write on public.battle_rooms for all to authe
 using (teacher_id = auth.uid() or public.is_teacher())
 with check (teacher_id = auth.uid() or public.is_teacher());
 
+-- SECURITY DEFINER avoids a recursive RLS lookup when a student needs to see
+-- the other player in the same room. It only returns a boolean membership
+-- result and never exposes unrelated rooms.
+create or replace function public.can_view_battle_room(target_room_id uuid)
+returns boolean
+language sql
+stable
+security definer
+set search_path = public
+as $$
+  select public.is_teacher()
+    or exists (
+      select 1 from public.battle_rooms room
+      where room.id = target_room_id and room.teacher_id = auth.uid()
+    )
+    or exists (
+      select 1 from public.battle_players viewer
+      where viewer.room_id = target_room_id and viewer.student_id = auth.uid()
+    );
+$$;
+grant execute on function public.can_view_battle_room(uuid) to authenticated;
+
 create policy battle_players_read on public.battle_players for select to authenticated
-using (student_id = auth.uid() or public.is_teacher() or exists (select 1 from public.battle_rooms r where r.id = battle_players.room_id and r.teacher_id = auth.uid()));
+using (public.can_view_battle_room(battle_players.room_id));
 create policy battle_players_write on public.battle_players for all to authenticated
 using (student_id = auth.uid() or public.is_teacher())
 with check (student_id = auth.uid() or public.is_teacher());
 
 create policy battle_events_read on public.battle_events for select to authenticated
-using (
-  public.is_teacher()
-  or exists (
-    select 1 from public.battle_players viewer
-    where viewer.room_id = battle_events.room_id and viewer.student_id = auth.uid()
-  )
-);
+using (public.can_view_battle_room(battle_events.room_id));
 create policy battle_events_insert on public.battle_events for insert to authenticated
 with check (exists (select 1 from public.battle_players bp where bp.id = battle_events.player_id and (bp.student_id = auth.uid() or public.is_teacher())));
 
