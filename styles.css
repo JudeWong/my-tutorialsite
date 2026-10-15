@@ -1204,8 +1204,9 @@ html.session-loading-active,html.session-loading-active body { overflow: hidden;
 
 /* Scanned industrial wasteland, with an unobstructed full-body camera frame. */
 .arena-scene { height:clamp(420px,42vw,570px); min-height:420px; background:#343b3c; border-color:#5c615d; }
+.arena-scene::before { background:linear-gradient(180deg,rgba(10,17,24,.1),transparent 24%,transparent 80%,rgba(5,10,15,.15)); }
 .apocalypse-renderer { position:relative; width:100%; height:100%; overflow:hidden; }
-.apocalypse-vignette { position:absolute; inset:0; pointer-events:none; background:radial-gradient(ellipse at 50% 44%,transparent 42%,rgba(17,23,25,.32)); }
+.apocalypse-vignette { position:absolute; inset:0; pointer-events:none; background:radial-gradient(ellipse at 50% 44%,transparent 55%,rgba(17,23,25,.18)); }
 .apocalypse-loading { position:absolute; inset:0; z-index:3; display:grid; place-content:center; justify-items:center; gap:13px; padding:24px; color:#eee7d9; text-align:center; background:radial-gradient(ellipse at center,rgba(45,56,58,.96),rgba(14,22,26,.98)); }
 .apocalypse-loading strong { font-size:21px; font-weight:600; }
 .apocalypse-loading small { max-width:300px; color:#a9babf; font-size:13px; line-height:1.7; }

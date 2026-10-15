@@ -1,5 +1,5 @@
-/* Real scanned scenery and CC0 rigged characters. Source credits are bundled
- * beside the assets. Geometry generated below is limited to terrain and VFX. */
+/* Blender-authored, Cycles AO-baked scenery and PBR rigged characters.
+ * The .blend build script and source credits are bundled with the project. */
 import React, { useEffect, useMemo, useRef, useState } from "https://esm.sh/react@18.3.1";
 import { Canvas, useFrame, useThree } from "https://esm.sh/@react-three/fiber@8.17.10?deps=react@18.3.1,react-dom@18.3.1,three@0.160.0";
 import * as THREE from "https://esm.sh/three@0.160.0";
@@ -11,8 +11,8 @@ const h = React.createElement;
 const BASE = "./assets/models/apocalypse/";
 const ASSETS = {
   vanguard: "vanguard.glb", sentinel: "sentinel.glb",
-  barrier: "barrier.glb", car: "covered-car.glb", tyre: "tyre.glb", barrel: "barrel.glb", fence: "fence.glb", gate: "fence-gate.glb",
-  sky: "burnt-warehouse.hdr", background: "warehouse-background.jpg", floor: "ground-diffuse.jpg", normal: "ground-normal.jpg", roughness: "ground-roughness.jpg"
+  environment: "blender-wasteland.glb",
+  sky: "burnt-warehouse.hdr", background: "warehouse-background.jpg"
 };
 const modelCache = new Map();
 function getModel(file) {
@@ -34,6 +34,14 @@ function useModel(file, report) {
         object.castShadow = true;
         object.receiveShadow = true;
         object.frustumCulled = !object.isSkinnedMesh;
+        // Match the restrained HDR illumination in the Blender reference.
+        for (const material of [object.material].flat()) {
+          if (material?.isMeshStandardMaterial) material.envMapIntensity = .65;
+          if (material?.alphaTest > 0) {
+            material.alphaToCoverage = true;
+            material.alphaTest = .28;
+          }
+        }
       });
       setAsset({ scene, animations: loaded.animations });
       report?.(file, "ready");
@@ -41,21 +49,6 @@ function useModel(file, report) {
     return () => { alive = false; };
   }, [file, report]);
   return asset;
-}
-
-function ScannedProp({ file, position, rotation = [0, 0, 0], width, height, report }) {
-  const asset = useModel(file, report);
-  const fit = useMemo(() => {
-    if (!asset) return null;
-    asset.scene.updateMatrixWorld(true);
-    const bounds = new THREE.Box3().setFromObject(asset.scene);
-    const size = bounds.getSize(new THREE.Vector3());
-    const center = bounds.getCenter(new THREE.Vector3());
-    const scale = height ? height / size.y : width / Math.max(size.x, size.z);
-    return { scale, offset: [-center.x * scale, -bounds.min.y * scale, -center.z * scale] };
-  }, [asset, width, height]);
-  if (!fit) return null;
-  return h("group", { position, rotation }, h("primitive", { object: asset.scene, scale: fit.scale, position: fit.offset, dispose: null }));
 }
 
 function Fighter({ file, position, facing, action, report, muzzle }) {
@@ -136,8 +129,8 @@ function WorldLighting({ report }) {
       texture.mapping = THREE.EquirectangularReflectionMapping;
       texture.colorSpace = THREE.SRGBColorSpace;
       scene.background = texture;
-      scene.backgroundBlurriness = 0;
-      scene.backgroundIntensity = .72;
+      scene.backgroundBlurriness = .015;
+      scene.backgroundIntensity = .58;
       report(ASSETS.background, "ready");
     }, undefined, () => { if (alive) report(ASSETS.background, "error"); });
     return () => {
@@ -147,59 +140,22 @@ function WorldLighting({ report }) {
     };
   }, [gl, scene, report]);
   return h(React.Fragment, null,
-    h("fog", { attach: "fog", args: ["#373d40", 12, 38] }),
-    h("hemisphereLight", { intensity: .75, color: "#c5d7dc", groundColor: "#5e4835" }),
-    h("directionalLight", { position: [-4, 7, 5], intensity: 3.1, color: "#ffdfb2", castShadow: true,
+    h("fog", { attach: "fog", args: ["#555e60", 14, 42] }),
+    h("hemisphereLight", { intensity: .28, color: "#c5d7dc", groundColor: "#675c50" }),
+    h("directionalLight", { position: [-4, 7, 5], intensity: 1.8, color: "#ffe0be", castShadow: true,
       "shadow-mapSize-width": 1024, "shadow-mapSize-height": 1024, "shadow-camera-left": -8, "shadow-camera-right": 8,
-      "shadow-camera-top": 8, "shadow-camera-bottom": -6, "shadow-normalBias": .04 }),
-    h("directionalLight", { position: [4, 4, -5], intensity: 2, color: "#b5d2e4" }),
-    h("pointLight", { position: [-5, 1.3, -3], color: "#f19950", intensity: 14, distance: 8 }),
-    h("pointLight", { position: [5, 1.3, -2], color: "#76a9b6", intensity: 9, distance: 8 })
-  );
-}
-
-function Terrain({ report }) {
-  const [maps, setMaps] = useState(null);
-  useEffect(() => {
-    let alive = true;
-    const loader = new THREE.TextureLoader();
-    const textures = [];
-    Promise.all([ASSETS.floor, ASSETS.normal, ASSETS.roughness].map((file, index) => loader.loadAsync(BASE + file).then((texture) => {
-      textures.push(texture);
-      texture.wrapS = texture.wrapT = THREE.RepeatWrapping;
-      texture.repeat.set(8, 8);
-      texture.anisotropy = 4;
-      if (index === 0) texture.colorSpace = THREE.SRGBColorSpace;
-      if (alive) report(file, "ready");
-      return texture;
-    }).catch(() => { if (alive) report(file, "error"); return null; }))).then((loaded) => {
-      if (alive) setMaps(loaded);
-      else textures.forEach((texture) => texture.dispose());
-    });
-    return () => { alive = false; textures.forEach((texture) => texture.dispose()); };
-  }, [report]);
-  return h("mesh", { rotation: [-Math.PI / 2, 0, .16], position: [0, -.035, -2], receiveShadow: true },
-    h("planeGeometry", { args: [45, 45] }),
-    h("meshStandardMaterial", { color: maps?.[0] ? "#b7aaa0" : "#555550", map: maps?.[0], normalMap: maps?.[1], roughnessMap: maps?.[2], roughness: .93, metalness: .04, normalScale: [.65, .65] })
+      "shadow-camera-top": 8, "shadow-camera-bottom": -6, "shadow-normalBias": .025, "shadow-bias": -.00015,
+      "shadow-radius": 3, "shadow-blurSamples": 6 }),
+    h("directionalLight", { position: [4, 5, -4], intensity: .95, color: "#bad7ff" }),
+    h("directionalLight", { position: [0, 3, 5], intensity: .3, color: "#e1edff" })
   );
 }
 
 function Wasteland({ report }) {
-  return h("group", null,
-    h(Terrain, { report }),
-    h(ScannedProp, { file: ASSETS.car, position: [-5.6, 0, -3.7], rotation: [0, .48, 0], width: 4.4, report }),
-    h(ScannedProp, { file: ASSETS.barrier, position: [-3.2, 0, -3.9], rotation: [0, -.12, 0], width: 2.15, report }),
-    h(ScannedProp, { file: ASSETS.barrier, position: [3.5, 0, -4.2], rotation: [0, .22, 0], width: 2.15, report }),
-    h(ScannedProp, { file: ASSETS.barrier, position: [5.8, 0, -.7], rotation: [0, 1.35, 0], width: 2.15, report }),
-    [-5, -2.5, 2.5, 5].map((x) => h(ScannedProp, { key: x, file: ASSETS.fence, position: [x, 0, -6], rotation: [0, x > 0 ? -.05 : .05, 0], width: 2.5, report })),
-    h(ScannedProp, { file: ASSETS.gate, position: [0, 0, -6], width: 2.5, report }),
-    h(ScannedProp, { file: ASSETS.barrel, position: [-4.3, .39, -1.5], rotation: [0, .35, Math.PI / 2], height: 1.15, report }),
-    h(ScannedProp, { file: ASSETS.barrel, position: [4.3, 0, -2.7], rotation: [0, 1.6, 0], height: 1.15, report }),
-    h(ScannedProp, { file: ASSETS.barrel, position: [5.1, 0, -3.6], rotation: [0, .8, 0], height: 1.05, report }),
-    h(ScannedProp, { file: ASSETS.tyre, position: [-3.6, .12, 1], rotation: [Math.PI / 2, 0, -.7], width: .86, report }),
-    h(ScannedProp, { file: ASSETS.tyre, position: [4.4, 0, .3], rotation: [0, .35, 0], width: .84, report }),
-    h(ScannedProp, { file: ASSETS.tyre, position: [-4.8, .13, -.6], rotation: [Math.PI / 2, 0, 1.8], width: .9, report })
-  );
+  const asset = useModel(ASSETS.environment, report);
+  // World-space layout, tiled PBR maps and the independent AO UV channel are
+  // authored/exported in Blender. Never auto-center or auto-scale this scene.
+  return asset ? h("primitive", { object: asset.scene, dispose: null }) : null;
 }
 
 function Dust() {
@@ -296,13 +252,13 @@ export function ApocalypseArena(props) {
   return h("div", { className: "apocalypse-renderer" },
     h(Canvas, { key: attempt, shadows: true, camera: { position: [0, 3.25, 8], fov: 40, near: .1, far: 80 },
       dpr: [1, 1.35], gl: { antialias: true, powerPreference: "high-performance" }, className: "arena-canvas",
-      onCreated: ({ gl }) => { gl.toneMapping = THREE.ACESFilmicToneMapping; gl.toneMappingExposure = 1.12; gl.shadowMap.type = THREE.PCFSoftShadowMap; }
+      onCreated: ({ gl }) => { gl.toneMapping = THREE.AgXToneMapping; gl.toneMappingExposure = 1.1; gl.shadowMap.type = THREE.VSMShadowMap; }
     }, h(Composition, { ...props, report })),
     h("div", { className: "apocalypse-vignette", "aria-hidden": "true" }),
     !ready ? h("div", { className: `apocalypse-loading${failed.length ? " has-error" : ""}`, role: "status" },
       h("span", { className: "apocalypse-loading-symbol", "aria-hidden": "true" }, "◈"),
       h("strong", null, failed.length ? "部分场景资源未能加载" : "正在进入废土竞技场"),
-      h("small", null, failed.length ? "请检查网络后重试，比赛分数不会被重置。" : `装甲战士与扫描场景 · ${progress}%`),
+      h("small", null, failed.length ? "请检查网络后重试，比赛分数不会被重置。" : `Blender 场景与装甲战士 · ${progress}%`),
       h("div", { className: "apocalypse-loading-track" }, h("i", { style: { width: `${progress}%` } })),
       failed.length ? h("button", { className: "arena-primary-button", onClick: () => { setAssets({}); setAttempt((value) => value + 1); } }, "重新加载场景") : null
     ) : null

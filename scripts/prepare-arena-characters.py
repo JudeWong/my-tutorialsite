@@ -7,8 +7,13 @@ The original source has a humanoid rig but no animation clips. The six skeletal
 clips below are authored placeholders, not motion-captured/source animations.
 """
 import bpy
+import bmesh
 import json
 import math
+import struct
+import sys
+import numpy as np
+import zlib
 from pathlib import Path
 from mathutils import Vector, Quaternion
 
@@ -20,15 +25,126 @@ OUTPUT.mkdir(parents=True, exist_ok=True)
 TEMP.mkdir(parents=True, exist_ok=True)
 
 
+def save_data_png(image):
+    """Encode 8-bit RGB data with lossless adaptive filters, omitting opaque alpha.
+
+    Blender's default image.save compression is intentionally fast and writes
+    an unnecessary alpha channel for the source normals. These are linear data,
+    not a palette/quantized color image; every stored channel remains 8-bit.
+    """
+    width, height = image.size
+    pixels = np.empty(len(image.pixels), dtype=np.float32)
+    image.pixels.foreach_get(pixels)
+    rows = np.rint(np.clip(pixels.reshape(height, width, 4)[::-1, :, :3], 0, 1) * 255).astype(np.uint8).reshape(height, width * 3)
+    prior = np.zeros(width * 3, dtype=np.int16)
+    filtered = bytearray()
+    for row in rows:
+        current = row.astype(np.int16)
+        left = np.concatenate((np.zeros(3, dtype=np.int16), current[:-3]))
+        upper_left = np.concatenate((np.zeros(3, dtype=np.int16), prior[:-3]))
+        p = left + prior - upper_left
+        pa, pb, pc = abs(p - left), abs(p - prior), abs(p - upper_left)
+        paeth = np.where((pa <= pb) & (pa <= pc), left, np.where(pb <= pc, prior, upper_left))
+        choices = [current, current - left, current - prior, current - ((left + prior) // 2), current - paeth]
+        choices = [choice.astype(np.uint8) for choice in choices]
+        index = min(range(5), key=lambda i: np.abs(choices[i].view(np.int8).astype(np.int16)).sum())
+        filtered.append(index)
+        filtered.extend(choices[index].tobytes())
+        prior = current
+    def chunk(kind, value):
+        return struct.pack('>I', len(value)) + kind + value + struct.pack('>I', zlib.crc32(kind + value))
+    encoded = b'\x89PNG\r\n\x1a\n' + chunk(b'IHDR', struct.pack('>IIBBBBB', width, height, 8, 2, 0, 0, 0))
+    encoded += chunk(b'IDAT', zlib.compress(bytes(filtered), 9)) + chunk(b'IEND', b'')
+    Path(image.filepath_raw).write_bytes(encoded)
+    image.reload()
+
+
 def image_map(skin, suffix, linear=False):
     extension = 'tga' if suffix == 'Albedo' else 'png'
     image = bpy.data.images.load(str(SOURCE / f'{skin}_{suffix}.{extension}'), check_existing=False)
     image.colorspace_settings.name = 'Non-Color' if linear else 'sRGB'
     image.scale(1024, 1024)
-    image.file_format = 'PNG' if suffix == 'Emission' else 'JPEG'
+    # JPEG corrupts tangent-space normals along armor seams. Keep every data map
+    # lossless; only the converted base color is stored as a JPEG below.
+    image.file_format = 'PNG'
     image.filepath_raw = str(TEMP / f'{skin}_{suffix}.{image.file_format.lower()}')
     image.save()
+    if linear:
+        save_data_png(image)
     return image
+
+
+def source_pixels(skin, suffix):
+    extension = 'tga' if suffix in {'Albedo', 'Specular'} else 'png'
+    image = bpy.data.images.load(str(SOURCE / f'{skin}_{suffix}.{extension}'), check_existing=False)
+    image.colorspace_settings.name = 'Non-Color'
+    image.scale(1024, 1024)
+    pixels = np.empty(len(image.pixels), dtype=np.float32)
+    image.pixels.foreach_get(pixels)
+    bpy.data.images.remove(image)
+    return pixels.reshape(-1, 4)
+
+
+def srgb_to_linear(value):
+    return np.where(value <= 0.04045, value / 12.92, ((value + 0.055) / 1.055) ** 2.4)
+
+
+def linear_to_srgb(value):
+    return np.where(value <= 0.0031308, 12.92 * value, 1.055 * np.maximum(value, 0) ** (1 / 2.4) - 0.055)
+
+
+def save_pixels(name, pixels, color=False):
+    image = bpy.data.images.new(name, width=1024, height=1024, alpha=False)
+    image.colorspace_settings.name = 'Non-Color'
+    image.pixels.foreach_set(np.clip(pixels, 0, 1).ravel())
+    image.file_format = 'JPEG' if color else 'PNG'
+    image.filepath_raw = str(TEMP / f'{name}.{image.file_format.lower()}')
+    image.save()
+    if not color:
+        save_data_png(image)
+    image.colorspace_settings.name = 'sRGB' if color else 'Non-Color'
+    return image
+
+
+def converted_pbr(skin):
+    """Convert the source Unity Standard Specular texture set into glTF PBR.
+
+    RGB in Specular is sRGB reflectance; its alpha is smoothness. Solve the
+    dielectric/metal mixture per pixel instead of making cloth and paint metal.
+    The small roughness lift is an intentional worn/dusty finish for this arena.
+    """
+    albedo = source_pixels(skin, 'Albedo')
+    spec_gloss = source_pixels(skin, 'Specular')
+    ao = source_pixels(skin, 'Occlusion')[:, 0]
+    diffuse = srgb_to_linear(albedo[:, :3])
+    specular = srgb_to_linear(spec_gloss[:, :3])
+    brightness = lambda color: np.sqrt(np.sum(color * color * np.array([0.299, 0.587, 0.114]), axis=1))
+    diffuse_brightness = brightness(diffuse)
+    specular_brightness = brightness(specular)
+    dielectric = 0.04
+    one_minus_specular = 1 - np.max(specular, axis=1)
+    b = diffuse_brightness * one_minus_specular / (1 - dielectric) + specular_brightness - 2 * dielectric
+    c = dielectric - specular_brightness
+    metallic = np.where(specular_brightness < dielectric, 0,
+                        np.clip((-b + np.sqrt(np.maximum(b * b - 4 * dielectric * c, 0))) / (2 * dielectric), 0, 1))
+    diffuse_base = diffuse * (one_minus_specular / (1 - dielectric) / np.maximum(1 - metallic, 1e-6))[:, None]
+    specular_base = (specular - dielectric * (1 - metallic)[:, None]) / np.maximum(metallic[:, None], 1e-6)
+    base = diffuse_base * (1 - metallic[:, None] ** 2) + specular_base * metallic[:, None] ** 2
+    # Original Unity material values: Federal 0.85, Military 1.0. These are
+    # read from the serialized source rather than treating alpha as roughness.
+    source_material = (SOURCE / f'{skin}.mat').read_bytes()
+    offset = source_material.rfind(b'_GlossMapScale') + len(b'_GlossMapScale')
+    offset = (offset + 3) & ~3
+    gloss_scale = struct.unpack_from('<f', source_material, offset)[0]
+    assert 0 < gloss_scale <= 1, f'Unexpected source gloss scale: {gloss_scale}'
+    roughness = np.clip(1 - spec_gloss[:, 3] * gloss_scale + 0.18 + (1 - metallic) * 0.09 + (1 - ao) * 0.12, 0.28, 0.92)
+    base_pixels = np.ones_like(albedo)
+    base_pixels[:, :3] = linear_to_srgb(np.clip(base, 0, 1))
+    orm_pixels = np.ones_like(albedo)
+    orm_pixels[:, 0], orm_pixels[:, 1], orm_pixels[:, 2] = ao, roughness, metallic
+    print('PBR', skin, 'sourceGloss', gloss_scale,
+          'metallic/roughness p5/50/95', np.percentile(orm_pixels[:, 1:3], [5, 50, 95], axis=0).tolist())
+    return save_pixels(skin + '_BaseColor', base_pixels, color=True), save_pixels(skin + '_OcclusionRoughnessMetallic', orm_pixels)
 
 
 def material_for(skin):
@@ -36,17 +152,36 @@ def material_for(skin):
     material.use_nodes = True
     nodes, links = material.node_tree.nodes, material.node_tree.links
     shader = nodes.get('Principled BSDF')
-    shader.inputs['Metallic'].default_value = 0.65
-    shader.inputs['Roughness'].default_value = 0.48
-    shader.inputs['Emission Strength'].default_value = 1.3
-    for suffix, socket, linear in [('Albedo', 'Base Color', False), ('Emission', 'Emission Color', False)]:
-        texture = nodes.new('ShaderNodeTexImage')
-        texture.image = image_map(skin, suffix, linear)
-        links.new(texture.outputs['Color'], shader.inputs[socket])
+    shader.inputs['Emission Strength'].default_value = 0.7
+    base, orm = converted_pbr(skin)
+    texture = nodes.new('ShaderNodeTexImage')
+    texture.image = base
+    links.new(texture.outputs['Color'], shader.inputs['Base Color'])
+    packed = nodes.new('ShaderNodeTexImage')
+    packed.image = orm
+    separate = nodes.new('ShaderNodeSeparateColor')
+    links.new(packed.outputs['Color'], separate.inputs['Color'])
+    links.new(separate.outputs['Green'], shader.inputs['Roughness'])
+    links.new(separate.outputs['Blue'], shader.inputs['Metallic'])
+    # Blender's glTF exporter recognizes this socket and embeds the source AO
+    # in occlusionTexture, sharing the same lossless packed ORM image.
+    settings = bpy.data.node_groups.get('glTF Material Output') or bpy.data.node_groups.new('glTF Material Output', 'ShaderNodeTree')
+    if not settings.interface.items_tree:
+        settings.interface.new_socket(name='Occlusion', in_out='INPUT', socket_type='NodeSocketFloat')
+        settings.interface.new_socket(name='Thickness', in_out='INPUT', socket_type='NodeSocketFloat')
+    settings.nodes.clear()
+    settings.nodes.new('NodeGroupInput')
+    settings.nodes.new('NodeGroupOutput')
+    settings_node = nodes.new('ShaderNodeGroup')
+    settings_node.node_tree = settings
+    links.new(separate.outputs['Red'], settings_node.inputs['Occlusion'])
+    emission = nodes.new('ShaderNodeTexImage')
+    emission.image = image_map(skin, 'Emission')
+    links.new(emission.outputs['Color'], shader.inputs['Emission Color'])
     texture = nodes.new('ShaderNodeTexImage')
     texture.image = image_map(skin, 'NormalMap', True)
     normal = nodes.new('ShaderNodeNormalMap')
-    normal.inputs['Strength'].default_value = 0.8
+    normal.inputs['Strength'].default_value = 1.0
     links.new(texture.outputs['Color'], normal.inputs['Color'])
     links.new(normal.outputs['Normal'], shader.inputs['Normal'])
     return material
@@ -159,23 +294,38 @@ def render_preview(rig, name, output_name, frame=0):
     camera_data = bpy.data.cameras.new('PreviewCamera')
     camera = bpy.data.objects.new('PreviewCamera', camera_data)
     scene.collection.objects.link(camera)
-    camera.location = (3.6, -6.0, 3.1)
-    camera.rotation_euler = (Vector((0, 0, 1.15)) - camera.location).to_track_quat('-Z', 'Y').to_euler()
+    camera.location = (3.2, -6.0, 2.7)
+    camera.rotation_euler = (Vector((0, 0, 1.25)) - camera.location).to_track_quat('-Z', 'Y').to_euler()
     camera_data.type = 'ORTHO'
-    camera_data.ortho_scale = 3.0
+    camera_data.ortho_scale = 2.5
     scene.camera = camera
-    for loc, energy, color in [((2, -4, 5), 700, (0.82, 0.9, 1.0)), ((-3, -1, 3), 500, (1.0, 0.78, 0.58)), ((1, 3, 4), 900, (0.6, 0.8, 1.0))]:
+    for loc, energy, color in [((2, -4, 5), 300, (0.92, 0.95, 1.0)), ((-3, -1, 3), 180, (1.0, 0.88, 0.76)), ((1, 3, 4), 400, (0.75, 0.86, 1.0))]:
         data = bpy.data.lights.new('PreviewLight', 'AREA')
         data.energy, data.color, data.size = energy, color, 5
         obj = bpy.data.objects.new('PreviewLight', data)
         scene.collection.objects.link(obj)
         obj.location = loc
         obj.rotation_euler = (Vector((0, 0, 1.1)) - obj.location).to_track_quat('-Z', 'Y').to_euler()
-    scene.world.color = (0.08, 0.08, 0.08)
+    if not scene.world:
+        scene.world = bpy.data.worlds.new('PreviewWorld')
+    scene.world.use_nodes = True
+    wn, wl = scene.world.node_tree.nodes, scene.world.node_tree.links
+    wn.clear()
+    environment = wn.new('ShaderNodeTexEnvironment')
+    environment.image = bpy.data.images.load(str(OUTPUT / 'burnt-warehouse.hdr'), check_existing=True)
+    background = wn.new('ShaderNodeBackground')
+    background.inputs['Strength'].default_value = 0.45
+    wl.new(environment.outputs['Color'], background.inputs['Color'])
+    world_output = wn.new('ShaderNodeOutputWorld')
+    wl.new(background.outputs['Background'], world_output.inputs['Surface'])
+    scene.view_settings.view_transform = 'AgX'
+    scene.view_settings.look = 'AgX - Medium High Contrast'
+    scene.render.film_transparent = True
     scene.render.engine = 'CYCLES'
-    scene.cycles.samples = 20
-    scene.render.resolution_x = 640
-    scene.render.resolution_y = 640
+    scene.cycles.samples = 48
+    scene.cycles.use_denoising = True
+    scene.render.resolution_x = 800
+    scene.render.resolution_y = 1000
     scene.render.resolution_percentage = 100
     scene.render.image_settings.file_format = 'PNG'
     scene.render.filepath = str(TEMP / output_name)
@@ -203,6 +353,13 @@ def export_variant(filename, head_name, skin):
         if obj.type == 'MESH':
             # Repair legacy Blender 2.7 mesh topology before the 4.2 exporter.
             obj.data.validate(verbose=False)
+            mesh_edit = bmesh.new()
+            mesh_edit.from_mesh(obj.data)
+            # The source cannon has n-gons: triangulate them before tangents so
+            # all three meshes carry a stable normal-map basis on mobile GPUs.
+            bmesh.ops.triangulate(mesh_edit, faces=[face for face in mesh_edit.faces if len(face.verts) > 4])
+            mesh_edit.to_mesh(obj.data)
+            mesh_edit.free()
             obj.data.update()
             obj.data.materials.clear()
             obj.data.materials.append(material)
@@ -226,13 +383,27 @@ def export_variant(filename, head_name, skin):
         export_animations=True, export_animation_mode='NLA_TRACKS', export_nla_strips=True,
         export_force_sampling=True, export_frame_range=False, export_anim_single_armature=True,
         export_image_format='AUTO', export_jpeg_quality=88, export_yup=True,
+        export_tangents=True,
         export_copyright='Irondust (Sci-fi soldier), CC0 1.0; adapted for Personal AI Learning Arena',
         export_extras=True, export_cameras=False, export_lights=False)
     print('EXPORTED', filename, target.stat().st_size)
-    render_preview(rig, 'Idle', filename + '-idle.png')
-    render_preview(rig, 'Attack', filename + '-attack.png', 16)
+    bpy.ops.wm.save_as_mainfile(filepath=str(TEMP / f'{filename}-materials.blend'))
+    if '--no-preview' not in sys.argv:
+        render_preview(rig, 'Idle', filename + '-idle.png')
+        render_preview(rig, 'Attack', filename + '-attack.png', 16)
 
 
 if __name__ == '__main__':
-    export_variant('vanguard', 'Head1', 'FederalSoldierSkin')
-    export_variant('sentinel', 'Head3', 'MilitarySkin')
+    if '--baseline' in sys.argv:
+        for variant in ['vanguard', 'sentinel']:
+            bpy.ops.wm.read_factory_settings(use_empty=True)
+            bpy.ops.import_scene.gltf(filepath=str(OUTPUT / f'{variant}.glb'))
+            rig = next(obj for obj in bpy.data.objects if obj.type == 'ARMATURE')
+            for track in rig.animation_data.nla_tracks:
+                track.mute = True
+            action = next(action for action in bpy.data.actions if 'Idle' in action.name)
+            action.name = 'Idle'
+            render_preview(rig, 'Idle', variant + '-before.png')
+    else:
+        export_variant('vanguard', 'Head1', 'FederalSoldierSkin')
+        export_variant('sentinel', 'Head3', 'MilitarySkin')

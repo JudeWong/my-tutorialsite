@@ -27,6 +27,18 @@ for (const name of files) {
       assert.ok(animation?.channels.length > 5, `${name}: skeletal ${clip} animation`);
     }
     assert.ok(json.nodes.some((node) => node.name === "Muzzle"), `${name}: weapon muzzle attached to skeleton`);
+    assert.ok(json.materials.every((material) => material.pbrMetallicRoughness?.metallicRoughnessTexture && material.occlusionTexture && material.normalTexture), `${name}: Blender PBR/occlusion/normal maps preserved`);
+    assert.ok(json.meshes.every((mesh) => mesh.primitives.every((primitive) => primitive.attributes.TANGENT !== undefined)), `${name}: baked tangent vectors for normal maps`);
+  }
+  if (name === "blender-wasteland.glb") {
+    assert.match(json.asset.generator, /Blender/, "environment exported by Blender");
+    const ground = json.meshes.find((mesh) => mesh.name === "Baked_Concrete_Ground");
+    assert.ok(ground?.primitives[0].attributes.TEXCOORD_1 !== undefined, "ground has independent baked AO UVs");
+    assert.equal(json.materials[ground.primitives[0].material].occlusionTexture?.texCoord, 1, "baked AO uses UV1 instead of repeating with tiled material");
+    assert.ok(json.nodes.some((node) => /Broken west warehouse/.test(node.name)), "Blender-authored ruin included");
+    assert.ok(json.materials.some((material) => material.alphaMode === "MASK"), "fence openings remain transparent");
+    const meshUses = json.nodes.filter((node) => node.mesh !== undefined).map((node) => node.mesh);
+    assert.ok(new Set(meshUses).size < meshUses.length, "repeated scanned props reuse exported geometry");
   }
   if (name.startsWith("fence")) {
     assert.ok(json.materials.some((material) => material.alphaMode === "MASK"), `${name}: chainlink transparency preserved`);
