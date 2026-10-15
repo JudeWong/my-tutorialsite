@@ -335,7 +335,7 @@ function mergeBattleEvents(remoteEvents, localEvents) {
   return [...merged.values()].sort((a, b) => new Date(a.createdAt || 0) - new Date(b.createdAt || 0));
 }
 
-function opponentFromPairing(events, myPlayer) {
+function pairingFromEvents(events, myPlayer) {
   if (!myPlayer) return null;
   const pairing = [...(events || [])].reverse().find((event) => event.playerId === myPlayer.id && event.type === "skill" && String(event.effect || "").startsWith("pairing:"));
   if (!pairing) return null;
@@ -343,17 +343,41 @@ function opponentFromPairing(events, myPlayer) {
     const stored = JSON.parse(String(pairing.effect).slice("pairing:".length));
     if (!stored.opponentId || !stored.opponentName) return null;
     return {
-      id: stored.opponentId,
-      studentId: stored.opponentStudentId || "",
-      name: stored.opponentName,
-      className: stored.opponentClassName || "",
-      roomId: myPlayer.roomId,
-      status: "playing",
-      virtual: true
+      playerSide: stored.playerSide === "right" ? "right" : "left",
+      opponent: {
+        id: stored.opponentId,
+        studentId: stored.opponentStudentId || "",
+        name: stored.opponentName,
+        className: stored.opponentClassName || "",
+        roomId: myPlayer.roomId,
+        status: "playing",
+        virtual: true
+      }
     };
   } catch {
     return null;
   }
+}
+
+function canonicalBattlePair(players, events, myPlayer, role) {
+  if (!players.length) return [];
+  if (role !== "student" || !myPlayer) return players.slice(0, 2);
+
+  // battle_players is ordered by joined_at. Keep that order on every device so
+  // player one is always the left fighter and player two is always the right.
+  const playerIndex = players.findIndex((player) => player.id === myPlayer.id);
+  if (players.length > 1 && playerIndex >= 0) {
+    const pairStart = playerIndex - (playerIndex % 2);
+    return players.slice(pairStart, pairStart + 2);
+  }
+
+  // Older Supabase policies may expose only the signed-in player's row. The
+  // persisted pairing event supplies both the opponent and the canonical side.
+  const pairing = pairingFromEvents(events, myPlayer);
+  if (!pairing?.opponent) return [myPlayer];
+  return pairing.playerSide === "right"
+    ? [pairing.opponent, myPlayer]
+    : [myPlayer, pairing.opponent];
 }
 
 function ArenaApp() {
@@ -402,15 +426,10 @@ function ArenaApp() {
   const players = roomData?.players || [];
   const events = mergeBattleEvents(roomData?.events, localEvents);
   const myPlayer = players.find((player) => player.studentId === profile.id);
-  const pair = useMemo(() => {
-    if (!players.length) return [];
-    if (context.role === "student" && myPlayer) {
-      const index = players.findIndex((player) => player.id === myPlayer.id);
-      const visibleOpponent = players[index % 2 === 0 ? index + 1 : index - 1];
-      return [myPlayer, visibleOpponent || opponentFromPairing(events, myPlayer)].filter(Boolean);
-    }
-    return players.slice(0, 2);
-  }, [players, events, myPlayer, context.role]);
+  const pair = useMemo(
+    () => canonicalBattlePair(players, events, myPlayer, context.role),
+    [players, events, myPlayer, context.role]
+  );
   const pairEvents = events.filter((event) => pair.some((player) => player.id === event.playerId));
   const visiblePlayerCount = context.role === "student" ? Math.max(players.length, pair.length) : players.length;
   const stats = battleStats(pair, pairEvents);

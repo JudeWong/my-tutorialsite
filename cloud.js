@@ -802,10 +802,12 @@
         is_correct: false,
         damage: 0,
         effect: `pairing:${JSON.stringify({
+          playerSide: index % 2 === 0 ? "left" : "right",
           opponentId: opponent.id,
           opponentStudentId: opponent.student_id,
           opponentName: opponent.display_name || "对手",
-          opponentClassName: opponent.class_name || ""
+          opponentClassName: opponent.class_name || "",
+          opponentSide: index % 2 === 0 ? "right" : "left"
         })}`
       };
     });
