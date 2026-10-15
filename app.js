@@ -2451,7 +2451,7 @@ function renderWorkspaceView(name) {
     // replace an existing arena root: React Three Fiber needs that DOM node to
     // remain mounted while it is receiving realtime room events.
     if (!content.querySelector("#arena-root")) {
-      content.innerHTML = `<section class="arena-workspace-panel panel"><div id="arena-root" class="arena-root" data-role="${role}"></div></section>`;
+      content.innerHTML = `<section class="arena-workspace-panel panel"><div id="arena-root" class="arena-root" data-role="${role}"><div class="arena-module-fallback"><strong>正在加载 3D 竞技场…</strong><span>如果画面长时间没有出现，请重新整理页面。</span></div></div></section>`;
     }
     if (globalThis.personalAIArena?.mount) globalThis.personalAIArena.mount("#arena-root");
   } else {

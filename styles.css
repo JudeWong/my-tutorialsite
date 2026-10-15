@@ -1012,8 +1012,13 @@ html.session-loading-active,html.session-loading-active body { overflow: hidden;
 .arena-workspace-panel { padding: 0; overflow: hidden; background: #101426; border-color: #29314b; }
 .arena-root { min-height: 720px; color: #f7f8ff; background: radial-gradient(circle at 50% 5%, #29345c 0, #101426 52%, #0b0d18 100%); }
 .arena-lobby,.arena-battle-shell { min-height: 720px; padding: clamp(24px,4vw,48px); }
+.arena-module-fallback,.arena-error-screen { min-height: 720px; display: grid; place-items: center; align-content: center; gap: 10px; padding: 36px; color: #e6ebfa; text-align: center; background: radial-gradient(circle at 50% 20%,#29345c 0,#111525 64%,#0b0d18 100%); }
+.arena-module-fallback strong,.arena-error-screen strong { color: #fff; font: 700 20px Arial,sans-serif; }
+.arena-module-fallback span,.arena-error-screen p { max-width: 460px; margin: 0; color: #aeb8d2; font-size: 14px; line-height: 1.7; }
 .arena-lobby { display: grid; grid-template-columns: minmax(0,1fr) minmax(280px,410px); align-content: center; gap: 30px; }
 .arena-intro { max-width: 660px; align-self: center; }
+.arena-lobby-preview { grid-column: 1/-1; min-width: 0; }
+.arena-lobby-preview .arena-scene { height: min(34vw,330px); min-height: 260px; }
 .arena-kicker { display: inline-block; color: #6ce9c3; font: 700 11px Arial,sans-serif; letter-spacing: .16em; }
 .arena-intro h2,.arena-room-bar h2 { margin: 10px 0 12px; color: #fff; font-size: clamp(28px,4vw,48px); }
 .arena-intro p,.arena-room-bar p { max-width: 640px; margin: 0; color: #aeb8d2; font-size: 16px; line-height: 1.75; }
@@ -1072,6 +1077,8 @@ html.session-loading-active,html.session-loading-active body { overflow: hidden;
 @media (max-width: 760px) {
   .arena-lobby,.arena-battle-shell { min-height: 680px; padding: 20px 15px 30px; }
   .arena-lobby { grid-template-columns: 1fr; align-content: start; gap: 20px; }
+  .arena-lobby-preview { grid-column: auto; }
+  .arena-lobby-preview .arena-scene { height: 260px; min-height: 260px; }
   .arena-intro h2 { font-size: 30px; }
   .arena-intro p { font-size: 14px; }
   .arena-room-bar { align-items: flex-start; flex-direction: column; }

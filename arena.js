@@ -9,11 +9,14 @@ import React, { useEffect, useMemo, useRef, useState } from "https://esm.sh/reac
 import { createRoot } from "https://esm.sh/react-dom@18.3.1/client";
 import { Canvas, useFrame } from "https://esm.sh/@react-three/fiber@8.17.10?deps=react@18.3.1,react-dom@18.3.1,three@0.160.0";
 import * as THREE from "https://esm.sh/three@0.160.0";
-import { GLTFLoader } from "https://esm.sh/three@0.160.0/examples/jsm/loaders/GLTFLoader.js";
+import { GLTFLoader } from "https://esm.sh/three@0.160.0/examples/jsm/loaders/GLTFLoader.js?deps=three@0.160.0";
 
 const h = React.createElement;
 const MODEL_PATHS = {
-  warrior: "./assets/models/xbot.glb",
+  // These are full GLB character assets, rather than the old primitive
+  // capsule placeholder. Soldier includes a rig and animation clips; the
+  // expressive robot has a detailed mesh plus punch/death/victory clips.
+  warrior: "./assets/models/soldier.glb",
   mage: "./assets/models/personal-ai-robot.glb"
 };
 const ROOM_STORAGE_KEY = "personal-ai-battle-room";
@@ -24,20 +27,16 @@ function loadGlb(path, onLoad, onError) {
   loader.load(path, (gltf) => onLoad(gltf), undefined, onError);
 }
 
-function PlaceholderCharacter({ color = "#63e6be", action = "idle" }) {
+function ModelLoadingMarker({ color = "#63e6be", failed = false }) {
   const group = useRef();
   useFrame(({ clock }) => {
     if (!group.current) return;
-    const pulse = Math.sin(clock.elapsedTime * 3) * 0.035;
-    group.current.position.y = 0.8 + pulse;
-    group.current.rotation.z = action === "attack" ? Math.sin(clock.elapsedTime * 18) * 0.12 : 0;
+    group.current.rotation.y = clock.elapsedTime * 1.7;
+    group.current.position.y = 0.05 + Math.sin(clock.elapsedTime * 3) * 0.035;
   });
   return h("group", { ref: group },
-    h("mesh", { position: [0, 0.9, 0], castShadow: true }, h("capsuleGeometry", { args: [0.28, 0.7, 8, 16] }), h("meshStandardMaterial", { color })),
-    h("mesh", { position: [0, 1.55, 0], castShadow: true }, h("sphereGeometry", { args: [0.34, 16, 12] }), h("meshStandardMaterial", { color: "#ffe0bd" })),
-    h("mesh", { position: [0.43, 1.08, action === "attack" ? -0.3 : 0], rotation: [0, 0, action === "attack" ? -0.9 : -0.3], castShadow: true }, h("boxGeometry", { args: [0.12, 0.55, 0.12] }), h("meshStandardMaterial", { color })),
-    h("mesh", { position: [-0.28, 0.18, 0], castShadow: true }, h("boxGeometry", { args: [0.13, 0.55, 0.15] }), h("meshStandardMaterial", { color: "#202635" })),
-    h("mesh", { position: [0.28, 0.18, 0], castShadow: true }, h("boxGeometry", { args: [0.13, 0.55, 0.15] }), h("meshStandardMaterial", { color: "#202635" }))
+    h("mesh", { position: [0, 0.08, 0], rotation: [-Math.PI / 2, 0, 0], receiveShadow: true }, h("ringGeometry", { args: [0.55, 0.68, 32] }), h("meshBasicMaterial", { color, transparent: true, opacity: 0.8 })),
+    h("mesh", { position: [0, 0.55, 0], castShadow: true }, h("icosahedronGeometry", { args: [0.25, 1] }), h("meshStandardMaterial", { color: failed ? "#ff8b8b" : color, emissive: failed ? "#8c1d1d" : color, emissiveIntensity: 0.5 }))
   );
 }
 
@@ -47,11 +46,30 @@ function GlbCharacter({ path, color, action }) {
   const [failed, setFailed] = useState(false);
   const mixer = useRef(null);
   const actions = useRef([]);
+  const [fit, setFit] = useState({ scale: 1, position: [0, 0, 0] });
   useEffect(() => {
     let alive = true;
+    setFailed(false);
+    setGltf(null);
     loadGlb(path, (loaded) => { if (alive) setGltf(loaded); }, () => { if (alive) setFailed(true); });
     return () => { alive = false; };
   }, [path]);
+  useEffect(() => {
+    if (!gltf?.scene) return;
+    gltf.scene.traverse((object) => {
+      if (object.isMesh) {
+        object.castShadow = true;
+        object.receiveShadow = true;
+      }
+    });
+    // GLB files often use different authoring scales. Fit the real model to
+    // the same arena height and ground it so it cannot render off-camera.
+    const box = new THREE.Box3().setFromObject(gltf.scene);
+    const size = box.getSize(new THREE.Vector3());
+    const center = box.getCenter(new THREE.Vector3());
+    const scale = 2.65 / Math.max(size.y, 0.01);
+    setFit({ scale, position: [-center.x * scale, -box.min.y * scale, -center.z * scale] });
+  }, [gltf]);
   useEffect(() => {
     if (!gltf?.scene) return undefined;
     mixer.current = new THREE.AnimationMixer(gltf.scene);
@@ -61,12 +79,19 @@ function GlbCharacter({ path, color, action }) {
   }, [gltf]);
   useEffect(() => {
     if (!actions.current.length) return;
-    const preferred = action === "attack" ? 1 : action === "hit" ? 2 : action === "victory" ? 3 : 0;
-    const selected = actions.current[preferred] || actions.current[0];
+    const names = (gltf?.animations || []).map((clip) => clip.name.toLowerCase());
+    const patterns = {
+      idle: [/idle/, /standing/, /t-pose/],
+      attack: [/punch/, /attack/, /run/, /walk/],
+      hit: [/death/, /hurt/, /sad/, /no/, /t-pose/],
+      victory: [/thumb/, /yes/, /victory/, /dance/, /idle/]
+    }[action] || [/idle/];
+    const preferred = patterns.map((pattern) => names.findIndex((name) => pattern.test(name))).find((index) => index >= 0);
+    const selected = actions.current[preferred >= 0 ? preferred : 0] || actions.current[0];
     actions.current.forEach((item) => item.stop());
     selected.reset().fadeIn(0.12).play();
     return () => selected.fadeOut(0.16);
-  }, [action]);
+  }, [action, gltf]);
   useFrame((_, delta) => {
     mixer.current?.update(delta);
     if (!group.current) return;
@@ -74,8 +99,8 @@ function GlbCharacter({ path, color, action }) {
     group.current.rotation.z = THREE.MathUtils.damp(group.current.rotation.z, target, 7, delta);
     group.current.position.y = THREE.MathUtils.damp(group.current.position.y, action === "hit" ? 0.1 : 0, 7, delta);
   });
-  if (failed || !gltf?.scene) return h(PlaceholderCharacter, { color, action });
-  return h("group", { ref: group }, h("primitive", { object: gltf.scene.clone(true), scale: 1.45, position: [0, 0, 0] }));
+  if (failed || !gltf?.scene) return h(ModelLoadingMarker, { color, failed });
+  return h("group", { ref: group }, h("primitive", { object: gltf.scene, scale: fit.scale, position: fit.position, dispose: null }));
 }
 
 function ArenaScene({ leftAction, rightAction, winner }) {
@@ -245,6 +270,7 @@ function ArenaApp() {
   if (!room) return h("div", { className: "arena-lobby" },
     h("div", { className: "arena-intro" }, h("span", { className: "arena-kicker" }, "LIVE 1V1"), h("h2", null, "联机对战竞技场"), h("p", null, context.role === "teacher" ? "老师先开设房间，学生使用验证码加入。系统只会在人数为偶数时开始配对。" : "输入老师提供的房间验证码，等待系统把你和另一名同学配对。")),
     context.role === "teacher" ? h("div", { className: "arena-form-card" }, h("label", null, "选择班级", h("select", { value: className, onChange: (event) => setClassName(event.target.value) }, h("option", { value: "" }, "所有班级"), (context.classes || []).map((item) => h("option", { key: item, value: item }, item)))), h("label", null, "使用题目", h("select", { value: assignmentId, onChange: (event) => setAssignmentId(event.target.value) }, (context.assignments || []).map((item) => h("option", { key: item.id, value: item.id }, item.title)))), h("button", { className: "arena-primary-button", disabled: busy || !cloud?.enabled, onClick: createRoom }, busy ? "正在开设…" : "开设对战房间")) : h("div", { className: "arena-form-card" }, h("label", null, "房间验证码", h("input", { value: code, onChange: (event) => setCode(event.target.value.replace(/\D/g, "").slice(0, 6)), inputMode: "numeric", placeholder: "输入 6 位数字" })), h("button", { className: "arena-primary-button", disabled: busy || code.length !== 6 || !cloud?.enabled, onClick: joinRoom }, busy ? "正在加入…" : "加入竞技场")),
+    h("div", { className: "arena-lobby-preview" }, scene),
     !cloud?.enabled ? h("p", { className: "arena-warning" }, "云端功能尚未连接，无法进行跨装置联机对战。") : null,
     error ? h("p", { className: "arena-error" }, error) : null
   );
@@ -263,6 +289,15 @@ function ArenaApp() {
   );
 }
 
+class ArenaErrorBoundary extends React.Component {
+  constructor(props) { super(props); this.state = { error: null }; }
+  static getDerivedStateFromError(error) { return { error }; }
+  render() {
+    if (this.state.error) return h("div", { className: "arena-error-screen" }, h("strong", null, "竞技场暂时无法显示"), h("p", null, "3D 模块加载失败，请重新整理页面；如果仍然没有画面，请检查网络或浏览器的 WebGL 支援。"));
+    return this.props.children;
+  }
+}
+
 const roots = new Map();
 globalThis.personalAIArena = Object.freeze({
   mount(selector) {
@@ -270,7 +305,7 @@ globalThis.personalAIArena = Object.freeze({
     if (!node) return;
     let root = roots.get(node);
     if (!root) { root = createRoot(node); roots.set(node, root); }
-    root.render(h(ArenaApp));
+    root.render(h(ArenaErrorBoundary, null, h(ArenaApp)));
   }
 });
 if (document.querySelector("#arena-root")) globalThis.personalAIArena.mount("#arena-root");
