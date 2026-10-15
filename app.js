@@ -1288,7 +1288,12 @@ async function refreshTeacherProgress() {
     renderTeacherClasses();
     renderClassPerformance();
     renderTeacherMetrics();
-    if (activeWorkspaceView) renderWorkspaceView(activeWorkspaceView);
+    // The arena owns a live React/Three.js tree and subscribes to its own
+    // battle-room updates. Replacing workspace-content here would detach the
+    // canvas whenever the teacher progress poll receives a submission, which
+    // made the waiting room appear to disappear. Keep that tree mounted while
+    // still refreshing every ordinary workspace view.
+    if (activeWorkspaceView && activeWorkspaceView !== "arena") renderWorkspaceView(activeWorkspaceView);
   } catch (error) {
     console.warn("Unable to refresh teacher progress", error);
   } finally {
@@ -2442,7 +2447,12 @@ function renderWorkspaceView(name) {
       ? localized("Open a classroom room and let the system pair students for a live 1v1 quiz battle.", "开启课堂房间，让系统自动把学生配成 1 对 1 答题对战。")
       : localized("Join your teacher's room, answer quickly, and use correct answers to attack your opponent.", "输入老师提供的验证码加入房间，用正确答案攻击对手。 ");
     action.hidden = true;
-    content.innerHTML = `<section class="arena-workspace-panel panel"><div id="arena-root" class="arena-root" data-role="${role}"></div></section>`;
+    // renderWorkspaceView can be called by session/progress refreshes. Do not
+    // replace an existing arena root: React Three Fiber needs that DOM node to
+    // remain mounted while it is receiving realtime room events.
+    if (!content.querySelector("#arena-root")) {
+      content.innerHTML = `<section class="arena-workspace-panel panel"><div id="arena-root" class="arena-root" data-role="${role}"></div></section>`;
+    }
     if (globalThis.personalAIArena?.mount) globalThis.personalAIArena.mount("#arena-root");
   } else {
     title.textContent = role === "teacher" ? localized("Learning Analytics", "学习分析") : localized("Learning Report", "学习报告");
