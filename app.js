@@ -2918,6 +2918,47 @@ function normalizeGeneratedQuestion(item, index, paperId, topic) {
   };
 }
 
+function diversifyGeneratedQuestions(questions) {
+  const items = Array.isArray(questions) ? questions.map((question) => ({ ...question })) : [];
+  if (!items.length) return items;
+
+  // Keep the AI's difficulty labels when they are already varied. If a model
+  // collapses every item into one level, restore a predictable Basic /
+  // Intermediate / Advanced mix so a generated set is useful for mixed-ability
+  // classes. The question content remains unchanged; only the teacher-facing
+  // level tag is corrected.
+  const levels = ["基础", "中等", "进阶"];
+  const presentLevels = new Set(items.map((question) => question.level).filter((level) => levels.includes(level)));
+  if (items.length >= 3 && presentLevels.size < 3) {
+    items.forEach((question, index) => {
+      question.level = levels[index % levels.length];
+    });
+  }
+
+  // Four choices are the standard UEC-style presentation. Reorder complete
+  // answer options (never their text independently) so correct answers are
+  // distributed A, B, C, D, A, B, C, D across the generated set. This keeps
+  // the answer key valid while preventing a predictable correct-letter bias.
+  let eligibleIndex = 0;
+  items.forEach((question) => {
+    if (question.type !== "mcq" || !Array.isArray(question.options) || question.options.length < 4) return;
+    const current = Number(question.correct);
+    if (!Number.isInteger(current) || current < 0 || current >= question.options.length) return;
+    const desired = eligibleIndex % 4;
+    eligibleIndex += 1;
+    if (current === desired) {
+      question.correct = desired;
+      return;
+    }
+    const options = [...question.options];
+    [options[current], options[desired]] = [options[desired], options[current]];
+    question.options = options;
+    question.optionsEn = [...options];
+    question.correct = desired;
+  });
+  return items;
+}
+
 function getGeminiApiKey() {
   return localStorage.getItem(GEMINI_KEY)?.trim() || "";
 }
@@ -2979,7 +3020,7 @@ function buildQuestionResponseSchema(options = {}, { compact = false } = {}) {
           properties: {
             question: { type: "string" },
             code: { type: "string" },
-            options: { type: "array", ...(compact ? {} : { minItems: 2, maxItems: 6 }), items: { type: "string" } },
+            options: { type: "array", ...(compact ? {} : { minItems: 4, maxItems: 6 }), items: { type: "string" } },
             correct: { type: "integer", ...(compact ? {} : { minimum: 0, maximum: 5 }) },
             level: { type: "string", enum: ["Basic", "Intermediate", "Advanced"] },
             explanation: { type: "string" },
@@ -3005,15 +3046,16 @@ ${generationTask}
 Strict quality rules:
 1. Every correct answer must be directly supported by the supplied material. Do not invent facts, definitions, numbers, program output, or technical requirements.
 2. Each question must be logically complete and answerable without seeing this instruction. Use a clear scenario, program fragment, table, network situation, database situation, or concept comparison when the material supports it.
-3. Provide the same number of options as the source question when it is clear (normally four, but two to six are allowed). There must be one and only one correct answer. Preserve combination choices and Roman-numeral choices exactly, including I, II, III, IV, V, ①, ② and connectors such as “I 和 II”；do not skip or simplify these options. Distractors must reflect realistic student misconceptions, not absurd claims or generic statements.
+3. Use four answer options (A, B, C, D) for newly written questions whenever the source does not force a different count. There must be one and only one correct answer. Include a varied selection of Roman-numeral combination questions (for example four statements labelled I, II, III, IV followed by choices such as “I 和 II” or “I、III 和 IV”) when the material supports it; preserve those statement meanings and connectors exactly. Do not place all Roman numerals on one unreadable line. Distractors must reflect realistic student misconceptions, not absurd claims or generic statements.
 4. Never create cloze, missing-word, fill-in-the-blank, underscore, or simple sentence-copy questions.
 5. Avoid repeatedly asking “according to the material”. Test understanding, application, output tracing, comparison, or reasoning instead.
 6. The explanation must state why the correct option is correct. The common mistake must identify a realistic misunderstanding.
 7. ALL user-visible natural-language content must be in Simplified Chinese, even when the source is English or Malay. This includes every question, every answer option, every explanation, and every common mistake. Do not write complete English sentences. English is allowed only inside source code, identifiers, commands, protocol abbreviations, or unavoidable standard computing terms such as CPU, SQL, HTML and Python. Numeric or symbolic answer options such as 0, 16, 3.14, 1010, -1 and 50% are valid as written; do not translate them or add unnecessary Chinese words merely to satisfy the language rule.
 8. For a past paper, solve each source question carefully and set the correct answer from the source answer key when present; otherwise determine it by sound computer-science reasoning. A question containing a picture, table, combination option, or Roman-numeral option is still a complete question and must be returned.
 9. Inspect supplied page images to recognize every source question, including questions containing charts, tables, diagrams, screenshots, network layouts, or circuits. Do not attach or return any image with a generated question. When possible, include the essential visual information in Chinese text; the teacher will add any required question image manually during review.
-  10. Return only a JSON object with a "questions" array using this exact schema:
-{"questions":[{"question":"...","code":"optional code or empty string","options":["选项文字 1","选项文字 2"],"correct":0,"level":"Basic|Intermediate|Advanced","explanation":"...","mistake":"..."}]}
+10. Difficulty must be mixed across the set: approximately 25% Basic (基础), 50% Intermediate (中等), and 25% Advanced (进阶). Include both straightforward recall/application items and harder tracing, comparison, design, or troubleshooting items. Do not label every question with the same level.
+11. Return only a JSON object with a "questions" array using this exact schema:
+{"questions":[{"question":"...","code":"optional code or empty string","options":["选项文字 A","选项文字 B","选项文字 C","选项文字 D"],"correct":0,"level":"Basic|Intermediate|Advanced","explanation":"...","mistake":"..."}]}
 The correct value is a zero-based integer from 0 to one less than the number of options (maximum 5).
 
 Main category: ${MAIN_CATEGORY_EN[topic] || topic}
@@ -3370,7 +3412,8 @@ async function requestAIQuestions(text, fileName, paperId, topic, options) {
         ));
       }
     }
-    return maxItems ? questions.slice(0, maxItems) : questions;
+    const diversified = diversifyGeneratedQuestions(questions);
+    return maxItems ? diversified.slice(0, maxItems) : diversified;
   } catch (error) {
     if (generationTimedOut || error?.name === "AbortError" || error?.name === "TimeoutError") {
       const timeoutError = new Error(localized(
