@@ -21,6 +21,7 @@ const MODEL_PATHS = {
 };
 const ROOM_STORAGE_KEY = "personal-ai-battle-room";
 const ROUND_SECONDS = 10;
+const COMBAT_ACTION_MS = 1800;
 
 function loadGlb(path, onLoad, onError) {
   const loader = new GLTFLoader();
@@ -307,7 +308,7 @@ function ArenaApp() {
   const actionFor = (playerId) => {
     if (winner && winner.id === playerId) return "victory";
     const recent = [...pairEvents].reverse().find((event) => event.type === "answer");
-    if (!recent || now - new Date(recent.createdAt || 0).getTime() > 1100) return "idle";
+    if (!recent || now - new Date(recent.createdAt || 0).getTime() > COMBAT_ACTION_MS) return "idle";
     if (!recent.correct) return "idle";
     if (recent.playerId === playerId) return "attack";
     const targetId = recent.targetPlayerId || pair.find((player) => player.id !== recent.playerId)?.id;
