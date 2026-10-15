@@ -1059,12 +1059,25 @@ html.session-loading-active,html.session-loading-active body { overflow: hidden;
 .arena-scene-status i { width:7px; height:7px; border-radius:50%; background:#6ce9c3; box-shadow:0 0 12px #6ce9c3; animation:arena-live-pulse 1.8s ease-in-out infinite; }
 .arena-scene-status small { color:#aeb8d2; font-size:10px; }
 @keyframes arena-live-pulse { 50% { opacity:.48; transform:scale(.72); } }
+.arena-powerup-notice { position:absolute; top:15px; right:17px; z-index:5; display:grid; grid-template-columns:auto 1fr; gap:9px; align-items:center; min-width:190px; padding:9px 13px; border:1px solid rgba(108,233,195,.48); border-radius:13px; color:#fff; background:rgba(10,24,28,.86); box-shadow:0 10px 35px rgba(0,0,0,.34),0 0 25px rgba(108,233,195,.15); backdrop-filter:blur(12px); pointer-events:none; animation:arena-powerup-pop .38s cubic-bezier(.2,.9,.25,1.2); }
+.arena-powerup-notice>span { grid-row:span 2; display:grid; width:34px; height:34px; place-items:center; border-radius:10px; color:#081611; background:#6ce9c3; font:700 18px Arial,sans-serif; box-shadow:0 0 20px rgba(108,233,195,.34); }
+.arena-powerup-notice>div { display:grid; gap:2px; }
+.arena-powerup-notice strong { font-size:12px; }
+.arena-powerup-notice small { color:#a8c7c2; font-size:9px; }
+.arena-powerup-notice.heal { border-color:rgba(105,239,153,.52); background:rgba(10,30,21,.88); }
+.arena-powerup-notice.freeze { border-color:rgba(114,220,255,.55); background:rgba(9,25,38,.88); }
+.arena-powerup-notice.freeze>span { background:#82e6ff; }
+.arena-powerup-notice.mask { border-color:rgba(181,132,255,.55); background:rgba(25,14,40,.9); }
+.arena-powerup-notice.mask>span { color:#fff; background:#8e62da; }
+@keyframes arena-powerup-pop { from { opacity:0; transform:translateY(-9px) scale(.9); } to { opacity:1; transform:none; } }
 .arena-canvas { width: 100%; height: 100%; }
 .arena-hud { display: grid; grid-template-columns: minmax(0,1fr) 130px minmax(0,1fr); gap: 14px; align-items: center; margin: -35px 22px 0; position: relative; z-index: 2; }
 .arena-fighter-card { display: grid; gap: 8px; padding: 15px; border: 1px solid #364364; border-radius: 16px; background: rgba(17,22,40,.9); backdrop-filter: blur(8px); }
 .arena-fighter-card.right { text-align: right; }
 .arena-fighter-card strong { color: #fff; font-size: 15px; }
 .arena-fighter-card span { color: #aab5d2; font: 12px Arial,sans-serif; }
+.arena-equipped-item { width:max-content; border-radius:999px; padding:4px 7px; color:#76efd0; background:rgba(108,233,195,.1); font:normal 700 9px Arial,sans-serif; }
+.arena-fighter-card.right .arena-equipped-item { margin-left:auto; color:#d3c5ff; background:rgba(164,135,255,.12); }
 .arena-health { height: 10px; overflow: hidden; border-radius: 99px; background: #38293b; }
 .arena-health i { display: block; height: 100%; border-radius: inherit; background: linear-gradient(90deg,#42e2ac,#8af7d4); transition: width .4s ease; }
 .arena-health.purple i { float: right; background: linear-gradient(90deg,#c4aaff,#8468ff); }
@@ -1075,6 +1088,14 @@ html.session-loading-active,html.session-loading-active body { overflow: hidden;
 .arena-question-head { display: flex; justify-content: space-between; gap: 12px; color: #6ce9c3; font: 700 11px Arial,sans-serif; letter-spacing: .06em; }
 .arena-question-head small { color: #929dbc; font-weight: 400; letter-spacing: 0; }
 .arena-question-card h3 { margin: 13px 0 15px; color: #fff; font-size: 20px; line-height: 1.55; }
+.arena-question-card.is-masked>h3,.arena-question-card.is-masked>.arena-options,.arena-question-card.is-masked>.arena-fill-row { filter:blur(8px); user-select:none; }
+.arena-question-card.is-ended { opacity:.7; }
+.arena-debuff-overlay { position:absolute; inset:0; z-index:4; display:grid; place-content:center; place-items:center; gap:7px; border-radius:inherit; color:#e7fbff; text-align:center; background:rgba(8,21,31,.86); box-shadow:inset 0 0 70px rgba(86,204,239,.18); backdrop-filter:blur(5px); animation:arena-debuff-in .28s ease both; }
+.arena-debuff-overlay.mask { color:#f0e4ff; background:radial-gradient(circle,rgba(91,53,132,.82),rgba(7,5,13,.95)); box-shadow:inset 0 0 75px rgba(170,103,241,.22); }
+.arena-debuff-overlay span { font:700 32px Arial,sans-serif; text-shadow:0 0 18px currentColor; }
+.arena-debuff-overlay strong { font-size:18px; }
+.arena-debuff-overlay small { color:inherit; opacity:.72; font-size:11px; }
+@keyframes arena-debuff-in { from { opacity:0; transform:scale(.96); } to { opacity:1; transform:none; } }
 .arena-options { display: grid; grid-template-columns: repeat(2,minmax(0,1fr)); gap: 9px; }
 .arena-option { display: grid; grid-template-columns: auto 1fr; gap: 8px; align-items: center; border: 1px solid #3b486b; border-radius: 11px; padding: 11px 12px; color: #e9edfa; background: #1b2340; cursor: pointer; text-align: left; font-size: 14px; }
 .arena-option:hover:not(:disabled) { border-color: #6ce9c3; background: #223153; }
@@ -1083,9 +1104,12 @@ html.session-loading-active,html.session-loading-active body { overflow: hidden;
 .arena-fill-row { display: flex; gap: 9px; }
 .arena-fill-row input { min-width: 0; flex: 1; border: 1px solid #3b486b; border-radius: 11px; padding: 11px; color: #fff; background: #1b2340; font-size: 14px; }
 .arena-skill-note { margin: 14px 0 0; color: #8995b6; font-size: 12px; }
-.arena-result-banner { display: grid; gap: 4px; margin: 14px auto 0; padding: 15px; border: 1px solid #a78dfc; border-radius: 14px; color: #fff; text-align: center; background: linear-gradient(120deg,#3f3479,#1d2850); }
-.arena-result-banner strong { font-size: 22px; }
+.arena-result-banner { display: grid; gap: 6px; max-width:800px; margin: 14px auto 0; padding: 18px; border: 1px solid #a78dfc; border-radius: 14px; color: #fff; text-align: center; background: radial-gradient(circle at 50% 0,rgba(255,209,102,.17),transparent 45%),linear-gradient(120deg,#3f3479,#1d2850); box-shadow:0 15px 40px rgba(25,16,65,.28); }
+.arena-result-banner>small { color:#ffd779; font:700 9px Arial,sans-serif; letter-spacing:.16em; }
+.arena-result-banner strong { font-size: 24px; }
 .arena-result-banner span { color: #cbd1e8; font-size: 12px; }
+.arena-result-banner b { margin-top:3px; color:#fff; font:700 13px Arial,sans-serif; }
+.arena-result-banner.tied { border-color:#7b8aa8; background:linear-gradient(120deg,#29334c,#192139); }
 
 /* Teacher battle monitor: every match stays visible without loading 3D scenes. */
 .arena-teacher-dashboard { display:grid; gap:22px; }
@@ -1149,6 +1173,7 @@ html.session-loading-active,html.session-loading-active body { overflow: hidden;
   .arena-code-display strong { font-size: 42px; }
   .arena-scene { height: 300px; min-height: 300px; border-radius: 16px; }
   .arena-scene-status { top:10px; left:10px; padding:7px 9px; }
+  .arena-powerup-notice { top:48px; right:10px; min-width:175px; padding:8px 10px; }
   .arena-hud { grid-template-columns: 1fr 75px 1fr; gap: 7px; margin: -25px 6px 0; }
   .arena-fighter-card { padding: 10px 8px; }
   .arena-fighter-card strong { overflow: hidden; font-size: 12px; text-overflow: ellipsis; white-space: nowrap; }

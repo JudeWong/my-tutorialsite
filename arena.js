@@ -22,6 +22,19 @@ const MODEL_PATHS = {
 const ROOM_STORAGE_KEY = "personal-ai-battle-room";
 const ROUND_SECONDS = 10;
 const COMBAT_ACTION_MS = 1800;
+const POWERUP_EFFECT_MS = 5000;
+const DEBUFF_SECONDS = 4;
+const POWERUP_ORDER = ["shield", "heal", "freeze", "mask"];
+const POWERUPS = Object.freeze({
+  shield: { icon: "◈", name: "保护罩", description: "抵挡下一次攻击" },
+  heal: { icon: "✚", name: "血包", description: "立即恢复 20 点生命" },
+  freeze: { icon: "❄", name: "冻结", description: "对手下一回合冻结 4 秒" },
+  mask: { icon: "◉", name: "遮罩", description: "对手下一回合视线受阻 4 秒" }
+});
+
+function rewardForStreak(streak) {
+  return streak >= 3 ? POWERUP_ORDER[(streak - 3) % POWERUP_ORDER.length] : "";
+}
 
 function loadGlb(path, onLoad, onError) {
   const loader = new GLTFLoader();
@@ -201,6 +214,41 @@ function ImpactEffect({ side, action, color }) {
   );
 }
 
+function PowerupEffect({ side, effect }) {
+  const group = useRef();
+  const direction = side === "left" ? -1 : 1;
+  useFrame(({ clock }, delta) => {
+    if (!group.current) return;
+    group.current.rotation.y += delta * (effect === "mask" ? 1.8 : 0.9);
+    const pulse = 1 + Math.sin(clock.elapsedTime * 7) * 0.08;
+    group.current.scale.setScalar(pulse);
+  });
+  const position = [direction * 2.15, 1.35, 0.15];
+  if (effect === "shield") return h("group", { ref: group, position },
+    h("mesh", null, h("sphereGeometry", { args: [1.05, 24, 16] }), h("meshPhysicalMaterial", { color: "#71f2d0", emissive: "#2f9d87", emissiveIntensity: 1.2, transparent: true, opacity: 0.2, roughness: 0.15, metalness: 0.25, wireframe: true })),
+    h("pointLight", { color: "#6ce9c3", intensity: 5, distance: 3.5 })
+  );
+  if (effect === "heal") return h("group", { ref: group, position },
+    h("mesh", null, h("torusGeometry", { args: [0.68, 0.055, 8, 32] }), h("meshBasicMaterial", { color: "#72f3a4", transparent: true, opacity: 0.9, blending: THREE.AdditiveBlending })),
+    h("mesh", { scale: [0.18, 0.62, 0.12] }, h("boxGeometry"), h("meshStandardMaterial", { color: "#d7ffe5", emissive: "#43d67f", emissiveIntensity: 2.5 })),
+    h("mesh", { scale: [0.62, 0.18, 0.12] }, h("boxGeometry"), h("meshStandardMaterial", { color: "#d7ffe5", emissive: "#43d67f", emissiveIntensity: 2.5 })),
+    h("pointLight", { color: "#65ef9a", intensity: 6, distance: 3.5 })
+  );
+  if (effect === "freeze") return h("group", { ref: group, position },
+    [0.48, 0.72, 0.94].map((radius, index) => h("mesh", { key: `ice-ring-${index}`, rotation: [Math.PI / 2 + index * 0.42, 0, index * 0.55] }, h("torusGeometry", { args: [radius, 0.035, 6, 28] }), h("meshBasicMaterial", { color: "#8be9ff", transparent: true, opacity: 0.82, blending: THREE.AdditiveBlending }))),
+    Array.from({ length: 6 }, (_, index) => {
+      const angle = (index / 6) * Math.PI * 2;
+      return h("mesh", { key: `ice-${index}`, position: [Math.cos(angle) * 0.72, -0.55, Math.sin(angle) * 0.72], rotation: [0, 0, Math.PI] }, h("coneGeometry", { args: [0.11, 0.5, 6] }), h("meshStandardMaterial", { color: "#b9f3ff", emissive: "#4bbada", emissiveIntensity: 1.4, transparent: true, opacity: 0.88 }));
+    }),
+    h("pointLight", { color: "#75ddff", intensity: 7, distance: 4 })
+  );
+  return h("group", { ref: group, position },
+    h("mesh", null, h("sphereGeometry", { args: [0.92, 20, 14] }), h("meshStandardMaterial", { color: "#1b102c", emissive: "#7f4fc9", emissiveIntensity: 1.1, transparent: true, opacity: 0.48, roughness: 0.85 })),
+    [0.62, 0.88, 1.12].map((radius, index) => h("mesh", { key: `mask-ring-${index}`, rotation: [index * 0.52, index * 0.33, 0] }, h("torusGeometry", { args: [radius, 0.025, 6, 30] }), h("meshBasicMaterial", { color: "#bc83ff", transparent: true, opacity: 0.65, blending: THREE.AdditiveBlending }))),
+    h("pointLight", { color: "#9a5de8", intensity: 5, distance: 3.5 })
+  );
+}
+
 function Torch({ position }) {
   const flame = useRef();
   const light = useRef();
@@ -318,7 +366,7 @@ function ArenaCamera() {
   return null;
 }
 
-function ArenaScene({ leftAction, rightAction, winner }) {
+function ArenaScene({ leftAction, rightAction, leftPowerup, rightPowerup, winner, winnerSide }) {
   return h(Canvas, {
     shadows: true,
     camera: { position: [0, 4.05, 8.7], fov: 38 },
@@ -343,7 +391,9 @@ function ArenaScene({ leftAction, rightAction, winner }) {
     h(AttackEffect, { side: "right", action: rightAction, kind: "magic" }),
     h(ImpactEffect, { side: "left", action: leftAction, color: "#b79cff" }),
     h(ImpactEffect, { side: "right", action: rightAction, color: "#ffd27a" }),
-    winner ? h("group", { position: [0, 3.05, 0.2] },
+    leftPowerup ? h(PowerupEffect, { side: "left", effect: leftPowerup }) : null,
+    rightPowerup ? h(PowerupEffect, { side: "right", effect: rightPowerup }) : null,
+    winner ? h("group", { position: [winnerSide === "right" ? 2.15 : -2.15, 3.05, 0.2] },
       h("mesh", null, h("torusGeometry", { args: [0.75, 0.045, 8, 40] }), h("meshBasicMaterial", { color: "#ffd166" })),
       h("pointLight", { color: "#ffd166", intensity: 7, distance: 5 })
     ) : null
@@ -360,12 +410,28 @@ function isCorrect(question, answer) {
 }
 
 function battleStats(players, events) {
-  const stats = new Map(players.map((player) => [player.id, { hp: 100, score: 0, streak: 0, lastAction: "idle", lastRound: -1 }]));
-  const shields = new Map();
+  const stats = new Map(players.map((player) => [player.id, { hp: 100, score: 0, streak: 0, shield: 0, frozenRound: -1, maskedRound: -1, lastReward: "", lastAction: "idle", lastRound: -1 }]));
+  let healthEnded = false;
   [...events].sort((a, b) => new Date(a.createdAt) - new Date(b.createdAt)).forEach((event) => {
+    if (healthEnded) return;
     const own = stats.get(event.playerId);
     if (!own) return;
-    if (event.type === "skill" && event.effect === "shield") { shields.set(event.playerId, (shields.get(event.playerId) || 0) + 1); return; }
+    if (event.type === "skill") {
+      if (!POWERUPS[event.effect]) return;
+      own.lastReward = event.effect;
+      if (event.effect === "shield") own.shield += 1;
+      if (event.effect === "heal") own.hp = Math.min(100, own.hp + 20);
+      if (event.effect === "freeze" || event.effect === "mask") {
+        const fallbackTarget = players.find((player) => player.id !== event.playerId);
+        const targetId = event.targetPlayerId && stats.has(event.targetPlayerId) ? event.targetPlayerId : fallbackTarget?.id;
+        const target = stats.get(targetId);
+        if (target) {
+          if (event.effect === "freeze") target.frozenRound = Math.max(target.frozenRound, Number(event.round) + 1);
+          if (event.effect === "mask") target.maskedRound = Math.max(target.maskedRound, Number(event.round) + 1);
+        }
+      }
+      return;
+    }
     if (event.type !== "answer") return;
     own.lastRound = Math.max(own.lastRound, event.round);
     if (event.correct) {
@@ -381,16 +447,35 @@ function battleStats(players, events) {
       // New events carry the exact target. The fallback keeps old rows made
       // before this column was added compatible with the two-player pairing.
       const targetId = event.targetPlayerId && stats.has(event.targetPlayerId) ? event.targetPlayerId : opponent.id;
-      const shield = shields.get(targetId) || 0;
-      if (shield) shields.set(targetId, shield - 1);
-      else {
+      const target = stats.get(targetId);
+      if (target.shield > 0) {
+        target.shield -= 1;
+        target.lastAction = "shield";
+      } else {
         const damage = Math.max(1, Number(event.damage) || 20);
-        stats.get(targetId).hp = Math.max(0, stats.get(targetId).hp - damage);
-        stats.get(targetId).lastAction = "hit";
+        target.hp = Math.max(0, target.hp - damage);
+        target.lastAction = "hit";
+        if (target.hp <= 0) healthEnded = true;
       }
     }
   });
   return stats;
+}
+
+function resolveBattleResult(players, stats, timeLeft) {
+  if (players.length < 2) return { ended: false, winner: null, tied: false, reason: "" };
+  const left = stats.get(players[0]?.id) || { hp: 100, score: 0 };
+  const right = stats.get(players[1]?.id) || { hp: 100, score: 0 };
+  const healthEnded = left.hp <= 0 || right.hp <= 0;
+  if (!healthEnded && timeLeft > 0) return { ended: false, winner: null, tied: false, reason: "" };
+
+  let winner = null;
+  let tied = false;
+  if (left.hp <= 0 && right.hp > 0) winner = players[1];
+  else if (right.hp <= 0 && left.hp > 0) winner = players[0];
+  else if (left.score === right.score) tied = true;
+  else winner = left.score > right.score ? players[0] : players[1];
+  return { ended: true, winner, tied, reason: healthEnded ? "health" : "time" };
 }
 
 function mergeBattleEvents(remoteEvents, localEvents) {
@@ -460,25 +545,17 @@ function buildBattleMatches(players, events, timeLeft) {
     const matchStats = battleStats(matchPlayers, matchEvents);
     const left = matchStats.get(matchPlayers[0]?.id) || { hp: 100, score: 0, streak: 0, lastRound: -1 };
     const right = matchStats.get(matchPlayers[1]?.id) || { hp: 100, score: 0, streak: 0, lastRound: -1 };
-    const completedByHp = left.hp <= 0 || right.hp <= 0;
-    const finished = matchPlayers.length === 2 && (completedByHp || timeLeft <= 0);
-    let winner = null;
-    let tied = false;
-    if (finished) {
-      if (left.hp <= 0 && right.hp > 0) winner = matchPlayers[1];
-      else if (right.hp <= 0 && left.hp > 0) winner = matchPlayers[0];
-      else if (left.score === right.score) tied = true;
-      else winner = left.score > right.score ? matchPlayers[0] : matchPlayers[1];
-    }
+    const result = resolveBattleResult(matchPlayers, matchStats, timeLeft);
     matches.push({
       number: Math.floor(index / 2) + 1,
       players: matchPlayers,
       stats: [left, right],
       answerCount: matchEvents.filter((event) => event.type === "answer").length,
       currentRound: Math.max(left.lastRound, right.lastRound) + 1,
-      finished,
-      tied,
-      winner
+      finished: result.ended,
+      tied: result.tied,
+      winner: result.winner,
+      reason: result.reason
     });
   }
   return matches;
@@ -487,6 +564,7 @@ function buildBattleMatches(players, events, timeLeft) {
 function TeacherPlayerMetric({ player, stat, side, winner }) {
   const lowHealth = stat.hp <= 30;
   const isWinner = winner?.id === player?.id;
+  const item = POWERUPS[stat.lastReward];
   return h("div", { className: `arena-monitor-player ${side}${isWinner ? " winner" : ""}` },
     h("div", { className: "arena-monitor-player-head" },
       h("span", { className: "arena-monitor-avatar" }, side === "left" ? "⚔" : "✦"),
@@ -498,7 +576,7 @@ function TeacherPlayerMetric({ player, stat, side, winner }) {
     h("div", { className: "arena-monitor-score" }, h("b", null, stat.score), h("span", null, "分")),
     h("div", { className: "arena-monitor-health-label" }, h("span", null, "生命值"), h("strong", null, `${stat.hp}%`)),
     h("div", { className: `arena-monitor-health ${side}${lowHealth ? " danger" : ""}` }, h("i", { style: { width: `${stat.hp}%` } })),
-    h("small", { className: "arena-monitor-streak" }, stat.streak > 1 ? `连对 ${stat.streak} 题` : "等待连击")
+    h("small", { className: "arena-monitor-streak" }, stat.shield > 0 ? `◈ 保护罩 × ${stat.shield}` : item ? `${item.icon} ${item.name} · 连对 ${stat.streak} 题` : stat.streak > 1 ? `连对 ${stat.streak} 题` : "等待连击")
   );
 }
 
@@ -576,12 +654,17 @@ function ArenaApp() {
 
   const players = roomData?.players || [];
   const events = mergeBattleEvents(roomData?.events, localEvents);
+  const battleDeadline = room?.startedAt ? new Date(room.startedAt).getTime() + (room.durationSeconds || 180) * 1000 : 0;
+  const scoredEvents = battleDeadline ? events.filter((event) => {
+    const eventTime = new Date(event.createdAt || 0).getTime();
+    return !eventTime || eventTime <= battleDeadline;
+  }) : events;
   const myPlayer = players.find((player) => player.studentId === profile.id);
   const pair = useMemo(
     () => canonicalBattlePair(players, events, myPlayer, context.role),
     [players, events, myPlayer, context.role]
   );
-  const pairEvents = events.filter((event) => pair.some((player) => player.id === event.playerId));
+  const pairEvents = scoredEvents.filter((event) => pair.some((player) => player.id === event.playerId));
   const visiblePlayerCount = context.role === "student" ? Math.max(players.length, pair.length) : players.length;
   const stats = battleStats(pair, pairEvents);
   const leftStats = stats.get(pair[0]?.id) || { hp: 100, score: 0, streak: 0, lastAction: "idle" };
@@ -589,8 +672,23 @@ function ArenaApp() {
   const elapsed = room?.startedAt ? Math.max(0, now - new Date(room.startedAt).getTime()) : 0;
   const timeLeft = room?.status === "battle" ? Math.max(0, (room.durationSeconds || 180) - Math.floor(elapsed / 1000)) : room?.durationSeconds || 180;
   const round = room?.status === "battle" ? Math.floor(elapsed / (ROUND_SECONDS * 1000)) : 0;
+  const roundElapsedSeconds = room?.status === "battle" ? Math.floor(elapsed / 1000) % ROUND_SECONDS : 0;
   const question = questions.length ? questions[round % questions.length] : null;
-  const winner = leftStats.hp <= 0 ? pair[0] : rightStats.hp <= 0 ? pair[1] : timeLeft <= 0 ? (leftStats.score >= rightStats.score ? pair[0] : pair[1]) : null;
+  const result = resolveBattleResult(pair, stats, timeLeft);
+  const winner = result.winner;
+  const gameEnded = result.ended;
+  const myStats = stats.get(myPlayer?.id) || { frozenRound: -1, maskedRound: -1 };
+  const freezeActive = !gameEnded && myStats.frozenRound === round && roundElapsedSeconds < DEBUFF_SECONDS;
+  const maskActive = !gameEnded && myStats.maskedRound === round && roundElapsedSeconds < DEBUFF_SECONDS;
+  const debuffSecondsLeft = Math.max(1, DEBUFF_SECONDS - roundElapsedSeconds);
+  const latestPowerup = [...pairEvents].reverse().find((event) => event.type === "skill" && POWERUPS[event.effect]);
+  const powerupIsVisible = Boolean(latestPowerup && now - new Date(latestPowerup.createdAt || 0).getTime() <= POWERUP_EFFECT_MS);
+  const powerupTargetId = latestPowerup?.targetPlayerId || pair.find((player) => player.id !== latestPowerup?.playerId)?.id;
+  const powerupFor = (playerId) => {
+    if (!powerupIsVisible || !playerId) return "";
+    if (latestPowerup.playerId === playerId) return latestPowerup.effect;
+    return ["freeze", "mask"].includes(latestPowerup.effect) && powerupTargetId === playerId ? latestPowerup.effect : "";
+  };
 
   const createRoom = async () => {
     setError(""); setBusy(true);
@@ -615,22 +713,30 @@ function ArenaApp() {
     finally { setBusy(false); }
   };
   const submitAnswer = async (answer) => {
-    if (!myPlayer || !question || answeredRound === round || room?.status !== "battle" || winner) return;
+    if (!myPlayer || !question || answeredRound === round || room?.status !== "battle" || gameEnded || freezeActive || maskActive) return;
     const correct = isCorrect(question, answer);
     const current = stats.get(myPlayer.id) || { streak: 0 };
     const nextStreak = correct ? current.streak + 1 : 0;
+    const reward = correct ? rewardForStreak(nextStreak) : "";
     const target = pair.find((player) => player.id !== myPlayer.id);
-    const event = { id: `local-${Date.now()}`, roomId: room.id, playerId: myPlayer.id, targetPlayerId: target?.id || "", round, type: "answer", questionId: question.id, correct, damage: correct ? 20 + Math.min(20, current.streak * 5) : 0, effect: nextStreak > 0 && nextStreak % 3 === 0 ? "shield" : "", createdAt: new Date().toISOString() };
-    setAnsweredRound(round); setLocalEvents((items) => [...items, event]);
-    try { await cloud.submitBattleEvent({ roomId: room.id, playerId: myPlayer.id, targetPlayerId: target?.id || "", round, questionId: question.id, correct, damage: event.damage, effect: event.effect }); await refreshRoom(room.id); setLocalEvents([]); }
-    catch (answerError) { setError(answerError.message || "答案无法同步，请检查网络。"); }
-    if (target && nextStreak > 0 && nextStreak % 3 === 0) {
-      try { await cloud.submitBattleEvent({ roomId: room.id, playerId: myPlayer.id, round, type: "skill", effect: "shield" }); } catch { /* answer event is still preserved */ }
+    const createdAt = Date.now();
+    const event = { id: `local-answer-${createdAt}`, roomId: room.id, playerId: myPlayer.id, targetPlayerId: target?.id || "", round, type: "answer", questionId: question.id, correct, damage: correct ? 20 + Math.min(20, current.streak * 5) : 0, effect: "", createdAt: new Date(createdAt).toISOString() };
+    const rewardTargetId = ["freeze", "mask"].includes(reward) ? target?.id || "" : "";
+    const skillEvent = reward ? { id: `local-skill-${createdAt}`, roomId: room.id, playerId: myPlayer.id, targetPlayerId: rewardTargetId, round, type: "skill", questionId: "", correct: false, damage: 0, effect: reward, createdAt: new Date(createdAt + 1).toISOString() } : null;
+    setAnsweredRound(round); setLocalEvents((items) => [...items, event, ...(skillEvent ? [skillEvent] : [])]);
+    try {
+      await cloud.submitBattleEvent({ roomId: room.id, playerId: myPlayer.id, targetPlayerId: target?.id || "", round, questionId: question.id, correct, damage: event.damage, effect: "" });
+      if (skillEvent) await cloud.submitBattleEvent({ roomId: room.id, playerId: myPlayer.id, targetPlayerId: rewardTargetId, round, type: "skill", effect: reward });
+      await refreshRoom(room.id);
+      setLocalEvents([]);
+    } catch (answerError) {
+      setError(answerError.message || "答案或道具无法同步，请检查网络。");
     }
   };
 
   const actionFor = (playerId) => {
     if (winner && winner.id === playerId) return "victory";
+    if (gameEnded) return "idle";
     const recent = [...pairEvents].reverse().find((event) => event.type === "answer");
     if (!recent || now - new Date(recent.createdAt || 0).getTime() > COMBAT_ACTION_MS) return "idle";
     if (!recent.correct) return "idle";
@@ -640,7 +746,11 @@ function ArenaApp() {
   };
   const scene = h("div", { className: "arena-scene" },
     h("div", { className: "arena-scene-status" }, h("span", null, "LIVE ARENA"), h("i"), h("small", null, "魔法遗迹竞技场")),
-    h(ArenaScene, { leftAction: actionFor(pair[0]?.id), rightAction: actionFor(pair[1]?.id), winner })
+    powerupIsVisible ? h("div", { className: `arena-powerup-notice ${latestPowerup.effect}` },
+      h("span", null, POWERUPS[latestPowerup.effect].icon),
+      h("div", null, h("strong", null, `${pair.find((player) => player.id === latestPowerup.playerId)?.name || "玩家"} 获得${POWERUPS[latestPowerup.effect].name}`), h("small", null, POWERUPS[latestPowerup.effect].description))
+    ) : null,
+    h(ArenaScene, { leftAction: actionFor(pair[0]?.id), rightAction: actionFor(pair[1]?.id), leftPowerup: powerupFor(pair[0]?.id), rightPowerup: powerupFor(pair[1]?.id), winner, winnerSide: winner?.id === pair[1]?.id ? "right" : "left" })
   );
   if (!room) return h("div", { className: "arena-lobby" },
     h("div", { className: "arena-intro" }, h("span", { className: "arena-kicker" }, "LIVE 1V1"), h("h2", null, "联机对战竞技场"), h("p", null, context.role === "teacher" ? "老师先开设房间，学生使用验证码加入。系统只会在人数为偶数时开始配对。" : "输入老师提供的房间验证码，等待系统把你和另一名同学配对。")),
@@ -658,13 +768,33 @@ function ArenaApp() {
 
   const readyToStart = players.length >= 2 && players.length % 2 === 0;
   const answered = answeredRound === round;
+  const interrupted = freezeActive || maskActive;
+  const inputLocked = answered || !myPlayer || gameEnded || interrupted;
+  const questionStatus = gameEnded ? "对战已经结束" : freezeActive ? `被冻结 ${debuffSecondsLeft} 秒` : maskActive ? `遮罩剩余 ${debuffSecondsLeft} 秒` : answered ? "已作答，等待下一回合" : "答对即可攻击对手";
   return h("div", { className: "arena-battle-shell" },
     h("div", { className: "arena-room-bar" }, h("div", null, h("span", { className: "arena-kicker" }, room.status === "battle" ? "BATTLE LIVE" : "WAITING ROOM"), h("h2", null, `房间 ${room.code}`), h("p", null, room.className ? `${room.className} · ${visiblePlayerCount} 人在线` : `${visiblePlayerCount} 人在线`)), h("div", { className: "arena-room-actions" }, room.status === "lobby" && context.role === "teacher" ? h("button", { className: "arena-primary-button", disabled: busy || !readyToStart, onClick: startRoom }, readyToStart ? "开始战斗" : "需要偶数人数") : null, h("button", { className: "arena-ghost-button", onClick: () => { localStorage.removeItem(ROOM_STORAGE_KEY); setRoom(null); setRoomData(null); } }, "离开房间"))),
-    room.status === "lobby" ? h("div", { className: "arena-waiting" }, h("div", { className: "arena-code-display" }, h("small", null, "学生加入验证码"), h("strong", null, room.code)), h("div", { className: "arena-player-list" }, players.map((player, index) => h("div", { className: "arena-player-chip", key: player.id }, h("span", null, index % 2 ? "♟" : "♞"), h("strong", null, player.name), h("small", null, index % 2 ? "等待配对" : "已加入")))), h("p", { className: "arena-hint" }, "配对规则：按照加入顺序每两人一组；人数必须是 2、4、6……才能开始。")) : context.role === "teacher" ? h(TeacherBattleDashboard, { players, events, timeLeft, roomStatus: room.status }) : h(React.Fragment, null,
+    room.status === "lobby" ? h("div", { className: "arena-waiting" }, h("div", { className: "arena-code-display" }, h("small", null, "学生加入验证码"), h("strong", null, room.code)), h("div", { className: "arena-player-list" }, players.map((player, index) => h("div", { className: "arena-player-chip", key: player.id }, h("span", null, index % 2 ? "♟" : "♞"), h("strong", null, player.name), h("small", null, index % 2 ? "等待配对" : "已加入")))), h("p", { className: "arena-hint" }, "配对规则：按照加入顺序每两人一组；人数必须是 2、4、6……才能开始。")) : context.role === "teacher" ? h(TeacherBattleDashboard, { players, events: scoredEvents, timeLeft, roomStatus: room.status }) : h(React.Fragment, null,
       scene,
-      h("div", { className: "arena-hud" }, h("div", { className: "arena-fighter-card left" }, h("strong", null, pair[0]?.name || "玩家 A"), h("div", { className: "arena-health" }, h("i", { style: { width: `${leftStats.hp}%` } })), h("span", null, `生命 ${leftStats.hp} · 得分 ${leftStats.score}`)), h("div", { className: "arena-timer" }, h("strong", null, `${Math.floor(timeLeft / 60)}:${String(timeLeft % 60).padStart(2, "0")}`), h("small", null, `第 ${round + 1} 回合`)), h("div", { className: "arena-fighter-card right" }, h("strong", null, pair[1]?.name || "玩家 B"), h("div", { className: "arena-health purple" }, h("i", { style: { width: `${rightStats.hp}%` } })), h("span", null, `生命 ${rightStats.hp} · 得分 ${rightStats.score}`))),
-      h("div", { className: "arena-question-card" }, h("div", { className: "arena-question-head" }, h("span", null, "快速答题攻击"), h("small", null, answered ? "已作答，等待下一回合" : "答对即可攻击对手")), h("h3", null, question?.title || "老师尚未准备题目"), question?.type === "fill" ? h("div", { className: "arena-fill-row" }, h("input", { id: "arena-fill-answer", disabled: answered || !myPlayer || Boolean(winner), placeholder: "输入答案" }), h("button", { className: "arena-primary-button", disabled: answered || !myPlayer || Boolean(winner), onClick: () => submitAnswer(document.querySelector("#arena-fill-answer")?.value || "") }, "出招")) : h("div", { className: "arena-options" }, (question?.options || []).map((option, index) => h("button", { key: `${question.id}-${index}`, disabled: answered || !myPlayer || Boolean(winner), className: "arena-option", onClick: () => submitAnswer(index) }, h("b", null, String.fromCharCode(65 + index)), option))), h("p", { className: "arena-skill-note" }, "连对 3 题：触发保护盾；答错不会攻击。")),
-      winner ? h("div", { className: "arena-result-banner" }, h("strong", null, `${winner.name} 获胜！`), h("span", null, timeLeft <= 0 ? "时间结束，分数较高者胜出。" : "对手生命值已归零。")) : null
+      h("div", { className: "arena-hud" },
+        h("div", { className: "arena-fighter-card left" }, h("strong", null, pair[0]?.name || "玩家 A"), h("div", { className: "arena-health" }, h("i", { style: { width: `${leftStats.hp}%` } })), h("span", null, `生命 ${leftStats.hp} · 得分 ${leftStats.score}`), leftStats.shield > 0 ? h("em", { className: "arena-equipped-item" }, `◈ 保护罩 × ${leftStats.shield}`) : null),
+        h("div", { className: "arena-timer" }, h("strong", null, gameEnded ? "END" : `${Math.floor(timeLeft / 60)}:${String(timeLeft % 60).padStart(2, "0")}`), h("small", null, gameEnded ? "对战结束" : `第 ${round + 1} 回合`)),
+        h("div", { className: "arena-fighter-card right" }, h("strong", null, pair[1]?.name || "玩家 B"), h("div", { className: "arena-health purple" }, h("i", { style: { width: `${rightStats.hp}%` } })), h("span", null, `生命 ${rightStats.hp} · 得分 ${rightStats.score}`), rightStats.shield > 0 ? h("em", { className: "arena-equipped-item" }, `◈ 保护罩 × ${rightStats.shield}`) : null)
+      ),
+      !gameEnded ? h("div", { className: `arena-question-card${maskActive ? " is-masked" : ""}${freezeActive ? " is-frozen" : ""}` },
+        h("div", { className: "arena-question-head" }, h("span", null, gameEnded ? "本局结算" : "快速答题攻击"), h("small", null, questionStatus)),
+        h("h3", null, question?.title || "老师尚未准备题目"),
+        question?.type === "fill"
+          ? h("div", { className: "arena-fill-row" }, h("input", { id: "arena-fill-answer", disabled: inputLocked, placeholder: "输入答案" }), h("button", { className: "arena-primary-button", disabled: inputLocked, onClick: () => submitAnswer(document.querySelector("#arena-fill-answer")?.value || "") }, "出招"))
+          : h("div", { className: "arena-options" }, (question?.options || []).map((option, index) => h("button", { key: `${question.id}-${index}`, disabled: inputLocked, className: "arena-option", onClick: () => submitAnswer(index) }, h("b", null, String.fromCharCode(65 + index)), option))),
+        h("p", { className: "arena-skill-note" }, "连续答对第 3 题起，每次可依序获得保护罩、血包、冻结或遮罩；答错会中断连击。"),
+        interrupted ? h("div", { className: `arena-debuff-overlay ${freezeActive ? "freeze" : "mask"}` }, h("span", null, freezeActive ? "❄" : "◉"), h("strong", null, freezeActive ? "角色被冻结" : "视线受到遮罩"), h("small", null, `${debuffSecondsLeft} 秒后恢复作答`)) : null
+      ) : null,
+      gameEnded ? h("div", { className: `arena-result-banner${result.tied ? " tied" : ""}` },
+        h("small", null, result.reason === "time" ? "TIME UP" : "BATTLE FINISHED"),
+        h("strong", null, result.tied ? "本局平手" : `${winner?.name || "玩家"} 获胜！`),
+        h("span", null, result.reason === "time" ? "时间结束，以最高分决定胜负。" : "一方生命值归零，对战立即结束。"),
+        h("b", null, `${pair[0]?.name || "玩家 A"} ${leftStats.score} : ${rightStats.score} ${pair[1]?.name || "玩家 B"}`)
+      ) : null
     ),
     error ? h("p", { className: "arena-error" }, error) : null
   );
