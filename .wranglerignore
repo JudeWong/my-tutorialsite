@@ -1,0 +1,13 @@
+# Keep generated web assets available to Cloudflare Workers Assets. The
+# repository's .gitignore intentionally hides the generated web/ directory,
+# but Wrangler must still upload the GLB character files from it.
+.git/
+.github/
+node_modules/
+android/
+downloads/
+_buildtools/
+platform-tools/
+platforms/
+.temp/
+.wrangler/
