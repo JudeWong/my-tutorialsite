@@ -1,5 +1,7 @@
 # Apocalypse arena environment assets
 
+The active arena is now the original temple environment documented in [TEMPLE.md](TEMPLE.md). The warehouse assets below are retained for rollback and are no longer loaded by the current arena renderer.
+
 All source models, PBR textures, and the environment panorama below are by Poly Haven contributors and released under **CC0 1.0 Universal**. They may be used, modified, and redistributed, including in this website and APK.
 
 - Primary license: https://polyhaven.com/license
@@ -40,7 +42,7 @@ The GLBs have a `GroundedAsset` wrapper. Fence descendants preserve source names
 
 ## Blender-authored scene and render
 
-The active browser arena now loads `blender-wasteland.glb`, not individually positioned runtime props. `scripts/build-blender-arena.py` builds this scene in Blender 4.2.9:
+The previous browser arena loaded `blender-wasteland.glb`, not individually positioned runtime props. `scripts/build-blender-arena.py` rebuilds that retained scene in Blender 4.2.9:
 
 - Imports the licensed scanned car, road barriers, barrels, tyres and chain-link panels once, sharing mesh and material data between repeated objects.
 - Models thick, irregularly broken warehouse walls, bevelled I-section steel girders, exposed reinforcement and fractured concrete debris. These are editable Blender meshes, not a flattened background image.

@@ -1,4 +1,4 @@
-/* Blender-authored, Cycles AO-baked scenery and PBR rigged characters.
+/* Blender-authored temple ruins and PBR rigged characters.
  * The .blend build script and source credits are bundled with the project. */
 import React, { useEffect, useMemo, useRef, useState } from "https://esm.sh/react@18.3.1";
 import { Canvas, useFrame, useThree } from "https://esm.sh/@react-three/fiber@8.17.10?deps=react@18.3.1,react-dom@18.3.1,three@0.160.0";
@@ -11,8 +11,8 @@ const h = React.createElement;
 const BASE = "./assets/models/apocalypse/";
 const ASSETS = {
   vanguard: "vanguard.glb", sentinel: "sentinel.glb",
-  environment: "blender-wasteland.glb",
-  sky: "burnt-warehouse.hdr", background: "warehouse-background.jpg"
+  environment: "temple-arena.glb",
+  sky: "temple-golden-hour.hdr", background: "temple-sky.jpg"
 };
 const modelCache = new Map();
 function getModel(file) {
@@ -34,9 +34,9 @@ function useModel(file, report) {
         object.castShadow = true;
         object.receiveShadow = true;
         object.frustumCulled = !object.isSkinnedMesh;
-        // Match the restrained HDR illumination in the Blender reference.
+        // Keep the afternoon HDR soft enough to preserve stone and armour detail.
         for (const material of [object.material].flat()) {
-          if (material?.isMeshStandardMaterial) material.envMapIntensity = .65;
+          if (material?.isMeshStandardMaterial) material.envMapIntensity = .6;
           if (material?.alphaTest > 0) {
             material.alphaToCoverage = true;
             material.alphaTest = .28;
@@ -130,7 +130,7 @@ function WorldLighting({ report }) {
       texture.colorSpace = THREE.SRGBColorSpace;
       scene.background = texture;
       scene.backgroundBlurriness = .015;
-      scene.backgroundIntensity = .58;
+      scene.backgroundIntensity = .68;
       report(ASSETS.background, "ready");
     }, undefined, () => { if (alive) report(ASSETS.background, "error"); });
     return () => {
@@ -140,20 +140,20 @@ function WorldLighting({ report }) {
     };
   }, [gl, scene, report]);
   return h(React.Fragment, null,
-    h("fog", { attach: "fog", args: ["#555e60", 14, 42] }),
-    h("hemisphereLight", { intensity: .28, color: "#c5d7dc", groundColor: "#675c50" }),
-    h("directionalLight", { position: [-4, 7, 5], intensity: 1.8, color: "#ffe0be", castShadow: true,
+    h("fog", { attach: "fog", args: ["#9c9c86", 18, 48] }),
+    h("hemisphereLight", { intensity: .3, color: "#dce6e4", groundColor: "#776b52" }),
+    h("directionalLight", { position: [-5, 9, 5], intensity: 1.7, color: "#fff0d9", castShadow: true,
       "shadow-mapSize-width": 1024, "shadow-mapSize-height": 1024, "shadow-camera-left": -8, "shadow-camera-right": 8,
       "shadow-camera-top": 8, "shadow-camera-bottom": -6, "shadow-normalBias": .025, "shadow-bias": -.00015,
       "shadow-radius": 3, "shadow-blurSamples": 6 }),
-    h("directionalLight", { position: [4, 5, -4], intensity: .95, color: "#bad7ff" }),
-    h("directionalLight", { position: [0, 3, 5], intensity: .3, color: "#e1edff" })
+    h("directionalLight", { position: [4, 5, -4], intensity: .7, color: "#d5e0e2" }),
+    h("directionalLight", { position: [0, 3, 5], intensity: .3, color: "#f4efe4" })
   );
 }
 
-function Wasteland({ report }) {
+function TempleRuins({ report }) {
   const asset = useModel(ASSETS.environment, report);
-  // World-space layout, tiled PBR maps and the independent AO UV channel are
+  // World-space layout, tiled PBR maps and architectural detail are
   // authored/exported in Blender. Never auto-center or auto-scale this scene.
   return asset ? h("primitive", { object: asset.scene, dispose: null }) : null;
 }
@@ -231,7 +231,7 @@ function Composition({ leftAction, rightAction, leftPowerup, rightPowerup, winne
     camera.updateProjectionMatrix();
   }, [camera, mobile, size.width, size.height]);
   return h(React.Fragment, null,
-    h(WorldLighting, { report }), h(Wasteland, { report }), h(Dust),
+    h(WorldLighting, { report }), h(TempleRuins, { report }), h(Dust),
     h(Fighter, { file: ASSETS.vanguard, position: [-x, 0, 0], facing: .95, action: leftAction, report, muzzle: leftMuzzle }),
     h(Fighter, { file: ASSETS.sentinel, position: [x, 0, 0], facing: -.95, action: rightAction, report, muzzle: rightMuzzle }),
     h(CombatEffects, { side: "left", action: leftAction, powerup: leftPowerup, x, muzzle: leftMuzzle }),
@@ -252,12 +252,12 @@ export function ApocalypseArena(props) {
   return h("div", { className: "apocalypse-renderer" },
     h(Canvas, { key: attempt, shadows: true, camera: { position: [0, 3.25, 8], fov: 40, near: .1, far: 80 },
       dpr: [1, 1.35], gl: { antialias: true, powerPreference: "high-performance" }, className: "arena-canvas",
-      onCreated: ({ gl }) => { gl.toneMapping = THREE.AgXToneMapping; gl.toneMappingExposure = 1.1; gl.shadowMap.type = THREE.VSMShadowMap; }
+      onCreated: ({ gl }) => { gl.toneMapping = THREE.AgXToneMapping; gl.toneMappingExposure = 1.05; gl.shadowMap.type = THREE.VSMShadowMap; }
     }, h(Composition, { ...props, report })),
     h("div", { className: "apocalypse-vignette", "aria-hidden": "true" }),
     !ready ? h("div", { className: `apocalypse-loading${failed.length ? " has-error" : ""}`, role: "status" },
       h("span", { className: "apocalypse-loading-symbol", "aria-hidden": "true" }, "◈"),
-      h("strong", null, failed.length ? "部分场景资源未能加载" : "正在进入废土竞技场"),
+      h("strong", null, failed.length ? "部分场景资源未能加载" : "正在进入遗迹竞技场"),
       h("small", null, failed.length ? "请检查网络后重试，比赛分数不会被重置。" : `Blender 场景与装甲战士 · ${progress}%`),
       h("div", { className: "apocalypse-loading-track" }, h("i", { style: { width: `${progress}%` } })),
       failed.length ? h("button", { className: "arena-primary-button", onClick: () => { setAssets({}); setAttempt((value) => value + 1); } }, "重新加载场景") : null

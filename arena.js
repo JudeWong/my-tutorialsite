@@ -29,7 +29,7 @@ function LazyArenaScene(props) {
   const Scene = useMemo(() => React.lazy(() => import(attempt ? `./arena-scene.js?retry=${attempt}` : "./arena-scene.js")
     .then((module) => ({ default: module.ApocalypseArena }))), [attempt]);
   return h(SceneErrorBoundary, { key: attempt, onRetry: () => setAttempt((value) => value + 1) },
-    h(React.Suspense, { fallback: h("div", { className: "apocalypse-loading", role: "status" }, h("strong", null, "正在准备废土竞技场…")) }, h(Scene, props))
+    h(React.Suspense, { fallback: h("div", { className: "apocalypse-loading", role: "status" }, h("strong", null, "正在准备遗迹竞技场…")) }, h(Scene, props))
   );
 }
 
@@ -519,7 +519,7 @@ function ArenaApp() {
     return targetId === playerId ? "hit" : "idle";
   };
   const scene = h("div", { className: "arena-scene" },
-    h("div", { className: "arena-scene-status" }, h("span", null, "WASTELAND // 01"), h("i"), h("small", null, "废土工业区")),
+    h("div", { className: "arena-scene-status" }, h("span", null, "ANCIENT RUINS // 02"), h("i"), h("small", null, "遗迹竞技场")),
     powerupIsVisible ? h("div", { className: `arena-powerup-notice ${latestPowerup.effect}` },
       h("span", null, POWERUPS[latestPowerup.effect].icon),
       h("div", null, h("strong", null, `${pair.find((player) => player.id === latestPowerup.playerId)?.name || "玩家"} 获得${POWERUPS[latestPowerup.effect].name}`), h("small", null, POWERUPS[latestPowerup.effect].description))
