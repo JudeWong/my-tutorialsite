@@ -723,7 +723,20 @@
     };
   }
 
-  function mapBattleEvent(row) {
+  let battleEnginePromise = null;
+
+  function loadBattleEngine() {
+    if (!battleEnginePromise) {
+      battleEnginePromise = import("./battle-engine.js").catch((error) => {
+        battleEnginePromise = null;
+        throw error;
+      });
+    }
+    return battleEnginePromise;
+  }
+
+  function mapBattleEvent(row, engine) {
+    const decoded = engine.decodeBattleEffect(row.effect || "");
     return {
       id: row.id,
       roomId: row.room_id,
@@ -734,9 +747,26 @@
       questionId: row.question_id || "",
       correct: row.is_correct === true,
       damage: Number(row.damage) || 0,
-      effect: row.effect || "",
+      matchId: decoded.matchId || "",
+      effect: decoded.effect,
       createdAt: row.created_at || ""
     };
+  }
+
+  async function loadAllBattleRows(table, roomId, orderColumn) {
+    const rows = [];
+    const pageSize = 500;
+    // Supabase limits a SELECT to 1,000 rows by default. A whole class can
+    // exceed that within one tournament, so retrieve every page explicitly.
+    for (let offset = 0; ; offset += pageSize) {
+      const page = unwrap(await requireClient().from(table).select("*")
+        .eq("room_id", roomId)
+        .order(orderColumn, { ascending: true })
+        .order("id", { ascending: true })
+        .range(offset, offset + pageSize - 1), `Load ${table}`) || [];
+      rows.push(...page);
+      if (page.length < pageSize) return rows;
+    }
   }
 
   async function loadBattleRoom(roomId) {
@@ -744,9 +774,21 @@
     const db = requireClient();
     const room = unwrap(await db.from("battle_rooms").select("*").eq("id", roomId).maybeSingle(), "Load battle room");
     if (!room) return null;
-    const players = unwrap(await db.from("battle_players").select("*").eq("room_id", roomId).order("joined_at", { ascending: true }), "Load battle players") || [];
-    const events = unwrap(await db.from("battle_events").select("*").eq("room_id", roomId).order("created_at", { ascending: true }), "Load battle events") || [];
-    return { room: mapBattleRoom(room), players: players.map(mapBattlePlayer), events: events.map(mapBattleEvent) };
+    const [players, rows, engine] = await Promise.all([
+      loadAllBattleRows("battle_players", roomId, "joined_at"),
+      loadAllBattleRows("battle_events", roomId, "created_at"),
+      loadBattleEngine()
+    ]);
+    const events = rows.map((row) => mapBattleEvent(row, engine));
+    const tournament = engine.readTournament(events);
+    const mappedRoom = mapBattleRoom(room);
+    // The persisted bracket is authoritative if a separate room-status
+    // update was interrupted. Retrying start/advance will repair that update.
+    if (tournament) {
+      mappedRoom.status = tournament.status;
+      if (!mappedRoom.startedAt) mappedRoom.startedAt = tournament.startedAt;
+    }
+    return { room: mappedRoom, players: players.map(mapBattlePlayer), events };
   }
 
   function createBattleCode() {
@@ -785,39 +827,97 @@
 
   async function startBattleRoom(roomId) {
     if (!session?.user?.id || !isUuid(roomId)) return null;
-    const db = requireClient();
-    const players = unwrap(await db.from("battle_players").select("*").eq("room_id", roomId).order("joined_at", { ascending: true }), "Count battle players") || [];
-    if (players.length < 2 || players.length % 2 !== 0) throw new Error("An even number of players is required to start the battle.");
-    // Persist each student's opponent in an event that every room member can
-    // read. This also supports older Supabase projects whose battle_players
-    // SELECT policy has not yet been migrated to expose the paired row.
-    const pairingRows = players.map((player, index) => {
-      const opponent = players[index % 2 === 0 ? index + 1 : index - 1];
-      return {
-        room_id: roomId,
-        player_id: player.id,
-        round_number: 0,
-        event_type: "skill",
-        question_id: null,
-        is_correct: false,
-        damage: 0,
-        effect: `pairing:${JSON.stringify({
-          playerSide: index % 2 === 0 ? "left" : "right",
-          opponentId: opponent.id,
-          opponentStudentId: opponent.student_id,
-          opponentName: opponent.display_name || "对手",
-          opponentClassName: opponent.class_name || "",
-          opponentSide: index % 2 === 0 ? "right" : "left"
-        })}`
-      };
-    });
-    unwrap(await db.from("battle_events").insert(pairingRows), "Save battle pairings");
-    unwrap(await db.from("battle_rooms").update({ status: "battle", started_at: new Date().toISOString(), updated_at: new Date().toISOString() }).eq("id", roomId).eq("teacher_id", session.user.id), "Start battle room");
+    const data = await loadBattleRoom(roomId);
+    assertBattleTeacher(data);
+    const engine = await loadBattleEngine();
+    let tournament = engine.readTournament(data.events);
+    if (!tournament) {
+      // Existing running rooms use the previous 1v1 rules; do not restart
+      // or replace their already recorded answers with a new bracket.
+      if (data.room.status !== "lobby") return data;
+      if (data.players.length < 2 || data.players.length % 2 !== 0) throw new Error("An even number of players is required to start the battle.");
+      tournament = engine.createTournament(data.players, {
+        id: roomId,
+        startedAt: new Date(Date.now() + 8000).toISOString(),
+        durationSeconds: data.room.durationSeconds
+      });
+      tournament = await persistBattleTournament(roomId, tournament, engine);
+    }
+    await syncBattleTournamentRoom(roomId, tournament);
     return await loadBattleRoom(roomId);
   }
 
-  async function submitBattleEvent({ roomId, playerId, targetPlayerId = "", round = 0, type = "answer", questionId = "", correct = false, damage = 0, effect = "" } = {}) {
+  function assertBattleTeacher(data) {
+    if (!data?.room || data.room.teacherId !== session?.user?.id) {
+      throw new Error("Only the teacher who created this room can start or advance the tournament.");
+    }
+  }
+
+  async function stableBattleId(identity) {
+    const digest = new Uint8Array(await crypto.subtle.digest("SHA-256", new TextEncoder().encode(identity)));
+    // Stable UUIDv5-shaped IDs give INSERT an atomic first-writer-wins key.
+    // The snapshot must never be overwritten by a retry or a second tab.
+    digest[6] = (digest[6] & 0x0f) | 0x50;
+    digest[8] = (digest[8] & 0x3f) | 0x80;
+    const hex = [...digest.slice(0, 16)].map((byte) => byte.toString(16).padStart(2, "0")).join("");
+    return `${hex.slice(0, 8)}-${hex.slice(8, 12)}-${hex.slice(12, 16)}-${hex.slice(16, 20)}-${hex.slice(20)}`;
+  }
+
+  async function persistBattleTournament(roomId, tournament, engine) {
+    const id = await stableBattleId(`battle-tournament:${roomId}:${tournament.stageIndex}`);
+    const result = await requireClient().from("battle_events").insert({
+      id,
+      room_id: roomId,
+      player_id: tournament.roster[0].id,
+      round_number: 0,
+      event_type: "skill",
+      question_id: null,
+      is_correct: false,
+      damage: 0,
+      effect: `tournament:${JSON.stringify(tournament)}`
+    });
+    if (result?.error?.code === "23505") {
+      const authoritative = await loadBattleRoom(roomId);
+      const saved = engine.readTournament(authoritative?.events || []);
+      if (saved) return saved;
+    }
+    unwrap(result, "Save tournament bracket");
+    return tournament;
+  }
+
+  async function syncBattleTournamentRoom(roomId, tournament) {
+    const firstStartedAt = tournament.history?.[0]?.startedAt || tournament.startedAt;
+    unwrap(await requireClient().from("battle_rooms").update({
+      status: tournament.status,
+      started_at: firstStartedAt,
+      updated_at: new Date().toISOString()
+    }).eq("id", roomId).eq("teacher_id", session.user.id), "Update tournament room");
+  }
+
+  async function advanceBattleTournament(roomId, expectedStageIndex) {
+    if (!session?.user?.id || !isUuid(roomId)) return null;
+    const data = await loadBattleRoom(roomId);
+    assertBattleTeacher(data);
+    const engine = await loadBattleEngine();
+    const tournament = engine.readTournament(data.events);
+    if (!tournament) return data;
+    if (tournament.status === "finished" || tournament.stageIndex !== Number(expectedStageIndex)) {
+      await syncBattleTournamentRoom(roomId, tournament);
+      return data;
+    }
+    const now = Date.now();
+    const view = engine.buildTournamentView(tournament, data.events, now);
+    if (!view.canAdvance) return data;
+    const next = engine.advanceTournament(tournament, data.events, now);
+    if (!next || next.stageIndex <= tournament.stageIndex) return data;
+    const authoritative = await persistBattleTournament(roomId, next, engine);
+    await syncBattleTournamentRoom(roomId, authoritative);
+    return await loadBattleRoom(roomId);
+  }
+
+  async function submitBattleEvent({ id = "", roomId, playerId, targetPlayerId = "", matchId = "", round = 0, type = "answer", questionId = "", correct = false, damage = 0, effect = "" } = {}) {
     if (!session?.user?.id || !isUuid(roomId) || !isUuid(playerId)) return null;
+    const engine = await loadBattleEngine();
     const payload = {
       room_id: roomId,
       player_id: playerId,
@@ -827,8 +927,10 @@
       question_id: isUuid(questionId) ? questionId : null,
       is_correct: Boolean(correct),
       damage: Math.max(0, Number(damage) || 0),
-      effect: String(effect || "")
+      effect: engine.encodeBattleEffect({ matchId, effect: String(effect || "") })
     };
+    if (isUuid(id)) payload.id = id;
+    else if (matchId) payload.id = await stableBattleId(`battle-event:${roomId}:${matchId}:${playerId}:${payload.round_number}:${type}`);
     let result = await requireClient().from("battle_events").insert(payload).select("*").single();
     // Older Supabase projects may not have run the target-column migration;
     // keep the battle playable while the explicit-target SQL is being applied.
@@ -836,8 +938,11 @@
       delete payload.target_player_id;
       result = await requireClient().from("battle_events").insert(payload).select("*").single();
     }
+    if (result?.error?.code === "23505" && payload.id) {
+      result = await requireClient().from("battle_events").select("*").eq("id", payload.id).eq("room_id", roomId).single();
+    }
     const row = unwrap(result, "Save battle answer");
-    return mapBattleEvent(row);
+    return mapBattleEvent(row, engine);
   }
 
   function subscribeToBattleRoom(roomId, callback) {
@@ -1024,6 +1129,7 @@
     createBattleRoom,
     joinBattleRoom,
     startBattleRoom,
+    advanceBattleTournament,
     submitBattleEvent,
     subscribeToBattleRoom,
     subscribeToProgress,
