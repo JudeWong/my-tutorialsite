@@ -5,7 +5,7 @@ import { fileURLToPath } from "node:url";
 const root = dirname(fileURLToPath(import.meta.url));
 const project = dirname(root);
 const web = join(project, "web");
-const files = ["index.html", "styles.css", "config.js", "cloud.js", "app.js", "arena.js", "battle-engine.js", "manifest.webmanifest", "sw.js"];
+const files = ["index.html", "styles.css", "config.js", "cloud.js", "app.js", "arena.js", "arena-scene.js", "battle-engine.js", "manifest.webmanifest", "sw.js"];
 const includeDownloads = !process.argv.includes("--android");
 const supabaseBundle = join(project, "node_modules", "@supabase", "supabase-js", "dist", "umd", "supabase.js");
 

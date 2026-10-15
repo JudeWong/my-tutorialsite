@@ -1202,6 +1202,29 @@ html.session-loading-active,html.session-loading-active body { overflow: hidden;
   .arena-monitor-vs small { display:none; }
 }
 
+/* Scanned industrial wasteland, with an unobstructed full-body camera frame. */
+.arena-scene { height:clamp(420px,42vw,570px); min-height:420px; background:#343b3c; border-color:#5c615d; }
+.apocalypse-renderer { position:relative; width:100%; height:100%; overflow:hidden; }
+.apocalypse-vignette { position:absolute; inset:0; pointer-events:none; background:radial-gradient(ellipse at 50% 44%,transparent 42%,rgba(17,23,25,.32)); }
+.apocalypse-loading { position:absolute; inset:0; z-index:3; display:grid; place-content:center; justify-items:center; gap:13px; padding:24px; color:#eee7d9; text-align:center; background:radial-gradient(ellipse at center,rgba(45,56,58,.96),rgba(14,22,26,.98)); }
+.apocalypse-loading strong { font-size:21px; font-weight:600; }
+.apocalypse-loading small { max-width:300px; color:#a9babf; font-size:13px; line-height:1.7; }
+.apocalypse-loading-symbol { color:#d8ad72; font-size:34px; animation:arena-live-pulse 1.6s ease-in-out infinite; }
+.apocalypse-loading-track { width:220px; max-width:80%; height:4px; margin:5px 0; border-radius:4px; background:#475557; overflow:hidden; }
+.apocalypse-loading-track i { display:block; height:100%; border-radius:inherit; background:linear-gradient(90deg,#c09b67,#9cddd4); transition:width .3s ease; }
+.apocalypse-loading.has-error .apocalypse-loading-symbol { color:#e5a68a; animation:none; }
+.arena-scene-status { background:rgba(23,32,35,.82); border-color:#acb5ab55; }
+.arena-scene-status span { color:#e4ceac; }
+.arena-scene-status small { color:#b4c1c2; }
+.arena-hud { margin-top:-28px; }
+.arena-fighter-card { border-color:#54616b; background:rgba(22,32,41,.95); }
+@media (max-width:760px) {
+  .arena-scene { height:370px; min-height:370px; }
+  .arena-lobby-preview .arena-scene { height:350px; min-height:350px; }
+  .arena-scene-status { top:10px; left:10px; }
+  .apocalypse-loading strong { font-size:18px; }
+}
+
 /* Tournament controls stay readable without a WebGL scene on the teacher view. */
 .arena-tournament-stage { display:flex; align-items:center; justify-content:space-between; gap:20px; margin:0 0 22px; padding:22px; border:1px solid #5b4c8e; border-radius:18px; background:linear-gradient(120deg,#29213f,#172439); }
 .arena-tournament-stage h3 { margin:6px 0; color:#fff; font-size:25px; }

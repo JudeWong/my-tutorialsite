@@ -8,19 +8,32 @@
 import React, { useEffect, useMemo, useRef, useState } from "https://esm.sh/react@18.3.1";
 import { createRoot } from "https://esm.sh/react-dom@18.3.1/client";
 import { createPortal } from "https://esm.sh/react-dom@18.3.1";
-import { Canvas, useFrame, useThree } from "https://esm.sh/@react-three/fiber@8.17.10?deps=react@18.3.1,react-dom@18.3.1,three@0.160.0";
-import * as THREE from "https://esm.sh/three@0.160.0";
-import { GLTFLoader } from "https://esm.sh/three@0.160.0/examples/jsm/loaders/GLTFLoader.js?deps=three@0.160.0";
 import { readTournament, buildTournamentView } from "./battle-engine.js";
 
+// The teacher's score dashboard never needs to download the 3D renderer.
+class SceneErrorBoundary extends React.Component {
+  constructor(props) { super(props); this.state = { failed: false }; }
+  static getDerivedStateFromError() { return { failed: true }; }
+  render() {
+    if (!this.state.failed) return this.props.children;
+    return h("div", { className: "apocalypse-loading has-error", role: "status" },
+      h("strong", null, "3D 场景暂时无法显示"),
+      h("small", null, "你仍可继续作答。请检查网络或浏览器的 3D 支援。"),
+      h("button", { className: "arena-primary-button", onClick: this.props.onRetry }, "重试 3D 场景")
+    );
+  }
+}
+
+function LazyArenaScene(props) {
+  const [attempt, setAttempt] = useState(0);
+  const Scene = useMemo(() => React.lazy(() => import(attempt ? `./arena-scene.js?retry=${attempt}` : "./arena-scene.js")
+    .then((module) => ({ default: module.ApocalypseArena }))), [attempt]);
+  return h(SceneErrorBoundary, { key: attempt, onRetry: () => setAttempt((value) => value + 1) },
+    h(React.Suspense, { fallback: h("div", { className: "apocalypse-loading", role: "status" }, h("strong", null, "正在准备废土竞技场…")) }, h(Scene, props))
+  );
+}
+
 const h = React.createElement;
-const MODEL_PATHS = {
-  // KayKit's CC0 Adventurers are complete, lightweight GLB characters (not
-  // primitive placeholders). They have a consistent Rig_Medium skeleton and
-  // read much better as a knight-versus-mage battle pair on mobile screens.
-  warrior: "./assets/models/kaykit-knight.glb",
-  mage: "./assets/models/kaykit-mage.glb"
-};
 const ROOM_STORAGE_KEY = "personal-ai-battle-room";
 const ROUND_SECONDS = 10;
 const COMBAT_ACTION_MS = 1800;
@@ -38,369 +51,6 @@ function rewardForStreak(streak) {
   return streak >= 3 ? POWERUP_ORDER[(streak - 3) % POWERUP_ORDER.length] : "";
 }
 
-function loadGlb(path, onLoad, onError) {
-  const loader = new GLTFLoader();
-  loader.load(path, (gltf) => onLoad(gltf), undefined, onError);
-}
-
-function ModelLoadingMarker({ color = "#63e6be", failed = false }) {
-  const group = useRef();
-  useFrame(({ clock }) => {
-    if (!group.current) return;
-    group.current.rotation.y = clock.elapsedTime * 1.7;
-    group.current.position.y = 0.05 + Math.sin(clock.elapsedTime * 3) * 0.035;
-  });
-  return h("group", { ref: group },
-    h("mesh", { position: [0, 0.08, 0], rotation: [-Math.PI / 2, 0, 0], receiveShadow: true }, h("ringGeometry", { args: [0.55, 0.68, 32] }), h("meshBasicMaterial", { color, transparent: true, opacity: 0.8 })),
-    h("mesh", { position: [0, 0.55, 0], castShadow: true }, h("icosahedronGeometry", { args: [0.25, 1] }), h("meshStandardMaterial", { color: failed ? "#ff8b8b" : color, emissive: failed ? "#8c1d1d" : color, emissiveIntensity: 0.5 }))
-  );
-}
-
-function FighterWeapon({ kind, direction, action }) {
-  const weapon = useRef();
-  const glow = kind === "staff" ? "#9b7bff" : "#ffc86b";
-  useFrame(({ clock }, delta) => {
-    if (!weapon.current) return;
-    const attacking = action === "attack";
-    const swing = attacking ? 1 + Math.sin(clock.elapsedTime * 15) * 0.16 : 0.25;
-    weapon.current.rotation.z = THREE.MathUtils.damp(weapon.current.rotation.z, -direction * swing, 12, delta);
-    weapon.current.position.y = THREE.MathUtils.damp(weapon.current.position.y, attacking ? 1.26 : 1.35, 10, delta);
-  });
-  const sword = h(React.Fragment, null,
-    h("mesh", { position: [0, -0.2, 0], castShadow: true }, h("cylinderGeometry", { args: [0.055, 0.065, 0.38, 12] }), h("meshStandardMaterial", { color: "#4b2e1e", roughness: 0.65 })),
-    h("mesh", { position: [0, 0.02, 0], castShadow: true }, h("boxGeometry", { args: [0.42, 0.07, 0.1] }), h("meshStandardMaterial", { color: "#c99b42", metalness: 0.8, roughness: 0.24 })),
-    h("mesh", { position: [0, 0.56, 0], castShadow: true }, h("boxGeometry", { args: [0.13, 1.02, 0.065] }), h("meshStandardMaterial", { color: "#d9e0e8", metalness: 0.95, roughness: 0.16, emissive: "#37445a", emissiveIntensity: action === "attack" ? 0.85 : 0.1 })),
-    h("mesh", { position: [0, 1.17, 0], rotation: [0, 0, Math.PI] }, h("coneGeometry", { args: [0.09, 0.25, 4] }), h("meshStandardMaterial", { color: "#edf3f8", metalness: 0.95, roughness: 0.12 }))
-  );
-  const staff = h(React.Fragment, null,
-    h("mesh", { position: [0, 0.28, 0], castShadow: true }, h("cylinderGeometry", { args: [0.045, 0.065, 1.55, 12] }), h("meshStandardMaterial", { color: "#3b241b", roughness: 0.8 })),
-    h("mesh", { position: [0, 1.12, 0], castShadow: true }, h("octahedronGeometry", { args: [0.22, 0] }), h("meshStandardMaterial", { color: "#bba8ff", emissive: glow, emissiveIntensity: action === "attack" ? 3.2 : 1.3, metalness: 0.1, roughness: 0.18 })),
-    h("pointLight", { position: [0, 1.12, 0.15], color: glow, intensity: action === "attack" ? 7 : 2, distance: 3 })
-  );
-  return h("group", { ref: weapon, position: [direction * 0.72, 1.35, 0.18], rotation: [0.05, 0, -direction * 0.25] }, kind === "staff" ? staff : sword);
-}
-
-function GlbCharacter({ path, color, action, direction = 1, weapon = "sword" }) {
-  const group = useRef();
-  const [gltf, setGltf] = useState(null);
-  const [failed, setFailed] = useState(false);
-  const mixer = useRef(null);
-  const actions = useRef([]);
-  const [fit, setFit] = useState({ scale: 1, position: [0, 0, 0] });
-  useEffect(() => {
-    let alive = true;
-    setFailed(false);
-    setGltf(null);
-    loadGlb(path, (loaded) => { if (alive) setGltf(loaded); }, () => { if (alive) setFailed(true); });
-    return () => { alive = false; };
-  }, [path]);
-  useEffect(() => {
-    if (!gltf?.scene) return;
-    gltf.scene.traverse((object) => {
-      if (object.isMesh) {
-        object.castShadow = true;
-        object.receiveShadow = true;
-      }
-    });
-    // GLB files often use different authoring scales. Fit the real model to
-    // the same arena height and ground it so it cannot render off-camera.
-    gltf.scene.updateMatrixWorld(true);
-    const box = new THREE.Box3().setFromObject(gltf.scene);
-    const size = box.getSize(new THREE.Vector3());
-    const center = box.getCenter(new THREE.Vector3());
-    const height = Number.isFinite(size.y) && size.y > 0.01 ? size.y : 1.8;
-    const scale = 2.65 / height;
-    const position = [
-      Number.isFinite(center.x) ? -center.x * scale : 0,
-      Number.isFinite(box.min.y) ? -box.min.y * scale : 0,
-      Number.isFinite(center.z) ? -center.z * scale : 0
-    ];
-    setFit({ scale, position });
-  }, [gltf]);
-  useEffect(() => {
-    if (!gltf?.scene) return undefined;
-    mixer.current = new THREE.AnimationMixer(gltf.scene);
-    actions.current = (gltf.animations || []).map((clip) => mixer.current.clipAction(clip));
-    if (actions.current[0]) actions.current[0].play();
-    return () => mixer.current?.stopAllAction();
-  }, [gltf]);
-  useEffect(() => {
-    if (!actions.current.length) return;
-    const names = (gltf?.animations || []).map((clip) => clip.name.toLowerCase());
-    const patterns = {
-      idle: [/idle/, /standing/, /t-pose/],
-      attack: [/punch/, /attack/, /run/, /walk/],
-      hit: [/death/, /hurt/, /sad/, /no/, /t-pose/],
-      victory: [/thumb/, /yes/, /victory/, /dance/, /idle/]
-    }[action] || [/idle/];
-    const preferred = patterns.map((pattern) => names.findIndex((name) => pattern.test(name))).find((index) => index >= 0);
-    const selected = actions.current[preferred >= 0 ? preferred : 0] || actions.current[0];
-    actions.current.forEach((item) => item.stop());
-    selected.reset().fadeIn(0.12).play();
-    return () => selected.fadeOut(0.16);
-  }, [action, gltf]);
-  useFrame(({ clock }, delta) => {
-    mixer.current?.update(delta);
-    if (!group.current) return;
-    // KayKit's character meshes are intentionally lightweight and do not ship
-    // with battle-specific clips. These short procedural moves are the
-    // fallback animation: lunge for an attack, stagger/fall for a hit, and
-    // settle back to idle without affecting the real GLB proportions.
-    const pulse = Math.sin(clock.elapsedTime * 18) * 0.025;
-    const rotationTarget = direction * (action === "attack" ? -0.22 : action === "hit" ? 1.05 : 0);
-    const movementTarget = direction * (action === "attack" ? 0.22 + pulse : action === "hit" ? -0.16 : 0);
-    group.current.rotation.z = THREE.MathUtils.damp(group.current.rotation.z, rotationTarget, 7, delta);
-    group.current.position.x = THREE.MathUtils.damp(group.current.position.x, movementTarget, 9, delta);
-    const heightTarget = action === "hit" ? -0.13 : action === "victory" ? 0.08 + Math.abs(Math.sin(clock.elapsedTime * 5)) * 0.05 : 0;
-    group.current.position.y = THREE.MathUtils.damp(group.current.position.y, heightTarget, 7, delta);
-  });
-  if (failed || !gltf?.scene) return h(ModelLoadingMarker, { color, failed });
-  return h("group", { ref: group },
-    h("primitive", { object: gltf.scene, scale: fit.scale, position: fit.position, dispose: null }),
-    h(FighterWeapon, { kind: weapon, direction, action })
-  );
-}
-
-function AttackEffect({ side, action, kind }) {
-  const effect = useRef();
-  const material = useRef();
-  const elapsed = useRef(99);
-  useEffect(() => { if (action === "attack") elapsed.current = 0; }, [action]);
-  useFrame((_, delta) => {
-    if (!effect.current) return;
-    elapsed.current += delta;
-    const duration = kind === "magic" ? 0.85 : 0.65;
-    const t = elapsed.current / duration;
-    effect.current.visible = action === "attack" && t <= 1;
-    if (!effect.current.visible) return;
-    const direction = side === "left" ? 1 : -1;
-    effect.current.position.x = direction * (-1.45 + Math.min(1, t) * 3.05);
-    effect.current.position.y = 1.35 + Math.sin(Math.min(1, t) * Math.PI) * (kind === "magic" ? 0.42 : 0.18);
-    effect.current.rotation.z += delta * direction * 8;
-    const scale = 0.68 + Math.sin(Math.min(1, t) * Math.PI) * 0.45;
-    effect.current.scale.setScalar(scale);
-    if (material.current) material.current.opacity = Math.max(0, 1 - t);
-  });
-  const color = kind === "magic" ? "#a78bfa" : "#ffd27a";
-  return h("group", { ref: effect, visible: false, position: [0, 1.35, 0.5] },
-    kind === "magic"
-      ? h("mesh", null, h("icosahedronGeometry", { args: [0.22, 1] }), h("meshStandardMaterial", { ref: material, color: "#e1d7ff", emissive: color, emissiveIntensity: 4.5, transparent: true, opacity: 1 }))
-      : h("mesh", { rotation: [0.12, 0, 0.25] }, h("torusGeometry", { args: [0.42, 0.055, 8, 32, Math.PI * 1.45] }), h("meshBasicMaterial", { ref: material, color, transparent: true, opacity: 1, blending: THREE.AdditiveBlending })),
-    h("pointLight", { color, intensity: kind === "magic" ? 12 : 7, distance: 3.5 })
-  );
-}
-
-function ImpactEffect({ side, action, color }) {
-  const burst = useRef();
-  const elapsed = useRef(99);
-  useEffect(() => { if (action === "hit") elapsed.current = 0; }, [action]);
-  useFrame((_, delta) => {
-    if (!burst.current) return;
-    elapsed.current += delta;
-    const t = elapsed.current / 0.8;
-    burst.current.visible = action === "hit" && t <= 1;
-    if (!burst.current.visible) return;
-    burst.current.rotation.z += delta * 4;
-    burst.current.scale.setScalar(0.25 + t * 1.35);
-    burst.current.traverse((object) => {
-      if (object.material) object.material.opacity = Math.max(0, 1 - t);
-    });
-  });
-  const fragments = Array.from({ length: 9 }, (_, index) => {
-    const angle = (index / 9) * Math.PI * 2;
-    return h("mesh", { key: index, position: [Math.cos(angle) * 0.42, Math.sin(angle) * 0.42, 0] }, h("sphereGeometry", { args: [0.055, 8, 8] }), h("meshBasicMaterial", { color, transparent: true, opacity: 1, blending: THREE.AdditiveBlending }));
-  });
-  return h("group", { ref: burst, visible: false, position: [side === "left" ? -2.05 : 2.05, 1.35, 0.65] },
-    h("mesh", null, h("ringGeometry", { args: [0.22, 0.3, 24] }), h("meshBasicMaterial", { color, transparent: true, opacity: 1, side: THREE.DoubleSide, blending: THREE.AdditiveBlending })),
-    fragments
-  );
-}
-
-function PowerupEffect({ side, effect }) {
-  const group = useRef();
-  const direction = side === "left" ? -1 : 1;
-  useFrame(({ clock }, delta) => {
-    if (!group.current) return;
-    group.current.rotation.y += delta * (effect === "mask" ? 1.8 : 0.9);
-    const pulse = 1 + Math.sin(clock.elapsedTime * 7) * 0.08;
-    group.current.scale.setScalar(pulse);
-  });
-  const position = [direction * 2.15, 1.35, 0.15];
-  if (effect === "shield") return h("group", { ref: group, position },
-    h("mesh", null, h("sphereGeometry", { args: [1.05, 24, 16] }), h("meshPhysicalMaterial", { color: "#71f2d0", emissive: "#2f9d87", emissiveIntensity: 1.2, transparent: true, opacity: 0.2, roughness: 0.15, metalness: 0.25, wireframe: true })),
-    h("pointLight", { color: "#6ce9c3", intensity: 5, distance: 3.5 })
-  );
-  if (effect === "heal") return h("group", { ref: group, position },
-    h("mesh", null, h("torusGeometry", { args: [0.68, 0.055, 8, 32] }), h("meshBasicMaterial", { color: "#72f3a4", transparent: true, opacity: 0.9, blending: THREE.AdditiveBlending })),
-    h("mesh", { scale: [0.18, 0.62, 0.12] }, h("boxGeometry"), h("meshStandardMaterial", { color: "#d7ffe5", emissive: "#43d67f", emissiveIntensity: 2.5 })),
-    h("mesh", { scale: [0.62, 0.18, 0.12] }, h("boxGeometry"), h("meshStandardMaterial", { color: "#d7ffe5", emissive: "#43d67f", emissiveIntensity: 2.5 })),
-    h("pointLight", { color: "#65ef9a", intensity: 6, distance: 3.5 })
-  );
-  if (effect === "freeze") return h("group", { ref: group, position },
-    [0.48, 0.72, 0.94].map((radius, index) => h("mesh", { key: `ice-ring-${index}`, rotation: [Math.PI / 2 + index * 0.42, 0, index * 0.55] }, h("torusGeometry", { args: [radius, 0.035, 6, 28] }), h("meshBasicMaterial", { color: "#8be9ff", transparent: true, opacity: 0.82, blending: THREE.AdditiveBlending }))),
-    Array.from({ length: 6 }, (_, index) => {
-      const angle = (index / 6) * Math.PI * 2;
-      return h("mesh", { key: `ice-${index}`, position: [Math.cos(angle) * 0.72, -0.55, Math.sin(angle) * 0.72], rotation: [0, 0, Math.PI] }, h("coneGeometry", { args: [0.11, 0.5, 6] }), h("meshStandardMaterial", { color: "#b9f3ff", emissive: "#4bbada", emissiveIntensity: 1.4, transparent: true, opacity: 0.88 }));
-    }),
-    h("pointLight", { color: "#75ddff", intensity: 7, distance: 4 })
-  );
-  return h("group", { ref: group, position },
-    h("mesh", null, h("sphereGeometry", { args: [0.92, 20, 14] }), h("meshStandardMaterial", { color: "#1b102c", emissive: "#7f4fc9", emissiveIntensity: 1.1, transparent: true, opacity: 0.48, roughness: 0.85 })),
-    [0.62, 0.88, 1.12].map((radius, index) => h("mesh", { key: `mask-ring-${index}`, rotation: [index * 0.52, index * 0.33, 0] }, h("torusGeometry", { args: [radius, 0.025, 6, 30] }), h("meshBasicMaterial", { color: "#bc83ff", transparent: true, opacity: 0.65, blending: THREE.AdditiveBlending }))),
-    h("pointLight", { color: "#9a5de8", intensity: 5, distance: 3.5 })
-  );
-}
-
-function Torch({ position }) {
-  const flame = useRef();
-  const light = useRef();
-  useFrame(({ clock }) => {
-    const flicker = 1 + Math.sin(clock.elapsedTime * 10 + position[0]) * 0.12 + Math.sin(clock.elapsedTime * 17) * 0.07;
-    if (flame.current) flame.current.scale.set(0.75, flicker, 0.75);
-    if (light.current) light.current.intensity = 7.5 * flicker;
-  });
-  return h("group", { position },
-    h("mesh", { position: [0, -0.35, 0], castShadow: true }, h("cylinderGeometry", { args: [0.045, 0.06, 0.9, 10] }), h("meshStandardMaterial", { color: "#2f221d", metalness: 0.45, roughness: 0.55 })),
-    h("mesh", { ref: flame, position: [0, 0.2, 0] }, h("coneGeometry", { args: [0.13, 0.42, 10] }), h("meshBasicMaterial", { color: "#ffb14a" })),
-    h("pointLight", { ref: light, position: [0, 0.22, 0.3], color: "#ff9b4a", intensity: 8, distance: 7, decay: 2 })
-  );
-}
-
-function ArenaBanner({ position, color, accent, phase = 0 }) {
-  const banner = useRef();
-  useFrame(({ clock }) => {
-    if (!banner.current) return;
-    banner.current.rotation.z = Math.sin(clock.elapsedTime * 0.85 + phase) * 0.018;
-  });
-  return h("group", { ref: banner, position },
-    h("mesh", { position: [0, 0.72, -0.02], castShadow: true }, h("cylinderGeometry", { args: [0.035, 0.035, 1.15, 10] }), h("meshStandardMaterial", { color: "#b89352", metalness: 0.75, roughness: 0.3 })),
-    h("mesh", { position: [0, 0, 0], castShadow: true }, h("planeGeometry", { args: [0.9, 1.55] }), h("meshStandardMaterial", { color, roughness: 0.72, metalness: 0.04, side: THREE.DoubleSide })),
-    h("mesh", { position: [0, 0.12, 0.025] }, h("ringGeometry", { args: [0.21, 0.28, 6] }), h("meshStandardMaterial", { color: accent, emissive: accent, emissiveIntensity: 0.38, metalness: 0.5, roughness: 0.32, side: THREE.DoubleSide })),
-    h("mesh", { position: [0, -0.72, 0] }, h("coneGeometry", { args: [0.46, 0.38, 3] }), h("meshStandardMaterial", { color, roughness: 0.72, side: THREE.DoubleSide }))
-  );
-}
-
-const CROWD_MEMBERS = Array.from({ length: 30 }, (_, index) => ({
-  x: -5.15 + (index % 10) * 1.14,
-  y: 2.78 + Math.floor(index / 10) * 0.55,
-  scale: 0.72 + (index % 4) * 0.055,
-  color: ["#34415d", "#493958", "#304b49", "#5a4238", "#3f3c55"][index % 5]
-}));
-
-function ArenaCrowd() {
-  const crowd = useRef();
-  useFrame(({ clock }) => {
-    if (crowd.current) crowd.current.position.y = Math.sin(clock.elapsedTime * 1.8) * 0.025;
-  });
-  return h("group", { ref: crowd }, CROWD_MEMBERS.map((member, index) => h("group", { key: `crowd-${index}`, position: [member.x, member.y, -3.05], scale: member.scale },
-    h("mesh", { position: [0, 0.27, 0], castShadow: false }, h("sphereGeometry", { args: [0.13, 10, 8] }), h("meshStandardMaterial", { color: "#bba995", roughness: 0.92 })),
-    h("mesh", null, h("coneGeometry", { args: [0.22, 0.46, 8] }), h("meshStandardMaterial", { color: member.color, roughness: 0.9, emissive: member.color, emissiveIntensity: 0.08 }))
-  )));
-}
-
-function EmberField() {
-  const particles = useRef();
-  const positions = useMemo(() => {
-    const values = new Float32Array(72 * 3);
-    let seed = 19;
-    const random = () => {
-      seed = (seed * 16807) % 2147483647;
-      return (seed - 1) / 2147483646;
-    };
-    for (let index = 0; index < values.length; index += 3) {
-      values[index] = (random() - 0.5) * 10.5;
-      values[index + 1] = 0.25 + random() * 4.3;
-      values[index + 2] = -3 + random() * 5.5;
-    }
-    return values;
-  }, []);
-  useFrame(({ clock }) => {
-    if (!particles.current) return;
-    particles.current.rotation.y = Math.sin(clock.elapsedTime * 0.12) * 0.08;
-    particles.current.position.y = Math.sin(clock.elapsedTime * 0.55) * 0.12;
-  });
-  return h("points", { ref: particles },
-    h("bufferGeometry", null, h("bufferAttribute", { attach: "attributes-position", args: [positions, 3] })),
-    h("pointsMaterial", { color: "#ffb45c", size: 0.055, transparent: true, opacity: 0.62, depthWrite: false, blending: THREE.AdditiveBlending })
-  );
-}
-
-const STONE_BLOCKS = Array.from({ length: 18 }, (_, index) => ({
-  x: -5.3 + (index % 6) * 2.12,
-  y: 0.55 + Math.floor(index / 6) * 0.88,
-  scale: index % 3 === 0 ? 1.06 : 0.98
-}));
-
-function StoneArena() {
-  return h("group", null,
-    h("mesh", { position: [0, -0.28, -0.35], receiveShadow: true }, h("cylinderGeometry", { args: [5.5, 5.8, 0.5, 64] }), h("meshStandardMaterial", { color: "#3b3b3a", roughness: 0.94, metalness: 0.02 })),
-    h("mesh", { position: [0, -0.015, -0.35], rotation: [-Math.PI / 2, 0, 0], receiveShadow: true }, h("circleGeometry", { args: [5.25, 64] }), h("meshStandardMaterial", { color: "#58544d", roughness: 0.92, metalness: 0.03 })),
-    h("mesh", { position: [0, 0.005, -0.35], rotation: [-Math.PI / 2, 0, 0] }, h("ringGeometry", { args: [2.25, 2.34, 64] }), h("meshStandardMaterial", { color: "#b59456", metalness: 0.48, roughness: 0.38 })),
-    h("mesh", { position: [0, 0.018, -0.35], rotation: [-Math.PI / 2, 0, 0] }, h("ringGeometry", { args: [1.15, 1.2, 48] }), h("meshStandardMaterial", { color: "#6ce9c3", emissive: "#257b70", emissiveIntensity: 1.15, transparent: true, opacity: 0.78 })),
-    Array.from({ length: 12 }, (_, index) => {
-      const angle = (index / 12) * Math.PI * 2;
-      return h("mesh", { key: `rune-${index}`, position: [Math.cos(angle) * 1.72, 0.024, -0.35 + Math.sin(angle) * 1.72], rotation: [-Math.PI / 2, 0, -angle] }, h("boxGeometry", { args: [0.24, 0.055, 0.055] }), h("meshStandardMaterial", { color: index % 2 ? "#8d75ff" : "#6ce9c3", emissive: index % 2 ? "#624bd4" : "#247b68", emissiveIntensity: 1.6 }));
-    }),
-    h("mesh", { position: [0, 1.65, -3.65], receiveShadow: true }, h("boxGeometry", { args: [12, 3.5, 0.45] }), h("meshStandardMaterial", { color: "#292b2d", roughness: 0.97 })),
-    STONE_BLOCKS.map((stone, index) => h("mesh", { key: `stone-${index}`, position: [stone.x, stone.y, -3.38], scale: [stone.scale, 1, 1], castShadow: true, receiveShadow: true }, h("boxGeometry", { args: [1.92, 0.72, 0.38] }), h("meshStandardMaterial", { color: index % 2 ? "#4b4a46" : "#55534d", roughness: 0.96 }))),
-    [-4.75, 4.75].map((x) => h("group", { key: `pillar-${x}`, position: [x, 0, -2.95] },
-      h("mesh", { position: [0, 1.4, 0], castShadow: true, receiveShadow: true }, h("cylinderGeometry", { args: [0.4, 0.52, 2.8, 12] }), h("meshStandardMaterial", { color: "#4a4945", roughness: 0.93 })),
-      h("mesh", { position: [0, 2.88, 0], castShadow: true }, h("boxGeometry", { args: [1.05, 0.24, 0.9] }), h("meshStandardMaterial", { color: "#5d5a53", roughness: 0.9 }))
-    )),
-    [-3.75, -1.25, 1.25, 3.75].map((x, index) => h("mesh", { key: `arch-${x}`, position: [x, 2.25, -3.08], rotation: [0, 0, Math.PI] }, h("torusGeometry", { args: [0.72, 0.11, 8, 24, Math.PI] }), h("meshStandardMaterial", { color: "#777066", roughness: 0.88 }))),
-    h(ArenaCrowd),
-    h(ArenaBanner, { position: [-2.05, 2.2, -3.02], color: "#294f68", accent: "#6ce9c3", phase: 0 }),
-    h(ArenaBanner, { position: [2.05, 2.2, -3.02], color: "#4a3470", accent: "#b79cff", phase: 1.7 }),
-    h(Torch, { position: [-3.55, 2.05, -3] }),
-    h(Torch, { position: [3.55, 2.05, -3] })
-  );
-}
-
-function ArenaCamera() {
-  const { camera } = useThree();
-  useEffect(() => {
-    // Three.js otherwise looks at the world origin (the fighters' feet),
-    // which crops the upper body and makes the arena appear to show only
-    // shoes. Keep the camera target at the model's chest height.
-    camera.lookAt(0, 1.3, 0);
-    camera.updateProjectionMatrix();
-  }, [camera]);
-  return null;
-}
-
-function ArenaScene({ leftAction, rightAction, leftPowerup, rightPowerup, winner, winnerSide }) {
-  return h(Canvas, {
-    shadows: true,
-    camera: { position: [0, 4.05, 8.7], fov: 38 },
-    dpr: [1, 1.45],
-    gl: { antialias: true, powerPreference: "high-performance" },
-    onCreated: ({ gl }) => { gl.toneMapping = THREE.ACESFilmicToneMapping; gl.toneMappingExposure = 1.08; },
-    className: "arena-canvas"
-  },
-    h(ArenaCamera),
-    h("color", { attach: "background", args: ["#080a0d"] }),
-    h("fog", { attach: "fog", args: ["#080a0d", 7.5, 17] }),
-    h("hemisphereLight", { intensity: 0.72, color: "#b9d4ff", groundColor: "#201713" }),
-    h("directionalLight", { position: [-3, 7, 5], intensity: 2.3, color: "#d9e7ff", castShadow: true, "shadow-mapSize-width": 1024, "shadow-mapSize-height": 1024 }),
-    h("spotLight", { position: [0, 7, 2], intensity: 16, angle: 0.65, penumbra: 0.75, distance: 16, color: "#dce7ff", castShadow: true }),
-    h("spotLight", { position: [-5, 4.5, 1], intensity: 7, angle: 0.42, penumbra: 0.9, distance: 12, color: "#5ee7c1" }),
-    h("spotLight", { position: [5, 4.5, 1], intensity: 7, angle: 0.42, penumbra: 0.9, distance: 12, color: "#a88bff" }),
-    h(StoneArena),
-    h(EmberField),
-    h("group", { position: [-2.15, 0, 0.1], rotation: [0, 0.3, 0] }, h(GlbCharacter, { path: MODEL_PATHS.warrior, color: "#5ee7c1", action: leftAction, direction: 1, weapon: "sword" })),
-    h("group", { position: [2.15, 0, 0.1], rotation: [0, -0.3, 0] }, h(GlbCharacter, { path: MODEL_PATHS.mage, color: "#a88bff", action: rightAction, direction: -1, weapon: "staff" })),
-    h(AttackEffect, { side: "left", action: leftAction, kind: "slash" }),
-    h(AttackEffect, { side: "right", action: rightAction, kind: "magic" }),
-    h(ImpactEffect, { side: "left", action: leftAction, color: "#b79cff" }),
-    h(ImpactEffect, { side: "right", action: rightAction, color: "#ffd27a" }),
-    leftPowerup ? h(PowerupEffect, { side: "left", effect: leftPowerup }) : null,
-    rightPowerup ? h(PowerupEffect, { side: "right", effect: rightPowerup }) : null,
-    winner ? h("group", { position: [winnerSide === "right" ? 2.15 : -2.15, 3.05, 0.2] },
-      h("mesh", null, h("torusGeometry", { args: [0.75, 0.045, 8, 40] }), h("meshBasicMaterial", { color: "#ffd166" })),
-      h("pointLight", { color: "#ffd166", intensity: 7, distance: 5 })
-    ) : null
-  );
-}
 
 function isCorrect(question, answer) {
   if (!question) return false;
@@ -869,12 +519,12 @@ function ArenaApp() {
     return targetId === playerId ? "hit" : "idle";
   };
   const scene = h("div", { className: "arena-scene" },
-    h("div", { className: "arena-scene-status" }, h("span", null, "LIVE ARENA"), h("i"), h("small", null, "魔法遗迹竞技场")),
+    h("div", { className: "arena-scene-status" }, h("span", null, "WASTELAND // 01"), h("i"), h("small", null, "废土工业区")),
     powerupIsVisible ? h("div", { className: `arena-powerup-notice ${latestPowerup.effect}` },
       h("span", null, POWERUPS[latestPowerup.effect].icon),
       h("div", null, h("strong", null, `${pair.find((player) => player.id === latestPowerup.playerId)?.name || "玩家"} 获得${POWERUPS[latestPowerup.effect].name}`), h("small", null, POWERUPS[latestPowerup.effect].description))
     ) : null,
-    h(ArenaScene, { leftAction: actionFor(pair[0]?.id), rightAction: actionFor(pair[1]?.id), leftPowerup: powerupFor(pair[0]?.id), rightPowerup: powerupFor(pair[1]?.id), winner, winnerSide: winner?.id === pair[1]?.id ? "right" : "left" })
+    h(LazyArenaScene, { leftAction: actionFor(pair[0]?.id), rightAction: actionFor(pair[1]?.id), leftPowerup: powerupFor(pair[0]?.id), rightPowerup: powerupFor(pair[1]?.id), winner, winnerSide: winner?.id === pair[1]?.id ? "right" : "left" })
   );
   if (!room) return h("div", { className: "arena-lobby" },
     h("div", { className: "arena-intro" }, h("span", { className: "arena-kicker" }, "KNOCKOUT TOURNAMENT"), h("h2", null, "联机淘汰赛"), h("p", null, context.role === "teacher" ? "开设房间，让全班通过验证码加入。随机抽签，胜者逐轮晋级，决出冠亚季军。" : "输入老师提供的验证码。通过答题赢下对战，向冠军发起挑战！")),

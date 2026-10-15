@@ -1,4 +1,5 @@
 node_modules/
+.temp/
 android/.gradle/
 android/build/
 android/app/build/
@@ -8,7 +9,8 @@ build-tools/
 licenses/
 platform-tools/
 platforms/
-assets/models/
+assets/models/*
+!assets/models/apocalypse/
 web/
 *.keystore
 *.jks
