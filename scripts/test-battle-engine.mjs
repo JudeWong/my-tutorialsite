@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import {
-  TOURNAMENT_PREFIX, advanceTournament, battleStats, buildTournamentView,
+  TOURNAMENT_PREFIX, MAX_BATTLE_PLAYERS, advanceTournament, battleStats, buildTournamentView,
   createTournament, decodeBattleEffect, encodeBattleEffect, readTournament,
   resolveBattleResult
 } from "../battle-engine.js";
@@ -32,8 +32,12 @@ test("creation shuffles once without mutating the roster and validates entrants"
   assert.equal(JSON.stringify(players), original);
   assert.notDeepEqual(state.roster.map((player) => player.id), players.map((player) => player.id));
   assert.equal(new Set(state.roster.map((player) => player.id)).size, 8);
+  assert.equal(state.version, 2);
   assert.throws(() => create(1), /偶数/);
   assert.throws(() => create(3), /偶数/);
+  assert.equal(MAX_BATTLE_PLAYERS, 40);
+  assert.equal(create(40).roster.length, 40);
+  assert.throws(() => create(42), /40/);
   assert.throws(() => createTournament([players[0], players[0]], { id: "dup", startedAt: BASE }), /重复/);
 });
 
@@ -81,44 +85,143 @@ test("four players advance winners to final and semifinal losers to bronze", () 
   assert.equal(buildTournamentView(restored, [], at(final, 5000)).matches[0].stats[1].score, 100);
 });
 
-test("six players receive persisted byes and still produce a valid top three", () => {
+test("six players all play first, then a three-player semifinal awards a real third place", () => {
   let state = create(6);
-  assert.equal(state.matches.length, 4);
-  assert.equal(state.matches.filter((match) => match.playerIds.length === 1).length, 2);
+  assert.equal(state.matches.length, 3);
+  assert.equal(state.matches.filter((match) => match.playerIds.length === 1).length, 0);
   const initialView = buildTournamentView(state, [], BASE);
-  assert.equal(initialView.label, "预选赛");
+  assert.equal(initialView.label, "6 强赛");
   assert.equal(initialView.allFinished, false);
-  assert.equal(initialView.matches.filter((match) => match.reason === "bye").length, 2);
+  assert.equal(initialView.matches.filter((match) => match.reason === "bye").length, 0);
   let events = knockoutStage(state);
   state = advanceTournament(state, events, at(state, 3000));
   assert.equal(state.matches.length, 2);
-  assert.equal(buildTournamentView(state, events, at(state, 0)).label, "半决赛");
+  assert.equal(buildTournamentView(state, events, at(state, 0)).label, "三人半决赛");
+  assert.equal(state.matches.filter((match) => match.playerIds.length === 1).length, 1);
   events.push(...knockoutStage(state));
+  const semifinalLoser = buildTournamentView(state, events, at(state, 3000)).matches.find((match) => match.loser).loser.id;
   state = advanceTournament(state, events, at(state, 3000));
   assert.equal(state.matches[0].kind, "final");
-  assert.equal(state.matches[1].kind, "bronze");
+  assert.equal(state.matches.length, 1, "no fictitious bronze game or awarded score");
+  assert.equal(state.thirdPlacePlayerId, semifinalLoser);
   events.push(...knockoutStage(state));
   state = advanceTournament(state, events, at(state, 3000));
   assert.equal(state.status, "finished");
   assert.deepEqual(state.standings.slice(0, 3).map((entry) => entry.place), [1, 2, 3]);
   assert.equal(new Set(state.standings.slice(0, 3).map((entry) => entry.player.id)).size, 3);
+  assert.equal(state.standings.find((entry) => entry.place === 3).player.id, semifinalLoser);
+  assert.equal(state.standings.find((entry) => entry.place === 3).score, 100);
   assert.equal(state.history.length, 3);
+  assert.deepEqual(buildTournamentView(JSON.parse(JSON.stringify(state)), [], at(state, 4000)).standings, state.standings);
 });
 
-test("eight, ten, and sixteen players advance every entrant at most once per stage", () => {
-  for (const count of [8, 10, 16]) {
-    let state = create(count);
+test("every even roster from 2 through 40 plays round one and completes with unique correct medals and scores", () => {
+  for (let count = 2; count <= MAX_BATTLE_PLAYERS; count += 2) {
+    for (const winnerOffset of [0, 1]) {
+      let state = create(count);
+      const events = [];
+      const expectedScores = new Map(state.roster.map((player) => [player.id, 0]));
+      const byeCounts = new Map(state.roster.map((player) => [player.id, 0]));
+      const seedOrder = new Map(state.roster.map((player, index) => [player.id, index]));
+      let previousByes = new Set();
+      let expectedEntrants = new Set(state.roster.map((player) => player.id));
+      let stages = 0;
+      assert.equal(state.matches.length, count / 2);
+      while (state.status !== "finished") {
+        const ids = state.matches.flatMap((match) => match.playerIds);
+        assert.equal(new Set(ids).size, ids.length, `no duplicate entrant: ${count}, stage ${stages}`);
+        assert.deepEqual(new Set(ids), expectedEntrants, `no skipped or revived entrant: ${count}, stage ${stages}`);
+        const byes = state.matches.filter((match) => match.playerIds.length === 1);
+        assert.equal(byes.length, stages === 0 ? 0 : ids.length % 2);
+        if (byes.length) {
+          const eligible = [...ids].sort((a, b) => byeCounts.get(a) - byeCounts.get(b)
+            || Number(previousByes.has(a)) - Number(previousByes.has(b))
+            || seedOrder.get(a) - seedOrder.get(b));
+          assert.equal(byes[0].playerIds[0], eligible[0], "bye uses fewest prior byes, previous-round avoidance, then fixed seed");
+          const id = byes[0].playerIds[0];
+          byeCounts.set(id, byeCounts.get(id) + 1);
+        }
+        previousByes = new Set(byes.flatMap((match) => match.playerIds));
+        const winnerSide = (stages + winnerOffset) % 2;
+        for (const match of state.matches.filter((entry) => entry.playerIds.length === 2)) {
+          for (const side of [0, 1]) {
+            events.push(answer(state, match, side, { damage: 10, createdAt: new Date(at(state, 1000 + side * 1000)).toISOString() }));
+            const id = match.playerIds[side];
+            expectedScores.set(id, expectedScores.get(id) + 100);
+          }
+          events.push(answer(state, match, winnerSide, { round: 1, damage: 100, createdAt: new Date(at(state, 3000)).toISOString() }));
+          const winnerId = match.playerIds[winnerSide];
+          expectedScores.set(winnerId, expectedScores.get(winnerId) + 125);
+        }
+        const view = buildTournamentView(state, events, at(state, 5000));
+        for (const entry of view.standings) assert.equal(entry.score, expectedScores.get(entry.player.id));
+        const mainMatches = view.matches.filter((match) => match.kind === "main");
+        const nextMainIds = mainMatches.map((match) => match.winner.id);
+        const semifinalLosers = mainMatches.map((match) => match.loser?.id).filter(Boolean);
+        expectedEntrants = new Set(nextMainIds);
+        if (nextMainIds.length === 2 && semifinalLosers.length === 2) {
+          for (const id of semifinalLosers) expectedEntrants.add(id);
+        }
+        const beforeAdvance = JSON.stringify(state);
+        const now = at(state, 5000);
+        const next = advanceTournament(state, events, now);
+        assert.equal(JSON.stringify(state), beforeAdvance, "advancement never mutates the saved stage");
+        const restored = JSON.parse(beforeAdvance);
+        assert.deepEqual(advanceTournament(restored, events, now), next, "reload cannot redraw pairings/byes");
+        state = readTournament([{ id: `stage-${stages}`, createdAt: new Date(now).toISOString(), effect: TOURNAMENT_PREFIX + JSON.stringify(next) }]);
+        assert.ok(state);
+        assert.ok(++stages <= 6);
+      }
+      assert.equal(state.standings.length, count);
+      assert.deepEqual(state.standings.filter((entry) => entry.place && entry.place <= 3).map((entry) => entry.place), count === 2 ? [1, 2] : [1, 2, 3]);
+      assert.equal(new Set(state.standings.filter((entry) => entry.place).map((entry) => entry.player.id)).size, count === 2 ? 2 : state.thirdPlacePlayerId ? 3 : 4);
+      for (const entry of state.standings) {
+        assert.equal(entry.score, expectedScores.get(entry.player.id));
+        assert.ok(entry.score > 0, "every original entrant answered in the first round");
+      }
+      assert.deepEqual(buildTournamentView(state, [], at(state, 10000)).standings, state.standings, "persisted scores survive missing event pages after completion");
+    }
+  }
+});
+
+test("34 and 40 students get 17 and 20 real first-round matches, no preliminary byes", () => {
+  for (const count of [34, 40]) {
+    const state = create(count);
+    const view = buildTournamentView(state, [], BASE);
+    assert.equal(view.matches.length, count / 2);
+    assert.ok(view.matches.every((match) => match.players.length === 2 && !match.finished));
+    assert.equal(view.label, `${count} 强赛`);
+  }
+});
+
+test("saved version-1 brackets remain readable and retain old byes and history", () => {
+  for (const count of [6, 34]) {
+    const initial = create(count);
+    initial.version = 1;
+    initial.matches = [];
+    const nextSize = 2 ** Math.floor(Math.log2(count));
+    let cursor = 0;
+    const add = (playerIds) => initial.matches.push({ id: `${initial.id}:0:main:${initial.matches.length + 1}`, kind: "main", playerIds });
+    for (let index = 0; index < count - nextSize; index += 1) add(initial.roster.slice(cursor, cursor += 2).map((player) => player.id));
+    while (cursor < count) add([initial.roster[cursor++].id]);
+    const original = JSON.stringify(initial);
+    let state = readTournament([{ id: "legacy", createdAt: new Date(BASE).toISOString(), effect: TOURNAMENT_PREFIX + original }]);
+    const firstView = buildTournamentView(state, [], BASE);
+    assert.equal(firstView.label, "预选赛");
+    assert.equal(firstView.matches.filter((match) => match.reason === "bye").length, count === 34 ? 30 : 2);
     const events = [];
-    let stages = 0;
+    let stage = 0;
     while (state.status !== "finished") {
-      const ids = state.matches.flatMap((match) => match.playerIds);
-      assert.equal(new Set(ids).size, ids.length);
       events.push(...knockoutStage(state));
       state = advanceTournament(state, events, at(state, 3000));
-      assert.ok(++stages <= 5);
+      assert.equal(state.version, 1);
+      assert.equal(state.thirdPlacePlayerId, undefined);
+      assert.ok(++stage <= 6);
     }
-    assert.equal(state.standings.length, count);
-    assert.equal(state.standings.filter((entry) => entry.place === 3).length, 1);
+    assert.equal(JSON.stringify(initial), original);
+    assert.deepEqual(state.history[0].matches.map((match) => match.playerIds), initial.matches.map((match) => match.playerIds));
+    assert.deepEqual(state.standings.slice(0, 3).map((entry) => entry.place), [1, 2, 3]);
+    assert.deepEqual(buildTournamentView(JSON.parse(JSON.stringify(state)), [], at(state, 10000)).standings, state.standings);
   }
 });
 

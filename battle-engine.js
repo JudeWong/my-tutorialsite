@@ -1,6 +1,7 @@
 // Shared, DOM-free battle rules. Tournament snapshots are persisted in the
 // existing battle_events stream, so refreshing never reshuffles the bracket.
 export const TOURNAMENT_PREFIX = "tournament:";
+export const MAX_BATTLE_PLAYERS = 40;
 const MATCH_PREFIX = "match:";
 const POWERUPS = new Set(["shield", "heal", "freeze", "mask"]);
 const QUESTION_SECONDS = 10;
@@ -119,26 +120,51 @@ function playerSnapshot(player) {
     className: player.className || "", roomId: player.roomId || "", status: player.status || "playing" };
 }
 
-function stageMatches(tournamentId, stageIndex, playerIds, firstStage = false) {
+function selectByePlayer(playerIds, history, roster) {
+  const byeCounts = new Map(playerIds.map((id) => [id, 0]));
+  let previousByes = new Set();
+  for (const stage of history) {
+    previousByes = new Set();
+    for (const match of stage.matches) {
+      if (match.kind !== "main" || match.playerIds?.length !== 1) continue;
+      const id = match.playerIds[0];
+      byeCounts.set(id, (byeCounts.get(id) || 0) + 1);
+      previousByes.add(id);
+    }
+  }
+  const seedOrder = new Map(roster.map((player, index) => [player.id, index]));
+  return [...playerIds].sort((a, b) => byeCounts.get(a) - byeCounts.get(b)
+    || Number(previousByes.has(a)) - Number(previousByes.has(b))
+    || seedOrder.get(a) - seedOrder.get(b))[0];
+}
+
+function stageMatches(tournamentId, stageIndex, playerIds, { version = 1, firstStage = false, history = [], roster = [] } = {}) {
   const matches = [];
   const add = (ids) => matches.push({ id: `${tournamentId}:${stageIndex}:main:${matches.length + 1}`,
     kind: playerIds.length === 2 ? "final" : "main", playerIds: ids });
-  if (firstStage && (playerIds.length & (playerIds.length - 1))) {
-    // Reduce to the next lower power of two, with byes assigned from the one
-    // persisted shuffle. Subsequent rounds always have a complete bracket.
+  if (version === 1 && firstStage && (playerIds.length & (playerIds.length - 1))) {
+    // Preserve the old power-of-two bracket for saved version-1 tournaments.
     const nextSize = 2 ** Math.floor(Math.log2(playerIds.length));
     const preliminaryCount = playerIds.length - nextSize;
     let cursor = 0;
     for (let index = 0; index < preliminaryCount; index += 1) add(playerIds.slice(cursor, cursor += 2));
     while (cursor < playerIds.length) add([playerIds[cursor++]]);
   } else {
-    for (let index = 0; index < playerIds.length; index += 2) add(playerIds.slice(index, index + 2));
+    // Version 2 lets every entrant play in the first (even-sized) round.
+    // Later odd rounds need only one bye, not a power-of-two preliminary.
+    // Choose it from persisted history/seed order, never a fresh random draw.
+    const byeId = version === 2 && playerIds.length % 2
+      ? selectByePlayer(playerIds, history, roster) : null;
+    const pairedIds = byeId ? playerIds.filter((id) => id !== byeId) : playerIds;
+    for (let index = 0; index < pairedIds.length; index += 2) add(pairedIds.slice(index, index + 2));
+    if (byeId) add([byeId]);
   }
   return matches;
 }
 
 export function createTournament(players, { id, startedAt, durationSeconds = 180, random = Math.random } = {}) {
   if (!Array.isArray(players) || players.length < 2 || players.length % 2) throw new Error("至少需要两名学生，且人数必须为偶数。");
+  if (players.length > MAX_BATTLE_PLAYERS) throw new Error(`每个房间最多允许 ${MAX_BATTLE_PLAYERS} 名学生参赛。`);
   if (players.some((player) => !player?.id) || new Set(players.map((player) => player.id)).size !== players.length) throw new Error("参赛学生资料重复或不完整。");
   if (!id || !Number.isFinite(timestamp(startedAt))) throw new Error("淘汰赛编号或开始时间无效。");
   const roster = players.map(playerSnapshot);
@@ -146,19 +172,20 @@ export function createTournament(players, { id, startedAt, durationSeconds = 180
     const chosen = Math.min(index, Math.max(0, Math.floor(finite(random()) * (index + 1))));
     [roster[index], roster[chosen]] = [roster[chosen], roster[index]];
   }
-  return { version: 1, id: String(id), stageIndex: 0, startedAt: new Date(timestamp(startedAt)).toISOString(),
+  return { version: 2, id: String(id), stageIndex: 0, startedAt: new Date(timestamp(startedAt)).toISOString(),
     durationSeconds: Math.max(1, finite(durationSeconds, 180)), roster,
-    matches: stageMatches(String(id), 0, roster.map((player) => player.id), true), history: [], status: "battle" };
+    matches: stageMatches(String(id), 0, roster.map((player) => player.id), { version: 2, firstStage: true, roster }), history: [], status: "battle" };
 }
 
 function validState(state) {
-  if (!state || state.version !== 1 || typeof state.id !== "string" || !state.id
+  if (!state || ![1, 2].includes(state.version) || typeof state.id !== "string" || !state.id
     || !Number.isInteger(state.stageIndex) || state.stageIndex < 0
     || !Number.isFinite(timestamp(state.startedAt)) || !(state.durationSeconds > 0)
     || !["battle", "finished"].includes(state.status) || !Array.isArray(state.roster) || state.roster.length < 2
     || !Array.isArray(state.matches) || !state.matches.length || !Array.isArray(state.history)) return false;
   const ids = new Set(state.roster.map((player) => player?.id));
   return !ids.has(undefined) && ids.size === state.roster.length
+    && (state.thirdPlacePlayerId === undefined || (state.version === 2 && ids.has(state.thirdPlacePlayerId)))
     && state.matches.every((match) => match?.id && ["main", "final", "bronze"].includes(match.kind)
       && Array.isArray(match.playerIds) && match.playerIds.length >= 1 && match.playerIds.length <= 2
       && new Set(match.playerIds).size === match.playerIds.length && match.playerIds.every((id) => ids.has(id)))
@@ -187,6 +214,12 @@ function tournamentLabel(state) {
   if (state.status === "finished") return "比赛结束";
   if (state.matches.some((match) => match.kind === "bronze")) return "决赛与季军赛";
   if (state.matches.some((match) => match.kind === "final")) return "决赛";
+  if (state.version === 2) {
+    const entrants = state.matches.reduce((count, match) => count + match.playerIds.length, 0);
+    if (entrants === 3) return "三人半决赛";
+    if (entrants === 4) return "半决赛";
+    return `${entrants} 强赛`;
+  }
   if (state.matches.some((match) => match.playerIds.length === 1)) return "预选赛";
   if (state.matches.length === 2) return "半决赛";
   return `${state.matches.length * 2} 强赛`;
@@ -225,6 +258,11 @@ function tournamentStandings(state, matches) {
   if (final?.loser) placements.set(final.loser.id, 2);
   if (bronze?.winner) placements.set(bronze.winner.id, 3);
   if (bronze?.loser) placements.set(bronze.loser.id, 4);
+  // Three survivors yield one actual semifinal loser. That student is third,
+  // not a fabricated one-player bronze fight and not an extra scored win.
+  if (state.version === 2 && state.thirdPlacePlayerId && !placements.has(state.thirdPlacePlayerId)) {
+    placements.set(state.thirdPlacePlayerId, 3);
+  }
   return state.roster.map((player, seed) => ({ place: placements.get(player.id) || null, player,
     score: scores.get(player.id) || 0, seed }))
     .sort((a, b) => (a.place || Infinity) - (b.place || Infinity) || b.score - a.score || a.seed - b.seed)
@@ -302,11 +340,16 @@ export function advanceTournament(state, events, now = Date.now()) {
   const mainMatches = view.matches.filter((match) => match.kind === "main");
   const winners = mainMatches.map((match) => match.winner.id);
   const stageIndex = state.stageIndex + 1;
-  const matches = stageMatches(state.id, stageIndex, winners);
+  const matches = stageMatches(state.id, stageIndex, winners, { version: state.version, history, roster: state.roster });
+  const placement = {};
   if (winners.length === 2) {
     const semifinalLosers = mainMatches.map((match) => match.loser?.id).filter(Boolean);
     if (semifinalLosers.length === 2) matches.push({ id: `${state.id}:${stageIndex}:bronze:1`, kind: "bronze", playerIds: semifinalLosers });
+    else if (state.version === 2 && semifinalLosers.length === 1
+      && mainMatches.reduce((count, match) => count + match.players.length, 0) === 3) {
+      placement.thirdPlacePlayerId = semifinalLosers[0];
+    }
   }
   return { ...state, stageIndex, startedAt: new Date(timestamp(now) + 8000).toISOString(),
-    matches, history, status: "battle" };
+    matches, history, ...placement, status: "battle" };
 }

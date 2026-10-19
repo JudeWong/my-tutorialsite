@@ -704,6 +704,7 @@
       className: row.class_name || "",
       assignmentId: row.assignment_id || "",
       status: row.status || "lobby",
+      requiresTournament: Number(row.tournament_version) >= 2,
       startedAt: row.started_at || "",
       durationSeconds: Number(row.duration_seconds) || 180,
       createdAt: row.created_at || "",
@@ -724,6 +725,45 @@
   }
 
   let battleEnginePromise = null;
+  let battleClockOffset = 0;
+  let battleClockSampledAt = null;
+  let battleClockPending = null;
+
+  function battleNow() { return Date.now() + battleClockOffset; }
+
+  function battleSetupError(error) {
+    if (error?.code === "PGRST202" || error?.code === "PGRST204" || error?.code === "42703"
+      || /function .* does not exist|tournament_version|rpc is not a function/i.test(error?.message || "")) {
+      const missing = new Error("联机对战需要升级数据库：请老师先执行 supabase/upgrade_battle_40_players.sql，再重试。");
+      missing.code = "BATTLE_SCHEMA_REQUIRED";
+      return missing;
+    }
+    return error;
+  }
+
+  async function battleRpc(name, args = {}) {
+    try { return unwrap(await requireClient().rpc(name, args), name); }
+    catch (error) { throw battleSetupError(error); }
+  }
+
+  async function syncBattleClock(required = false, force = false) {
+    const age = battleClockSampledAt === null ? Infinity : Date.now() - battleClockSampledAt;
+    if (!force && age >= 0 && age < 30000) return true;
+    if (!battleClockPending) {
+      battleClockPending = (async () => {
+        const before = Date.now();
+        const value = await battleRpc("battle_server_time");
+        const after = Date.now();
+        const serverTime = Date.parse(value);
+        if (!Number.isFinite(serverTime)) throw new Error("无法校准对战服务器时间，请稍后重试。");
+        battleClockOffset = serverTime - (before + after) / 2;
+        battleClockSampledAt = after;
+        return true;
+      })().finally(() => { battleClockPending = null; });
+    }
+    try { return await battleClockPending; }
+    catch (error) { if (required) throw error; return false; }
+  }
 
   function loadBattleEngine() {
     if (!battleEnginePromise) {
@@ -774,10 +814,11 @@
     const db = requireClient();
     const room = unwrap(await db.from("battle_rooms").select("*").eq("id", roomId).maybeSingle(), "Load battle room");
     if (!room) return null;
-    const [players, rows, engine] = await Promise.all([
+    const [players, rows, engine, clockSynchronized] = await Promise.all([
       loadAllBattleRows("battle_players", roomId, "joined_at"),
       loadAllBattleRows("battle_events", roomId, "created_at"),
-      loadBattleEngine()
+      loadBattleEngine(),
+      syncBattleClock()
     ]);
     const events = rows.map((row) => mapBattleEvent(row, engine));
     const tournament = engine.readTournament(events);
@@ -788,7 +829,8 @@
       mappedRoom.status = tournament.status;
       if (!mappedRoom.startedAt) mappedRoom.startedAt = tournament.startedAt;
     }
-    return { room: mappedRoom, players: players.map(mapBattlePlayer), events };
+    return { room: mappedRoom, players: players.map(mapBattlePlayer), events,
+      serverNow: clockSynchronized ? battleNow() : null, clockSynchronized };
   }
 
   function createBattleCode() {
@@ -800,29 +842,27 @@
   async function createBattleRoom({ className = "", assignmentId = "" } = {}) {
     if (!session?.user?.id) throw new Error("Please sign in before creating a battle room.");
     const db = requireClient();
-    const row = unwrap(await db.from("battle_rooms").insert({
+    await syncBattleClock(true);
+    const result = await db.from("battle_rooms").insert({
       room_code: createBattleCode(),
       teacher_id: session.user.id,
       class_name: className || null,
       assignment_id: isUuid(assignmentId) ? assignmentId : null,
       status: "lobby",
+      tournament_version: 2,
       duration_seconds: 180
-    }).select("*").single(), "Create battle room");
+    }).select("*").single();
+    if (result.error) throw battleSetupError(result.error);
+    const row = unwrap(result, "Create battle room");
     return await loadBattleRoom(row.id);
   }
 
   async function joinBattleRoom(code) {
     if (!session?.user?.id) throw new Error("Please sign in before joining a battle room.");
-    const db = requireClient();
-    const room = unwrap(await db.from("battle_rooms").select("*").eq("room_code", String(code || "").trim()).eq("status", "lobby").maybeSingle(), "Find battle room");
-    if (!room) throw new Error("Battle room not found or it has already started.");
-    const profile = await getProfile(session.user.id);
-    if (room.class_name && profile?.class_name !== room.class_name) throw new Error("This room is only open to the selected class.");
-    const existing = unwrap(await db.from("battle_players").select("id").eq("room_id", room.id).eq("student_id", session.user.id).maybeSingle(), "Check battle player");
-    if (!existing) {
-      unwrap(await db.from("battle_players").insert({ room_id: room.id, student_id: session.user.id, display_name: profile?.full_name || "学生", class_name: profile?.class_name || "", status: "ready" }), "Join battle room");
-    }
-    return await loadBattleRoom(room.id);
+    // The database locks the room while counting/inserting: simultaneous joins
+    // cannot both claim place 40. Do not fall back to a racy client-side count.
+    const roomId = await battleRpc("join_battle_room", { room_code_input: String(code || "").trim() });
+    return await loadBattleRoom(roomId);
   }
 
   async function startBattleRoom(roomId) {
@@ -834,11 +874,16 @@
     if (!tournament) {
       // Existing running rooms use the previous 1v1 rules; do not restart
       // or replace their already recorded answers with a new bracket.
-      if (data.room.status !== "lobby") return data;
+      if (data.room.status !== "lobby" && !data.room.requiresTournament) return data;
+      if (data.players.length > engine.MAX_BATTLE_PLAYERS) throw new Error(`每个房间最多 ${engine.MAX_BATTLE_PLAYERS} 名学生。`);
       if (data.players.length < 2 || data.players.length % 2 !== 0) throw new Error("An even number of players is required to start the battle.");
-      tournament = engine.createTournament(data.players, {
+      // Freeze membership under the same database lock used by joins. A saved
+      // v2 room without bracket metadata is safely recoverable on retry.
+      const frozen = await battleRpc("prepare_battle_room_start", { target_room_id: roomId });
+      await syncBattleClock(true, true);
+      tournament = engine.createTournament(frozen.players.map(mapBattlePlayer), {
         id: roomId,
-        startedAt: new Date(Date.now() + 8000).toISOString(),
+        startedAt: frozen.started_at,
         durationSeconds: data.room.durationSeconds
       });
       tournament = await persistBattleTournament(roomId, tournament, engine);
@@ -865,6 +910,13 @@
 
   async function persistBattleTournament(roomId, tournament, engine) {
     const id = await stableBattleId(`battle-tournament:${roomId}:${tournament.stageIndex}`);
+    if (tournament.version === 2 && tournament.stageIndex === 0) {
+      // Allocate the real countdown and commit the bracket together. A delayed
+      // retry after admission was frozen must not create an expired first round.
+      return await battleRpc("commit_battle_room_start", {
+        target_room_id: roomId, event_id: id, tournament_input: tournament
+      });
+    }
     const result = await requireClient().from("battle_events").insert({
       id,
       room_id: roomId,
@@ -905,7 +957,8 @@
       await syncBattleTournamentRoom(roomId, tournament);
       return data;
     }
-    const now = Date.now();
+    await syncBattleClock(true, true);
+    const now = battleNow();
     const view = engine.buildTournamentView(tournament, data.events, now);
     if (!view.canAdvance) return data;
     const next = engine.advanceTournament(tournament, data.events, now);
@@ -1126,6 +1179,8 @@
     saveQuizProgress,
     saveSubmission,
     loadBattleRoom,
+    battleNow,
+    syncBattleClock,
     createBattleRoom,
     joinBattleRoom,
     startBattleRoom,

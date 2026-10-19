@@ -6,6 +6,8 @@
   "type": "module",
   "description": "Your Personal AI Assistant computer science learning platform",
   "scripts": {
+    "test:battle": "node scripts/test-battle-engine.mjs && node scripts/test-battle-cloud.mjs && node scripts/test-battle-dashboard.mjs",
+    "test:battle:sql": "node scripts/test-battle-sql.mjs",
     "serve": "pnpm run prepare:web && node scripts/serve.mjs",
     "prepare:web": "node scripts/sync-web.mjs",
     "prepare:android": "node scripts/sync-web.mjs --android",

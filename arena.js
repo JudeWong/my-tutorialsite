@@ -8,7 +8,7 @@
 import React, { useEffect, useMemo, useRef, useState } from "https://esm.sh/react@18.3.1";
 import { createRoot } from "https://esm.sh/react-dom@18.3.1/client";
 import { createPortal } from "https://esm.sh/react-dom@18.3.1";
-import { readTournament, buildTournamentView } from "./battle-engine.js";
+import { readTournament, buildTournamentView, MAX_BATTLE_PLAYERS } from "./battle-engine.js";
 
 // The teacher's score dashboard never needs to download the 3D renderer.
 class SceneErrorBoundary extends React.Component {
@@ -39,6 +39,10 @@ const ROUND_SECONDS = 10;
 const COMBAT_ACTION_MS = 1800;
 const POWERUP_EFFECT_MS = 5000;
 const DEBUFF_SECONDS = 4;
+const battleNow = () => {
+  const value = globalThis.personalAICloud?.battleNow?.();
+  return Number.isFinite(value) ? value : Date.now();
+};
 const POWERUP_ORDER = ["shield", "heal", "freeze", "mask"];
 const POWERUPS = Object.freeze({
   shield: { icon: "◈", name: "保护罩", description: "抵挡下一次攻击" },
@@ -213,10 +217,12 @@ function buildBattleMatches(players, events, timeLeft) {
   return matches;
 }
 
-function TeacherPlayerMetric({ player, stat, side, winner }) {
-  const lowHealth = stat.hp <= 30;
+function TeacherPlayerMetric({ player, stat, side, winner, bye = false, historical = false }) {
+  const known = !bye && Number.isFinite(stat?.score) && Number.isFinite(stat?.hp);
+  const hp = known ? Math.min(100, Math.max(0, stat.hp)) : null;
+  const lowHealth = known && hp <= 30;
   const isWinner = winner?.id === player?.id;
-  const item = POWERUPS[stat.lastReward];
+  const item = POWERUPS[stat?.lastReward];
   return h("div", { className: `arena-monitor-player ${side}${isWinner ? " winner" : ""}` },
     h("div", { className: "arena-monitor-player-head" },
       h("span", { className: "arena-monitor-avatar" }, side === "left" ? "⚔" : "✦"),
@@ -225,27 +231,28 @@ function TeacherPlayerMetric({ player, stat, side, winner }) {
         h("small", null, player?.className || "尚未加入")
       )
     ),
-    h("div", { className: "arena-monitor-score", "aria-label": `${player?.name || "玩家"} 得分 ${stat.score}` }, h("span", null, "得分"), h("b", null, stat.score), h("span", null, "分")),
-    h("div", { className: "arena-monitor-health-label" }, h("span", null, "生命值"), h("strong", null, `${stat.hp}%`)),
-    h("div", { className: `arena-monitor-health ${side}${lowHealth ? " danger" : ""}` }, h("i", { style: { width: `${stat.hp}%` } })),
-    h("small", { className: "arena-monitor-streak" }, stat.shield > 0 ? `◈ 保护罩 × ${stat.shield}` : item ? `${item.icon} ${item.name} · 连对 ${stat.streak} 题` : stat.streak > 1 ? `连对 ${stat.streak} 题` : "等待连击")
+    h("div", { className: "arena-monitor-score", "aria-label": `${player?.name || "玩家"} ${historical ? "该轮" : "本轮"}得分 ${known ? stat.score : "未参赛或待同步"}` }, h("span", null, historical ? "该轮得分" : "本轮得分"), h("b", null, known ? stat.score : "—"), known ? h("span", null, "分") : null),
+    h("div", { className: "arena-monitor-health-label" }, h("span", null, historical ? "该轮结束生命" : "本轮生命"), h("strong", null, known ? `${hp} / 100` : "—")),
+    known ? h("div", { className: `arena-monitor-health ${side}${lowHealth ? " danger" : ""}`, role: "meter", "aria-label": `${player?.name || "玩家"}生命值`, "aria-valuemin": 0, "aria-valuemax": 100, "aria-valuenow": hp }, h("i", { style: { width: `${hp}%` } })) : null,
+    h("small", { className: "arena-monitor-streak" }, bye ? "轮空不计分，不虚构血量" : !known ? "等待完整比分同步" : stat.shield > 0 ? `◈ 保护罩 × ${stat.shield}` : item ? `${item.icon} ${item.name} · 连对 ${stat.streak} 题` : stat.streak > 1 ? `连对 ${stat.streak} 题` : historical ? "本轮记录已保存" : "答对开始计分")
   );
 }
 
-function TeacherBattleDashboard({ players = [], events = [], timeLeft = 0, roomStatus, matchList, title = "全班对战总览", lastSynced, compact = false }) {
+function TeacherBattleDashboard({ players = [], events = [], timeLeft = 0, roomStatus, matchList, title = "全班对战总览", lastSynced, compact = false, historical = false }) {
   const matches = matchList || buildBattleMatches(players, events, timeLeft);
   const finishedCount = matches.filter((match) => match.finished).length;
-  const totalAnswers = matches.reduce((sum, match) => sum + match.answerCount, 0);
+  const totalAnswers = matches.reduce((sum, match) => sum + (Number(match.answerCount) || 0), 0);
+  const actualMatches = matches.filter((match) => match.players.length === 2);
   return h("section", { className: "arena-teacher-dashboard" },
     !compact ? h("div", { className: "arena-monitor-summary" },
-      h("article", null, h("span", null, "对战组数"), h("strong", null, matches.length), h("small", null, `${players.length} 名学生`)),
+      h("article", null, h("span", null, "本轮对战组数"), h("strong", null, actualMatches.length), h("small", null, `${actualMatches.length * 2} 人参战 · ${matches.length - actualMatches.length} 人轮空`)),
       h("article", null, h("span", null, "正在进行"), h("strong", null, Math.max(0, matches.length - finishedCount)), h("small", null, roomStatus === "finished" ? "比赛结束" : roomStatus === "battle" ? "实时同步中" : "等待开始")),
-      h("article", null, h("span", null, "全班作答"), h("strong", null, totalAnswers), h("small", null, `已完成 ${finishedCount} 组`)),
+      h("article", null, h("span", null, historical ? "该轮作答" : "本轮作答"), h("strong", null, totalAnswers), h("small", null, `已结束 ${actualMatches.filter((match) => match.finished).length} 场对战`)),
       h("article", { className: "arena-monitor-clock" }, h("span", null, "本轮剩余"), h("strong", null, finishedCount === matches.length ? "END" : `${Math.floor(timeLeft / 60)}:${String(timeLeft % 60).padStart(2, "0")}`), h("small", null, finishedCount === matches.length ? "本轮已结束" : "每轮重新计时"))
     ) : null,
     h("div", { className: "arena-monitor-heading" },
-      h("div", null, h("span", { className: "arena-kicker" }, "LIVE SCOREBOARD"), h("h3", null, title)),
-      h("p", { role: "status" }, lastSynced ? `最近同步 ${new Date(lastSynced).toLocaleTimeString("zh-CN", { hour12: false })} · 自动更新分数与血量` : "每组得分与血量")
+      h("div", null, h("span", { className: "arena-kicker" }, historical ? "SAVED ROUND" : "LIVE SCOREBOARD"), h("h3", null, title)),
+      h("p", null, historical ? "已保存的该轮比分与结束血量，不随新轮次清零" : lastSynced ? `最近同步 ${new Date(lastSynced).toLocaleTimeString("zh-CN", { hour12: false })} · 本轮分数与血量` : "每组本轮得分与血量")
     ),
     h("div", { className: "arena-monitor-grid" }, matches.map((match) => h("article", { className: `arena-monitor-card${match.finished ? " finished" : ""}`, key: match.id || `match-${match.number}` },
       h("header", null,
@@ -253,12 +260,81 @@ function TeacherBattleDashboard({ players = [], events = [], timeLeft = 0, roomS
         h("b", { className: match.finished ? "done" : "live", title: match.winner?.name }, match.finished ? (match.tied ? "平手" : `${match.winner?.name || ""}${match.players.length === 1 ? " 晋级" : " 获胜"}`) : match.started === false ? "即将开始" : "进行中")
       ),
       h("div", { className: "arena-monitor-versus" },
-        h(TeacherPlayerMetric, { player: match.players[0], stat: match.stats[0], side: "left", winner: match.winner }),
+        h(TeacherPlayerMetric, { player: match.players[0], stat: match.stats?.[0], side: "left", winner: match.winner, bye: match.players.length === 1, historical }),
         h("div", { className: "arena-monitor-vs" }, h("span", null, "VS"), h("small", null, `${match.answerCount} 次作答`)),
-        match.players[1] ? h(TeacherPlayerMetric, { player: match.players[1], stat: match.stats[1], side: "right", winner: match.winner }) : h("p", { className: "arena-bye-label" }, "本轮轮空\n直接晋级")
+        match.players[1] ? h(TeacherPlayerMetric, { player: match.players[1], stat: match.stats?.[1], side: "right", winner: match.winner, historical }) : h("p", { className: "arena-bye-label" }, "本轮轮空\n直接晋级")
       ),
       match.finished && match.players.length > 1 ? h("p", { className: "arena-match-reason" }, resultDescription(match.reason)) : null
     )))
+  );
+}
+
+// Pure projection: keep live-round, saved-round and cumulative metrics separate.
+// A bye/eliminated player has no current HP, not a fabricated 100 or zero.
+export function projectTeacherStandings(state, view, selectedRound = "live") {
+  const history = state?.history || [];
+  const savedStage = selectedRound === "live" ? null : history.find((stage) => String(stage.stageIndex) === selectedRound);
+  const matches = savedStage?.matches || view?.matches || [];
+  const allMatches = new Map(history.flatMap((stage) => stage.matches.map((match) => [match.id, { match, stageIndex: stage.stageIndex }])));
+  for (const match of view?.matches || []) {
+    if (!allMatches.has(match.id)) allMatches.set(match.id, { match, stageIndex: state.stageIndex });
+  }
+  const totals = new Map((view?.standings || []).map((entry) => [entry.player.id, entry]));
+  const round = savedStage ? savedStage.stageIndex + 1 : state?.status === "finished" ? history.length : (state?.stageIndex || 0) + 1;
+  const rows = (state?.roster || []).map((player) => {
+    const match = matches.find((entry) => entry.players.some((participant) => participant.id === player.id));
+    const liveMatch = view?.matches?.find((entry) => entry.players.some((participant) => participant.id === player.id));
+    const stat = match?.stats?.[match.players.findIndex((participant) => participant.id === player.id)];
+    const played = match?.players.length === 2;
+    const total = totals.get(player.id);
+    const last = [...allMatches.values()].reverse().find((entry) => entry.match.players.length === 2 && entry.match.finished && entry.match.players.some((participant) => participant.id === player.id));
+    const lastStat = last?.match.stats?.[last.match.players.findIndex((participant) => participant.id === player.id)];
+    const placeLabel = ({ 1: "冠军", 2: "亚军", 3: "季军", 4: "第四名" })[total?.place];
+    const status = placeLabel || (liveMatch?.players.length === 1 ? "本轮轮空晋级" : liveMatch
+      ? !liveMatch.finished ? liveMatch.started === false ? "准备参战" : "正在对战"
+        : liveMatch.winner?.id === player.id ? state.status === "finished" ? "已完成" : "获胜，等待下一轮"
+          : view.label === "三人半决赛" ? "季军待确认" : view.label === "半决赛" ? "等待季军赛" : "已淘汰"
+      : state?.status === "finished" ? "已完成" : "已淘汰 / 本轮未参赛");
+    return { player, status, place: total?.place || null,
+      score: played && Number.isFinite(stat?.score) ? stat.score : null,
+      hp: played && Number.isFinite(stat?.hp) ? Math.max(0, Math.min(100, stat.hp)) : null,
+      roundNote: match?.players.length === 1 ? "本轮轮空，不计分" : !match ? "该轮未参赛" : !stat ? "比分待同步" : match.finished ? "该轮已结束" : "本轮实时",
+      total: Number.isFinite(total?.score) ? total.score : null,
+      last: last && lastStat ? { round: last.stageIndex + 1, score: lastStat.score, hp: lastStat.hp } : null };
+  });
+  return { rows, matches, round, historical: Boolean(savedStage), title: savedStage?.label || view?.label || "比分同步中" };
+}
+
+function TeacherTournamentDashboard({ state, view, lastSynced, syncing, syncError, clockSynchronized, onRetry }) {
+  const [selectedRound, setSelectedRound] = useState("live");
+  const projection = projectTeacherStandings(state, view, selectedRound);
+  const stale = Boolean(lastSynced && Date.now() - lastSynced > 12000);
+  const clockWarning = clockSynchronized === false;
+  const syncLabel = syncError ? "同步失败：保留上次收到的数据，不代表实时比分" : clockWarning ? "云端时间尚未校准：请检查数据库升级，比赛计时可能不准确" : stale ? "数据更新延迟：当前显示上次同步结果" : syncing ? "正在同步比分…" : lastSynced ? "比分同步正常" : "正在读取完整比分…";
+  return h("section", { className: "arena-teacher-tournament" },
+    h("div", { className: `arena-score-sync${syncError || stale || clockWarning ? " is-stale" : ""}`, role: "status" },
+      h("span", null, syncLabel), h("small", null, lastSynced ? `最近成功读取 ${new Date(lastSynced).toLocaleTimeString("zh-CN", { hour12: false })}` : "不会用 0 分替代缺失数据"),
+      h("button", { className: "arena-ghost-button", type: "button", onClick: onRetry, disabled: syncing }, syncing ? "同步中…" : "立即同步")),
+    h("div", { className: "arena-round-selector" },
+      h("label", null, "查看比赛轮次", h("select", { value: selectedRound, onChange: (event) => setSelectedRound(event.target.value) },
+        h("option", { value: "live" }, state.status === "finished" ? "最终轮赛果" : `当前第 ${state.stageIndex + 1} 轮 · 实时`),
+        state.history.map((stage) => h("option", { key: stage.stageIndex, value: String(stage.stageIndex) }, `第 ${stage.stageIndex + 1} 轮 · ${stage.label} · 已保存`)))),
+      h("p", null, "每轮得分及生命值独立计算；累计得分保留所有轮次。轮空与未参赛显示 —。")),
+    h(TeacherBattleDashboard, { players: state.roster, timeLeft: projection.historical ? 0 : view.timeLeft, roomStatus: projection.historical ? "finished" : state.status,
+      matchList: projection.matches, title: `第 ${projection.round} 轮 · ${projection.title}`, historical: projection.historical, lastSynced }),
+    h("section", { className: "arena-roster-scores" },
+      h("div", { className: "arena-monitor-heading" }, h("div", null, h("span", { className: "arena-kicker" }, "ALL STUDENTS"), h("h3", null, `全体学生战绩 · ${projection.rows.length} 人`)),
+        h("p", null, `所选第 ${projection.round} 轮的数据与全赛程累计分数`)),
+      h("div", { className: "arena-score-table-scroll", tabIndex: 0, "aria-label": "全体学生战绩，可横向滚动" },
+        h("table", { className: "arena-score-table" },
+          h("thead", null, h("tr", null, ["学生", `第 ${projection.round} 轮得分`, `第 ${projection.round} 轮生命`, "目前赛程状态", "累计得分"].map((label) => h("th", { key: label, scope: "col" }, label)))),
+          h("tbody", null, projection.rows.map((row) => h("tr", { key: row.player.id },
+            h("th", { scope: "row" }, row.player.name, h("small", null, row.player.className)),
+            h("td", null, h("b", null, row.score ?? "—"), h("small", null, row.roundNote)),
+            h("td", null, row.hp === null ? h("span", null, "—") : h(React.Fragment, null,
+              h("span", null, `${row.hp} / 100`), h("div", { className: `arena-monitor-health${row.hp <= 30 ? " danger" : ""}`, role: "meter", "aria-label": `${row.player.name}第${projection.round}轮生命`, "aria-valuemin": 0, "aria-valuemax": 100, "aria-valuenow": row.hp }, h("i", { style: { width: `${row.hp}%` } })))),
+            h("td", null, row.status, row.last ? h("small", null, `最近完赛：第 ${row.last.round} 轮 ${row.last.score} 分 / 生命 ${row.last.hp}`) : null),
+            h("td", { className: "arena-cumulative-score" }, row.total ?? "待同步")))))))
   );
 }
 
@@ -318,8 +394,9 @@ function ArenaApp() {
   const [roomData, setRoomData] = useState(null);
   const [error, setError] = useState("");
   const [syncError, setSyncError] = useState("");
+  const [syncing, setSyncing] = useState(false);
   const [busy, setBusy] = useState(false);
-  const [now, setNow] = useState(Date.now());
+  const [now, setNow] = useState(battleNow);
   const [answeredRound, setAnsweredRound] = useState("");
   const [localEvents, setLocalEvents] = useState([]);
   const [lastSynced, setLastSynced] = useState(null);
@@ -339,33 +416,33 @@ function ArenaApp() {
   }, [assignment, context.questions]);
 
   const acceptRoomData = (data) => {
-    if (!data?.room) return;
+    if (!data?.room) return false;
     const current = latestRoomData.current;
     if (current?.room.id === data.room.id) {
       const currentStage = readTournament(current.events)?.stageIndex ?? -1;
       const incomingStage = readTournament(data.events)?.stageIndex ?? -1;
       // A read started before a saved move/advancement may finish afterwards.
       // Append-only battle records must not make the displayed score go back.
-      if (incomingStage < currentStage || (incomingStage === currentStage && data.events.length < current.events.length)) return;
+      if (incomingStage < currentStage || (incomingStage === currentStage && data.events.length < current.events.length)) return false;
     }
     latestRoomData.current = data;
-    setRoomData(data); setRoom(data.room); setNow(Date.now());
+    setRoomData(data); setRoom(data.room); setNow(battleNow()); setLastSynced(Date.now());
+    return true;
   };
   const refreshRoom = async (roomId = room?.id) => {
     if (!cloud?.enabled || !roomId || !cloud.loadBattleRoom) return;
     if (pendingRefresh.current?.id === roomId) return pendingRefresh.current.promise;
+    setSyncing(true);
     const promise = cloud.loadBattleRoom(roomId).then((data) => {
       if (activeRoomId.current !== roomId) return data;
       if (!data?.room) throw new Error("房间已不存在，或当前账号没有读取权限。");
-      acceptRoomData(data);
-      setLastSynced(Date.now());
-      setSyncError("");
+      if (acceptRoomData(data)) setSyncError("");
       setLocalEvents((items) => items.filter((event) => !data.events.some((stored) => stored.id === event.id)));
       return data;
     }).catch((loadError) => {
       if (activeRoomId.current === roomId) setSyncError(loadError.message || "无法同步对战资料，请检查网络。");
       return null;
-    }).finally(() => { if (pendingRefresh.current?.promise === promise) pendingRefresh.current = null; });
+    }).finally(() => { if (pendingRefresh.current?.promise === promise) pendingRefresh.current = null; if (activeRoomId.current === roomId) setSyncing(false); });
     pendingRefresh.current = { id: roomId, promise };
     return promise;
   };
@@ -375,7 +452,7 @@ function ArenaApp() {
       activeRoomId.current = saved;
       void refreshRoom(saved);
     }
-    const timer = setInterval(() => setNow(Date.now()), 1000);
+    const timer = setInterval(() => setNow(battleNow()), 1000);
     return () => { activeRoomId.current = null; clearInterval(timer); stopSubscription.current?.(); };
   }, []);
   useEffect(() => {
@@ -396,6 +473,7 @@ function ArenaApp() {
   const events = mergeBattleEvents(roomData?.events, localEvents);
   const tournament = readTournament(roomData?.events || []);
   const tournamentView = tournament ? buildTournamentView(tournament, events, now) : null;
+  const awaitingBracket = room?.status !== "lobby" && room?.requiresTournament && !tournament;
   const players = tournament?.roster || roomData?.players || [];
   const myPlayer = players.find((player) => player.studentId === profile.id);
   const myMatch = tournamentView?.matches.find((match) => match.players.some((player) => player.id === myPlayer?.id));
@@ -407,7 +485,7 @@ function ArenaApp() {
     const eventTime = new Date(event.createdAt || 0).getTime();
     return !eventTime || eventTime <= battleDeadline;
   }) : events;
-  const pair = tournament ? myMatch?.players || [] : canonicalBattlePair(players, events, myPlayer, context.role);
+  const pair = awaitingBracket ? [] : tournament ? myMatch?.players || [] : canonicalBattlePair(players, events, myPlayer, context.role);
   const pairEvents = tournament ? myMatch?.events || [] : scoredEvents.filter((event) => pair.some((player) => player.id === event.playerId));
   const visiblePlayerCount = context.role === "student" ? Math.max(players.length, pair.length) : players.length;
   const stats = myMatch?.statsMap || battleStats(pair, pairEvents);
@@ -422,7 +500,7 @@ function ArenaApp() {
   const result = tournament ? { ended: myMatch?.finished || !myMatch, winner: myMatch?.winner, tied: myMatch?.tied, reason: myMatch?.reason } : resolveBattleResult(pair, stats, timeLeft);
   const winner = result.winner;
   const gameEnded = result.ended;
-  const stageStarted = tournamentView ? tournamentView.started && tournament.status !== "finished" : true;
+  const stageStarted = !awaitingBracket && (tournamentView ? tournamentView.started && tournament.status !== "finished" : true);
   const myStats = stats.get(myPlayer?.id) || { frozenRound: -1, maskedRound: -1 };
   const freezeActive = !gameEnded && myStats.frozenRound === round && roundElapsedSeconds < DEBUFF_SECONDS;
   const maskActive = !gameEnded && myStats.maskedRound === round && roundElapsedSeconds < DEBUFF_SECONDS;
@@ -462,13 +540,16 @@ function ArenaApp() {
     finally { setBusy(false); }
   };
   const startRoom = async () => {
+    if (players.length < 2 || players.length > MAX_BATTLE_PLAYERS || players.length % 2) {
+      setError(`请等待 2–${MAX_BATTLE_PLAYERS} 名学生，以偶数人数开始。`); return;
+    }
     setError(""); setBusy(true);
     try { const data = await cloud.startBattleRoom(room.id); acceptRoomData(data); }
     catch (startError) { setError(startError.message || "必须有偶数名学生才能开始。"); }
     finally { setBusy(false); }
   };
   const advanceRound = async () => {
-    if (!tournamentView?.canAdvance || busy) return;
+    if (!tournamentView?.canAdvance || busy || syncError) return;
     setBusy(true); setError("");
     try {
       const data = await cloud.advanceBattleTournament(room.id, tournament.stageIndex);
@@ -484,7 +565,7 @@ function ArenaApp() {
     const nextStreak = correct ? current.streak + 1 : 0;
     const reward = correct ? rewardForStreak(nextStreak) : "";
     const target = pair.find((player) => player.id !== myPlayer.id);
-    const createdAt = Date.now();
+    const createdAt = Math.floor(battleNow());
     const event = { id: `local-answer-${createdAt}`, matchId: myMatch?.id || "", roomId: room.id, playerId: myPlayer.id, targetPlayerId: target?.id || "", round, type: "answer", questionId: question.id, correct, damage: correct ? 20 + Math.min(20, current.streak * 5) : 0, effect: "", createdAt: new Date(createdAt).toISOString() };
     const rewardTargetId = ["freeze", "mask"].includes(reward) ? target?.id || "" : "";
     const skillEvent = reward ? { id: `local-skill-${createdAt}`, matchId: myMatch?.id || "", roomId: room.id, playerId: myPlayer.id, targetPlayerId: rewardTargetId, round, type: "skill", questionId: "", correct: false, damage: 0, effect: reward, createdAt: new Date(createdAt + 1).toISOString() } : null;
@@ -532,7 +613,7 @@ function ArenaApp() {
     context.role === "teacher"
       ? h("div", { className: "arena-teacher-intro-cards" },
         h("article", null, h("span", null, "01"), h("strong", null, "开设房间"), h("small", null, "选择班级和题目后生成验证码")),
-        h("article", null, h("span", null, "02"), h("strong", null, "随机抽签"), h("small", null, "偶数人数开始；非完整签表自动安排轮空")),
+        h("article", null, h("span", null, "02"), h("strong", null, "全员首轮参战"), h("small", null, `2–${MAX_BATTLE_PLAYERS} 人，以偶数人数开始；首轮无人轮空`)),
         h("article", null, h("span", null, "03"), h("strong", null, "逐轮晋级"), h("small", null, "查看全班实时分数，决出冠亚季军"))
       )
       : h("div", { className: "arena-lobby-preview" }, scene),
@@ -540,7 +621,7 @@ function ArenaApp() {
     error || syncError ? h("p", { className: "arena-error" }, error || syncError) : null
   );
 
-  const readyToStart = players.length >= 2 && players.length % 2 === 0;
+  const readyToStart = players.length >= 2 && players.length <= MAX_BATTLE_PLAYERS && players.length % 2 === 0;
   const answered = answeredRound === answerKey || myStats.lastRound >= round;
   const interrupted = freezeActive || maskActive;
   const inputLocked = answered || !myPlayer || gameEnded || interrupted || !stageStarted;
@@ -550,14 +631,26 @@ function ArenaApp() {
   const completedTournament = tournament?.status === "finished";
   const hasDuel = !tournament || myMatch?.players.length === 2;
   return h("div", { className: "arena-battle-shell" },
-    h("div", { className: "arena-room-bar" }, h("div", null, h("span", { className: "arena-kicker" }, completedTournament ? "TOURNAMENT COMPLETE" : room.status === "battle" ? "BATTLE LIVE" : "WAITING ROOM"), h("h2", null, `房间 ${room.code}`), h("p", null, room.className ? `${room.className} · ${visiblePlayerCount} 名参赛学生` : `${visiblePlayerCount} 名参赛学生`)), h("div", { className: "arena-room-actions" }, room.status === "lobby" && context.role === "teacher" ? h("button", { className: "arena-primary-button", disabled: busy || !readyToStart || !questions.length, onClick: startRoom }, busy ? "正在抽签…" : readyToStart ? "抽签并开始淘汰赛" : "需要偶数人数") : null, h("button", { className: "arena-ghost-button", onClick: () => { localStorage.removeItem(ROOM_STORAGE_KEY); activeRoomId.current = null; setRoom(null); setRoomData(null); setLocalEvents([]); setAnsweredRound(""); } }, "离开房间"))),
+    h("div", { className: "arena-room-bar" }, h("div", null,
+      h("span", { className: "arena-kicker" }, completedTournament ? "TOURNAMENT COMPLETE" : room.status === "battle" ? "BATTLE LIVE" : "WAITING ROOM"), h("h2", null, `房间 ${room.code}`),
+      h("p", null, `${room.className ? `${room.className} · ` : ""}${visiblePlayerCount} / ${MAX_BATTLE_PLAYERS} 名学生`),
+      room.status === "lobby" ? h("p", { className: `arena-capacity${players.length > MAX_BATTLE_PLAYERS ? " is-full" : ""}` }, players.length > MAX_BATTLE_PLAYERS ? "人数超过上限，请重新分组开设房间。" : players.length % 2 ? "等待再加入一位学生，首轮将全部成对参赛。" : "首轮全员 1 对 1，不安排轮空。") : null),
+      h("div", { className: "arena-room-actions" }, room.status === "lobby" && context.role === "teacher" ? h("button", { className: "arena-primary-button", disabled: busy || !readyToStart || !questions.length, onClick: startRoom }, busy ? "正在抽签…" : players.length > MAX_BATTLE_PLAYERS ? `最多 ${MAX_BATTLE_PLAYERS} 人` : readyToStart ? "抽签并开始淘汰赛" : "需要 2 人以上偶数人数") : null,
+        h("button", { className: "arena-ghost-button", onClick: () => { localStorage.removeItem(ROOM_STORAGE_KEY); activeRoomId.current = null; latestRoomData.current = null; setRoom(null); setRoomData(null); setLocalEvents([]); setAnsweredRound(""); setLastSynced(null); setSyncing(false); setSyncError(""); } }, "离开房间"))),
     error || syncError ? h("p", { className: "arena-error", role: "alert" }, error || syncError, h("button", { className: "arena-ghost-button", onClick: () => { setError(""); setSyncError(""); void refreshRoom(room.id); } }, "重新同步")) : null,
     tournament ? h("section", { className: "arena-tournament-stage" },
-      h("div", null, h("span", { className: "arena-kicker" }, `ROUND ${completedTournament ? tournament.history.length : tournament.stageIndex + 1}`), h("h3", null, completedTournament ? "比赛名次已揭晓" : tournamentView.label), h("p", null, completedTournament ? "本届淘汰赛结束，所有赛果已保存。" : !stageStarted ? `准备入场 · ${countdown} 秒后开始` : tournamentView.allFinished ? "本轮已结束，等待老师确认赛果。" : "胜者晋级 · 半决赛败者参加季军赛")),
-      context.role === "teacher" && !completedTournament ? h("button", { className: "arena-primary-button", disabled: busy || !tournamentView.canAdvance, onClick: advanceRound }, busy ? "正在保存赛程…" : tournamentView.allFinished && !tournamentView.canAdvance ? "正在确认分数…" : isFinalStage ? "公布最终排名" : "开始下一轮") : null
+      h("div", null, h("span", { className: "arena-kicker" }, `ROUND ${completedTournament ? tournament.history.length : tournament.stageIndex + 1}`), h("h3", null, completedTournament ? "比赛名次已揭晓" : tournamentView.label), h("p", null, completedTournament ? "本届淘汰赛结束，所有赛果已保存。" : !stageStarted ? `准备入场 · ${countdown} 秒后开始` : tournamentView.allFinished ? "本轮已结束，等待老师确认赛果。" : tournamentView.label === "三人半决赛" ? "一人轮空进决赛；另一场胜者晋级、败者获得季军。" : "胜者晋级 · 后续奇数轮最多一人轮空")),
+      context.role === "teacher" && !completedTournament ? h("button", { className: "arena-primary-button", disabled: busy || Boolean(syncError) || !tournamentView.canAdvance, onClick: advanceRound }, busy ? "正在保存赛程…" : tournamentView.allFinished && !tournamentView.canAdvance ? "正在确认分数…" : isFinalStage ? "公布最终排名" : "开始下一轮") : null
     ) : null,
     completedTournament ? h(TournamentPodium, { standings: tournamentView.standings }) : null,
-    room.status === "lobby" ? h("div", { className: "arena-waiting" }, h("div", { className: "arena-code-display" }, h("small", null, "学生加入验证码"), h("strong", null, room.code)), h("div", { className: "arena-player-list" }, players.map((player, index) => h("div", { className: "arena-player-chip", key: player.id }, h("span", null, index % 2 ? "♟" : "♞"), h("strong", null, player.name), h("small", null, "等待随机抽签")))), h("p", { className: "arena-hint" }, "需要 2、4、6……名学生才能开始。至少 4 人才能决出冠亚季军；2 人只进行冠亚军决赛。每轮血量与得分重置，比赛结束后可查看累计分数。")) : context.role === "teacher" ? h(TeacherBattleDashboard, { players, events: scoredEvents, timeLeft, roomStatus: room.status, matchList: tournamentView?.matches, title: tournamentView?.label || "全班对战总览", lastSynced }) : hasDuel ? h(React.Fragment, null,
+    room.status === "lobby" ? h("div", { className: "arena-waiting" }, h("div", { className: "arena-code-display" }, h("small", null, "学生加入验证码"), h("strong", null, room.code)), h("div", { className: "arena-player-list" }, players.map((player, index) => h("div", { className: "arena-player-chip", key: player.id }, h("span", null, index % 2 ? "♟" : "♞"), h("strong", null, player.name), h("small", null, "等待随机抽签")))), h("p", { className: "arena-hint" }, `最多 ${MAX_BATTLE_PLAYERS} 人，以 2、4、6……名学生开始，首轮每位学生都有对手。后续人数为奇数时仅一人轮空。至少 4 人才能决出冠亚季军；2 人仅决出冠亚军。老师可切换每轮比分并查看所有学生累计分数。`))
+      : awaitingBracket ? h("section", { className: "arena-round-waiting", role: "status" }, h("h3", null, "正在同步正式赛程"), h("p", null, "完整配对资料尚未收到，暂不显示临时对手或 0 分比分。"),
+        context.role === "teacher" ? h("button", { className: "arena-primary-button", onClick: startRoom, disabled: busy }, busy ? "正在恢复赛程…" : "重试生成赛程") : h("p", null, "请留在房间，等待老师恢复赛程。"),
+        h("button", { className: "arena-ghost-button", onClick: () => void refreshRoom(room.id), disabled: syncing }, "重新同步"))
+      : context.role === "teacher" ? tournament
+        ? h(TeacherTournamentDashboard, { key: tournament.id, state: tournament, view: tournamentView, lastSynced, syncing, syncError, clockSynchronized: roomData?.clockSynchronized, onRetry: () => void refreshRoom(room.id) })
+        : h(TeacherBattleDashboard, { players, events: scoredEvents, timeLeft, roomStatus: room.status, lastSynced })
+      : hasDuel ? h(React.Fragment, null,
       scene,
       h("div", { className: "arena-hud" },
         h("div", { className: "arena-fighter-card left" }, h("strong", null, pair[0]?.name || "玩家 A"), h("div", { className: "arena-health" }, h("i", { style: { width: `${leftStats.hp}%` } })), h("span", null, `生命 ${leftStats.hp} · 得分 ${leftStats.score}`), leftStats.shield > 0 ? h("em", { className: "arena-equipped-item" }, `◈ 保护罩 × ${leftStats.shield}`) : null),
@@ -578,17 +671,17 @@ function ArenaApp() {
         h("strong", null, result.tied ? "本局平手" : `${winner?.name || "玩家"} 获胜！`),
         h("span", null, resultDescription(result.reason)),
         h("b", null, `${pair[0]?.name || "玩家 A"} ${leftStats.score} : ${rightStats.score} ${pair[1]?.name || "玩家 B"}`),
-        tournament && !completedTournament ? h("span", null, myMatch.kind === "final" || myMatch.kind === "bronze" ? "等待老师公布最终排名。" : winner?.id === myPlayer?.id ? "已晋级，等待老师开始下一轮。" : tournamentView.label.includes("半决赛") ? "请留在房间，下一轮参加季军赛。" : "本次止步于此，可以继续查看赛程。") : null
+        tournament && !completedTournament ? h("span", null, myMatch.kind === "final" || myMatch.kind === "bronze" ? "等待老师公布最终排名。" : winner?.id === myPlayer?.id ? "已晋级，等待老师开始下一轮。" : tournamentView.label === "三人半决赛" ? "你获得季军席位，等待老师确认赛果。" : tournamentView.label.includes("半决赛") ? "请留在房间，下一轮参加季军赛。" : "本次止步于此，可以继续查看赛程。") : null
       ) : null
     ) : h("section", { className: "arena-round-waiting" },
       h("span", { "aria-hidden": "true" }, myMatch?.players.length === 1 ? "✦" : "⚑"),
-      h("h3", null, myMatch?.players.length === 1 ? "本轮轮空，已晋级" : "你的对战已完成"),
+      h("h3", null, myMatch?.players.length === 1 ? "本轮轮空，已晋级" : tournament?.thirdPlacePlayerId === myPlayer?.id ? "你已获得季军" : "你的对战已完成"),
       h("p", null, myMatch?.players.length === 1 ? "请留在房间，等待老师开始下一轮。" : completedTournament ? "感谢参与！下方可以查看完整赛程与赛果。" : "你可以继续查看本轮比分，为同学加油。"),
       myLastMatch ? h("p", null, `上一场：${myLastMatch.players.map((player, index) => `${player.name} ${myLastMatch.stats[index].score} 分`).join(" · ")}`) : null,
       h(TeacherBattleDashboard, { compact: true, matchList: tournamentView?.matches || [], title: "本轮赛况" })
     ),
-    tournament?.history?.length ? h("details", { className: "arena-history" }, h("summary", null, "查看已完成赛程与比分"), tournament.history.map((stage) => h(TeacherBattleDashboard, { key: stage.stageIndex, compact: true, matchList: stage.matches, title: stage.label }))) : null,
-    tournament ? h("details", { className: "arena-tournament-rules" }, h("summary", null, "淘汰赛规则"), h("p", null, "每局最长 3 分钟；一方生命值归零，或时间结束，即结束该局。时间结束先比较得分，同分依次比较生命值、答对题数、累计答题用时；若完全相同，按赛前随机抽签顺序决定晋级。半决赛败者进入季军赛。每轮由老师确认后开始，并有 8 秒准备时间。")) : null,
+    tournament?.history?.length && context.role !== "teacher" ? h("details", { className: "arena-history" }, h("summary", null, "查看已完成赛程与比分"), tournament.history.map((stage) => h(TeacherBattleDashboard, { key: stage.stageIndex, compact: true, historical: true, matchList: stage.matches, title: `第 ${stage.stageIndex + 1} 轮 · ${stage.label}` }))) : null,
+    tournament ? h("details", { className: "arena-tournament-rules" }, h("summary", null, "淘汰赛规则"), h("p", null, "每局最长 3 分钟；一方生命值归零，或时间结束，即结束该局。时间结束先比较得分，同分依次比较生命值、答对题数、累计答题用时；若完全相同，按赛前随机抽签顺序决定晋级。"), h("p", null, tournament.version >= 2 ? `最多 ${MAX_BATTLE_PLAYERS} 人，首轮偶数人数全员参战。后续奇数人数仅一人轮空，优先安排尚未轮空者。4 人半决赛败者参加季军赛；剩余 3 人时一人轮空入决赛，另一场败者直接获得季军。每轮由老师确认后开始，有 8 秒准备时间。` : "此房间保留原有赛程规则，不重新抽签。半决赛败者参加季军赛。每轮由老师确认后开始，有 8 秒准备时间。")) : null,
     showVictory ? h(AdvancementPopup, { key: latestWin.id, match: latestWin, onClose: closeVictory }) : null
   );
 }

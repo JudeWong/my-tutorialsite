@@ -1267,6 +1267,42 @@ html.session-loading-active,html.session-loading-active body { overflow: hidden;
 .arena-victory-sparkles { color:#e8c97b; letter-spacing:24px; padding-left:24px; font-size:20px; }
 .arena-victory-score { font:700 30px Arial,sans-serif; font-variant-numeric:tabular-nums; }
 .arena-error>button { margin-left:12px; }
+/* Classroom scoreboard: live per-round cards plus an honest full-roster ledger. */
+.arena-teacher-tournament { display:grid; gap:24px; min-width:0; }
+.arena-score-sync { display:flex; flex-wrap:wrap; align-items:center; gap:8px 18px; padding:14px 18px; border:1px solid #39655f; border-radius:14px; color:#a7f1da; background:#132a2c; }
+.arena-score-sync small { color:#b5c9cf; font-size:12px; }
+.arena-score-sync button { margin-left:auto; min-height:42px; }
+.arena-score-sync.is-stale { border-color:#9b7544; color:#ffe1aa; background:#352a20; }
+.arena-score-sync button:disabled { opacity:.6; cursor:wait; }
+.arena-round-selector { display:flex; flex-wrap:wrap; align-items:end; gap:16px 24px; }
+.arena-round-selector label { display:grid; gap:8px; min-width:240px; color:#e0e8f8; font-size:15px; }
+.arena-round-selector select { max-width:100%; min-height:46px; border:1px solid #5b6a90; border-radius:10px; padding:10px 34px 10px 12px; color:#fff; background:#1b2540; font:inherit; }
+.arena-round-selector select:focus-visible,.arena-score-table-scroll:focus-visible { outline:3px solid #9cebd8; outline-offset:3px; }
+.arena-round-selector p { max-width:540px; margin:0; color:#b5c2de; font-size:14px; line-height:1.7; }
+.arena-roster-scores { display:grid; gap:16px; min-width:0; padding-top:10px; }
+.arena-score-table-scroll { max-width:100%; overflow-x:auto; border:1px solid #3c4967; border-radius:16px; }
+.arena-score-table { width:100%; min-width:680px; border-collapse:collapse; color:#e4ebfc; background:#141d32; text-align:left; font-size:14px; }
+.arena-score-table th,.arena-score-table td { padding:14px 16px; border-bottom:1px solid #303b54; vertical-align:middle; font-variant-numeric:tabular-nums; }
+.arena-score-table thead th { color:#c5d1ed; background:#222e49; font-weight:600; white-space:nowrap; }
+.arena-score-table tbody th { min-width:100px; font-weight:600; }
+.arena-score-table tr:last-child>* { border-bottom:0; }
+.arena-score-table tbody tr:nth-child(even) { background:rgba(255,255,255,.018); }
+.arena-score-table b { color:#a3f3dc; font-size:20px; }
+.arena-score-table small { display:block; margin-top:4px; color:#99a9c8; font-size:12px; font-weight:400; line-height:1.6; }
+.arena-score-table .arena-monitor-health { min-width:90px; margin-top:7px; }
+.arena-score-table .arena-cumulative-score { color:#dfceff; font-size:21px; font-weight:700; }
+.arena-room-bar p.arena-capacity { margin-top:5px; color:#99e4cb; font-size:14px; }
+.arena-room-bar p.arena-capacity.is-full { color:#ffb0a4; }
+.arena-monitor-score { flex-wrap:wrap; }
+.arena-monitor-player-head strong { white-space:normal; overflow-wrap:anywhere; }
+@media (max-width:760px) {
+  .arena-score-sync { align-items:flex-start; padding:14px; }
+  .arena-score-sync button { width:100%; margin-left:0; }
+  .arena-round-selector label { min-width:0; width:100%; }
+  .arena-round-selector select { width:100%; }
+  .arena-score-table th,.arena-score-table td { padding:12px; }
+  .arena-roster-scores .arena-monitor-heading h3 { font-size:22px; }
+}
 @keyframes arena-victory-enter { from { opacity:0; transform:translateY(20px) scale(.94); } to { opacity:1; transform:none; } }
 @keyframes arena-victory-fade { from { opacity:0; } to { opacity:1; } }
 @media (max-width:760px) {
