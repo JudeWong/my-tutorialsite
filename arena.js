@@ -625,7 +625,7 @@ function ArenaApp() {
   );
   const roomPicker = context.role === "teacher" && recentRooms.length
     ? h("label", { className: "arena-form-card" }, "查看已有房间（不会重新开赛）",
-      h("select", { value: room?.id || "", disabled: busy || syncing || openingRoom, onChange: async (event) => {
+      h("select", { value: room?.id || "", disabled: busy || openingRoom, onChange: async (event) => {
         const id = event.target.value;
         if (!id) return;
         setOpeningRoom(true); setError("");
