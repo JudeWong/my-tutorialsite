@@ -324,18 +324,31 @@
     };
   }
 
+  async function readSnapshotRows(table, columns = "*", orders = []) {
+    const rows = [];
+    for (;;) {
+      let query = requireClient().from(table).select(columns, { count: "exact" });
+      for (const [column, ascending] of orders) query = query.order(column, { ascending });
+      const result = await query.order("id", { ascending: true }).range(rows.length, rows.length + 499);
+      const page = unwrap(result, `Load ${table}`) || [];
+      rows.push(...page);
+      // A project can configure a smaller API row cap than our page size.
+      if (!page.length || (Number.isFinite(result.count) && rows.length >= result.count)) return { data: rows };
+    }
+  }
+
   async function loadSnapshot(profile) {
     const db = requireClient();
     const results = await Promise.all([
-      db.from("profiles").select("*").order("created_at", { ascending: true }),
-      db.from("classes").select("*").order("created_at", { ascending: true }),
-      db.from("materials").select("*").order("created_at", { ascending: false }),
-      db.from("questions").select("*").order("position", { ascending: true }).order("created_at", { ascending: true }),
-      db.from("notes").select("*").order("created_at", { ascending: false }),
-      db.from("assignments").select("*").order("created_at", { ascending: false }),
-      db.from("assignment_questions").select("*").order("position", { ascending: true }),
-      db.from("submissions").select("*"),
-      db.from("student_answers").select("id,submission_id,question_id,student_answer,is_correct,created_at")
+      readSnapshotRows("profiles", "*", [["created_at", true]]),
+      readSnapshotRows("classes", "*", [["created_at", true]]),
+      readSnapshotRows("materials", "*", [["created_at", false]]),
+      readSnapshotRows("questions", "*", [["position", true], ["created_at", true]]),
+      readSnapshotRows("notes", "*", [["created_at", false]]),
+      readSnapshotRows("assignments", "*", [["created_at", false]]),
+      readSnapshotRows("assignment_questions", "*", [["position", true]]),
+      readSnapshotRows("submissions"),
+      readSnapshotRows("student_answers", "id,submission_id,question_id,student_answer,is_correct,created_at")
     ]);
     const [profiles, classes, materials, questions, notes, assignments, links, submissions, studentAnswers] = results.map((result, index) => unwrap(result, ["profiles", "classes", "materials", "questions", "notes", "assignments", "assignment questions", "submissions", "student answers"][index]));
     const questionIdsByAssignment = new Map();
@@ -505,12 +518,13 @@
       published: true,
       updated_at: new Date().toISOString()
     }));
-    if (rows.length) unwrap(await requireClient().from("assignments").upsert(rows, { onConflict: "id" }), "Save assignments");
-    for (const assignment of valid) {
-      unwrap(await requireClient().from("assignment_questions").delete().eq("assignment_id", assignment.id), "Update assignment questions");
-      const links = (assignment.questionIds || []).filter(isUuid).map((questionId, index) => ({ assignment_id: assignment.id, question_id: questionId, position: index }));
-      if (links.length) unwrap(await requireClient().from("assignment_questions").insert(links), "Save assignment questions");
+    for (let index = 0; index < valid.length; index += 1) {
+      if (valid[index].className && !isUuid(valid[index].classId)) {
+        throw new Error("Selected class has not synced. Refresh the class list and select it again.");
+      }
+      rows[index].question_ids = [...new Set((valid[index].questionIds || []).filter(isUuid))];
     }
+    if (rows.length) unwrap(await requireClient().rpc("save_assignment_batch", { items: rows }), "Save assignments");
   }
 
   async function deleteAssignments(assignmentIds) {
@@ -812,14 +826,22 @@
   async function loadBattleRoom(roomId) {
     if (!session?.user?.id || !isUuid(roomId)) return null;
     const db = requireClient();
-    const room = unwrap(await db.from("battle_rooms").select("*").eq("id", roomId).maybeSingle(), "Load battle room");
-    if (!room) return null;
-    const [players, rows, engine, clockSynchronized] = await Promise.all([
-      loadAllBattleRows("battle_players", roomId, "joined_at"),
-      loadAllBattleRows("battle_events", roomId, "created_at"),
-      loadBattleEngine(),
-      syncBattleClock()
-    ]);
+    const before = Date.now();
+    const request = db.rpc("battle_room_snapshot", { target_room_id: roomId });
+    // A stuck request must not permanently block the room's polling loop.
+    const snapshot = unwrap(await (typeof request.abortSignal === "function"
+      ? request.abortSignal(AbortSignal.timeout(12000)) : request), "Load live battle snapshot");
+    if (!snapshot?.room) return null;
+    const { room, players, events: rows } = snapshot;
+    if (!Array.isArray(players) || !Array.isArray(rows)) throw new Error("Incomplete battle snapshot; please retry.");
+    const serverTime = Date.parse(snapshot.server_now);
+    const after = Date.now();
+    const clockSynchronized = Number.isFinite(serverTime);
+    if (clockSynchronized) {
+      battleClockOffset = serverTime - (before + after) / 2;
+      battleClockSampledAt = after;
+    }
+    const engine = await loadBattleEngine();
     const events = rows.map((row) => mapBattleEvent(row, engine));
     const tournament = engine.readTournament(events);
     const mappedRoom = mapBattleRoom(room);
@@ -837,6 +859,14 @@
     const values = new Uint32Array(1);
     crypto.getRandomValues(values);
     return String(100000 + (values[0] % 900000));
+  }
+
+  async function listTeacherBattleRooms() {
+    if (!session?.user?.id) return [];
+    const rows = unwrap(await requireClient().from("battle_rooms")
+      .select("*").eq("teacher_id", session.user.id)
+      .order("created_at", { ascending: false }).limit(20), "Load teacher rooms") || [];
+    return rows.map(mapBattleRoom);
   }
 
   async function createBattleRoom({ className = "", assignmentId = "" } = {}) {
@@ -876,7 +906,7 @@
       // or replace their already recorded answers with a new bracket.
       if (data.room.status !== "lobby" && !data.room.requiresTournament) return data;
       if (data.players.length > engine.MAX_BATTLE_PLAYERS) throw new Error(`每个房间最多 ${engine.MAX_BATTLE_PLAYERS} 名学生。`);
-      if (data.players.length < 2 || data.players.length % 2 !== 0) throw new Error("An even number of players is required to start the battle.");
+      if (data.players.length < 2) throw new Error("At least two players are required to start the battle.");
       // Freeze membership under the same database lock used by joins. A saved
       // v2 room without bracket metadata is safely recoverable on retry.
       const frozen = await battleRpc("prepare_battle_room_start", { target_room_id: roomId });
@@ -1179,6 +1209,7 @@
     saveQuizProgress,
     saveSubmission,
     loadBattleRoom,
+    listTeacherBattleRooms,
     battleNow,
     syncBattleClock,
     createBattleRoom,

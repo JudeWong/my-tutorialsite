@@ -232,8 +232,8 @@ begin
   select count(*), coalesce(jsonb_agg(to_jsonb(bp) order by bp.joined_at, bp.id), '[]'::jsonb)
     into player_count, frozen_players
     from public.battle_players bp where bp.room_id = room_row.id;
-  if player_count < 2 or player_count > 40 or mod(player_count, 2) <> 0 then
-    raise exception using errcode = 'P0001', message = 'An even number of students from 2 to 40 is required to start the battle.';
+  if player_count < 2 or player_count > 40 then
+    raise exception using errcode = 'P0001', message = 'From 2 to 40 students are required to start the battle.';
   end if;
   if room_row.status = 'lobby' then
     update public.battle_rooms
@@ -345,8 +345,8 @@ begin
   end if;
   select count(*) into player_count from public.battle_players bp where bp.room_id = target_room_id;
   roster_count := jsonb_array_length(tournament_input->'roster');
-  if player_count < 2 or player_count > 40 or mod(player_count, 2) <> 0 or roster_count <> player_count then
-    raise exception using errcode = '22023', message = 'The bracket must contain the frozen even roster of 2 to 40 students.';
+  if player_count < 2 or player_count > 40 or roster_count <> player_count then
+    raise exception using errcode = '22023', message = 'The bracket must contain the frozen roster of 2 to 40 students.';
   end if;
   for roster_member in select value from jsonb_array_elements(tournament_input->'roster')
   loop
@@ -362,8 +362,8 @@ begin
   if unique_count <> player_count or matching_count <> player_count then
     raise exception using errcode = '22023', message = 'The bracket roster differs from the frozen room membership.';
   end if;
-  if jsonb_array_length(tournament_input->'matches') <> player_count / 2 then
-    raise exception using errcode = '22023', message = 'Every student must play in a two-player first-round match.';
+  if jsonb_array_length(tournament_input->'matches') <> (player_count + 1) / 2 then
+    raise exception using errcode = '22023', message = 'The first round permits at most one bye.';
   end if;
   for match_entry in select value from jsonb_array_elements(tournament_input->'matches')
   loop
@@ -374,21 +374,23 @@ begin
       or jsonb_typeof(match_entry->'playerIds') is distinct from 'array' then
       raise exception using errcode = '22023', message = 'A first-round match is malformed.';
     end if;
-    if jsonb_array_length(match_entry->'playerIds') <> 2
+    if jsonb_array_length(match_entry->'playerIds') not in (1, 2)
       or jsonb_typeof(match_entry->'playerIds'->0) is distinct from 'string'
-      or jsonb_typeof(match_entry->'playerIds'->1) is distinct from 'string' then
-      raise exception using errcode = '22023', message = 'First-round byes are not allowed.';
+      or (jsonb_array_length(match_entry->'playerIds') = 2 and jsonb_typeof(match_entry->'playerIds'->1) is distinct from 'string') then
+      raise exception using errcode = '22023', message = 'Each match must contain one or two players.';
     end if;
     match_ids := array_append(match_ids, match_entry->>'id');
     paired_player_ids := array_append(paired_player_ids, match_entry->'playerIds'->>0);
-    paired_player_ids := array_append(paired_player_ids, match_entry->'playerIds'->>1);
+    if jsonb_array_length(match_entry->'playerIds') = 2 then
+      paired_player_ids := array_append(paired_player_ids, match_entry->'playerIds'->>1);
+    end if;
   end loop;
   select count(distinct match_id) into unique_count from unnest(match_ids) as ids(match_id);
-  if unique_count <> player_count / 2 then
+  if unique_count <> (player_count + 1) / 2 then
     raise exception using errcode = '22023', message = 'Match IDs must be unique.';
   end if;
   select count(distinct participant_id) into unique_count from unnest(paired_player_ids) as ids(participant_id);
-  if unique_count <> player_count or not (paired_player_ids <@ roster_ids) then
+  if unique_count <> player_count or cardinality(paired_player_ids) <> player_count or not (paired_player_ids <@ roster_ids) then
     raise exception using errcode = '22023', message = 'Each frozen player must appear in exactly one first-round match.';
   end if;
 

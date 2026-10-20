@@ -163,7 +163,7 @@ function stageMatches(tournamentId, stageIndex, playerIds, { version = 1, firstS
 }
 
 export function createTournament(players, { id, startedAt, durationSeconds = 180, random = Math.random } = {}) {
-  if (!Array.isArray(players) || players.length < 2 || players.length % 2) throw new Error("至少需要两名学生，且人数必须为偶数。");
+  if (!Array.isArray(players) || players.length < 2) throw new Error("至少需要两名学生。");
   if (players.length > MAX_BATTLE_PLAYERS) throw new Error(`每个房间最多允许 ${MAX_BATTLE_PLAYERS} 名学生参赛。`);
   if (players.some((player) => !player?.id) || new Set(players.map((player) => player.id)).size !== players.length) throw new Error("参赛学生资料重复或不完整。");
   if (!id || !Number.isFinite(timestamp(startedAt))) throw new Error("淘汰赛编号或开始时间无效。");

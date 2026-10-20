@@ -3,6 +3,7 @@
 // This is a single-connection runtime check, NOT a concurrent-load test.
 import assert from "node:assert/strict";
 import { readFile } from "node:fs/promises";
+import { execFileSync } from "node:child_process";
 import { createTournament } from "../battle-engine.js";
 import { PGlite } from "../.temp/battle-sql-check/node_modules/@electric-sql/pglite/dist/index.js";
 
@@ -79,6 +80,14 @@ try {
   await bootstrap();
   const migration = await readFile(new URL("../supabase/upgrade_battle_40_players.sql", import.meta.url), "utf8");
   await test("actual migration applies twice without erasing existing rooms", async () => {
+    const deployed=execFileSync("git",["show","c3a923f:supabase/upgrade_battle_40_players.sql"],{encoding:"utf8"});
+    await db.exec(deployed);
+    const odd=await readFile(new URL("../supabase/upgrade_battle_odd_rosters.sql",import.meta.url),"utf8");
+    await db.exec(odd); await db.exec(odd);
+    const updated=(await db.query("select pg_get_functiondef('public.commit_battle_room_start(uuid,uuid,jsonb)'::regprocedure) d")).rows[0].d;
+    assert.ok(updated.includes("cardinality(paired_player_ids) <> player_count"));
+    assert.ok(updated.includes("not in (1, 2)"));
+    assert.ok(!updated.includes("mod(player_count, 2) <> 0"));
     await db.exec(migration);
     await db.exec(migration);
     assert.equal((await db.query("select count(*)::int n from battle_rooms")).rows[0].n, 3);
@@ -123,7 +132,7 @@ try {
   let frozen;
   await test("only owning teacher can freeze an even roster; newcomers are blocked after freeze", async () => {
     await rpc(students[0], "join_battle_room", ["345678"]);
-    await reject(() => rpc(teacher, "prepare_battle_room_start", [recoverRoom]), /even.*2.*40/i);
+    await reject(() => rpc(teacher, "prepare_battle_room_start", [recoverRoom]), /2.*40/i);
     await rpc(students[1], "join_battle_room", ["345678"]);
     await reject(() => rpc(otherTeacher, "prepare_battle_room_start", [recoverRoom]), /teacher who created/i);
     await reject(() => rpc(students[0], "prepare_battle_room_start", [recoverRoom]), /teacher account/i);
@@ -162,7 +171,7 @@ try {
     const eventId = uuid(3001);
     const variants = [
       [{ ...input, roster: [{ ...input.roster[0], id: uuid(88888) }, ...input.roster.slice(1)] }, /roster differs/i],
-      [{ ...input, matches: [{ ...input.matches[0], playerIds: [input.matches[0].playerIds[0]] }, ...input.matches.slice(1)] }, /byes/i],
+      [{ ...input, matches: [{ ...input.matches[0], playerIds: [input.matches[0].playerIds[0]] }, ...input.matches.slice(1)] }, /exactly one/i],
       [{ ...input, matches: [{ ...input.matches[0], playerIds: [input.matches[0].playerIds[0], input.matches[0].playerIds[0]] }, ...input.matches.slice(1)] }, /exactly one/i],
       [{ ...input, history: [{ stageIndex: 1 }] }, /previous rounds/i],
       [{ ...input, version: 1 }, /version-2/i]
@@ -177,12 +186,72 @@ try {
     await reject(() => rpc(teacher, "commit_battle_room_start", [roomId, uuid(3002), JSON.stringify(input)]), /already has bracket/i);
     assert.equal((await as(teacher, "select count(*)::int n from battle_events where room_id=$1 and effect like 'tournament:%'", [roomId])).rows[0].n, 1);
   });
+  await test("odd rosters from 3 to 39 commit with exactly one bye", async () => {
+    for (let count=3; count<=39; count+=2) {
+      const oddRoom=uuid(5000+count);
+      const code=String(500000+count);
+      await db.query("insert into battle_rooms(id,room_code,teacher_id) values($1,$2,$3)",[oddRoom,code,teacher]);
+      for (const student of students.slice(0,count)) await rpc(student,"join_battle_room",[code]);
+      const frozen=await rpc(teacher,"prepare_battle_room_start",[oddRoom]);
+      const input=createTournament(frozen.players.map((p)=>({id:p.id})),{id:oddRoom,startedAt:frozen.started_at});
+      const saved=await rpc(teacher,"commit_battle_room_start",[oddRoom,uuid(6000+count),JSON.stringify(input)]);
+      assert.equal(saved.matches.filter((m)=>m.playerIds.length===1).length,1);
+      assert.equal(new Set(saved.matches.flatMap((m)=>m.playerIds)).size,count);
+    }
+  });
+  await test("live snapshot and assignment migrations apply twice", async () => {
+    await db.exec(`
+      create table classes(id uuid primary key, active boolean default true);
+      create table questions(id uuid primary key);
+      create table assignments(id uuid primary key,teacher_id uuid not null,material_id uuid,class_id uuid references classes(id),
+        title text,title_en text,description text,description_en text,icon text,published boolean,updated_at timestamptz);
+      create table assignment_questions(id uuid primary key default gen_random_uuid(),assignment_id uuid references assignments(id),
+        question_id uuid references questions(id),position integer,unique(assignment_id,question_id));
+      grant select on classes,questions to authenticated;
+      grant select,insert,update,delete on assignments,assignment_questions to authenticated;
+      alter table assignments enable row level security;
+      create policy own_assignment on assignments for all to authenticated using(teacher_id=auth.uid()) with check(teacher_id=auth.uid());
+      alter table assignment_questions enable row level security;
+      create policy own_links on assignment_questions for all to authenticated using(
+        exists(select 1 from assignments a where a.id=assignment_id and a.teacher_id=auth.uid()));
+    `);
+    const live=await readFile(new URL("../supabase/upgrade_battle_live_and_assignments.sql",import.meta.url),"utf8");
+    await db.exec(live); await db.exec(live);
+  });
+  await test("snapshot returns full consistent room and respects existing read permissions", async () => {
+    for(const viewer of [teacher,students[0]]) {
+      const snap=await rpc(viewer,"battle_room_snapshot",[roomId]);
+      assert.equal(snap.players.length,40);
+      assert.ok(snap.events.length>=2);
+      assert.ok(Number.isFinite(Date.parse(snap.server_now)));
+    }
+    for(const viewer of [otherTeacher,...outsiders,null]) assert.equal(await rpc(viewer,"battle_room_snapshot",[roomId]),null);
+  });
+  await test("class and question saves are atomic, preserve link IDs and reject invalid/foreign writes", async () => {
+    const classId=uuid(7000),q1=uuid(7001),q2=uuid(7002),assignmentId=uuid(7010);
+    await db.query("insert into classes(id) values($1)",[classId]);
+    await db.query("insert into questions(id) values($1),($2)",[q1,q2]);
+    const item={id:assignmentId,teacher_id:teacher,class_id:classId,material_id:null,title:"Test",question_ids:[q1,q2,q1]};
+    assert.equal(await rpc(teacher,"save_assignment_batch",[JSON.stringify([item])]),1);
+    const links=(await db.query("select * from assignment_questions order by position")).rows;
+    assert.equal(links.length,2);
+    await rpc(teacher,"save_assignment_batch",[JSON.stringify([{...item,question_ids:[q2,q1]}])]);
+    assert.deepEqual((await db.query("select id from assignment_questions order by position")).rows.map((r)=>r.id),[links[1].id,links[0].id]);
+    await reject(()=>rpc(students[0],"save_assignment_batch",[JSON.stringify([item])]),/Teacher access/);
+    await reject(()=>rpc(otherTeacher,"save_assignment_batch",[JSON.stringify([{...item,teacher_id:otherTeacher}])]),/row-level|duplicate|teacher/i);
+    await reject(()=>rpc(teacher,"save_assignment_batch",[JSON.stringify([{...item,title:"MUST ROLLBACK"}, {...item,id:uuid(7011),question_ids:[uuid(9999)]}])]),/missing or inaccessible/);
+    assert.equal((await db.query("select title from assignments where id=$1",[assignmentId])).rows[0].title,"Test");
+    await reject(()=>rpc(teacher,"save_assignment_batch",[JSON.stringify([{...item,class_id:uuid(9999)}])]),/class no longer/);
+    assert.equal((await db.query("select count(*)::int n from assignment_questions")).rows[0].n,2);
+  });
   await test("anonymous database role cannot execute admission/start/time RPCs", async () => {
     await db.exec("set role anon");
     try {
       await reject(() => db.query("select battle_server_time()"), /permission denied/i);
       await reject(() => db.query("select join_battle_room('123456')"), /permission denied/i);
       await reject(() => db.query("select prepare_battle_room_start($1)", [roomId]), /permission denied/i);
+      await reject(() => db.query("select battle_room_snapshot($1)", [roomId]), /permission denied/i);
+      await reject(() => db.query("select save_assignment_batch('[]')"), /permission denied/i);
     } finally { await db.exec("reset role"); }
   });
   console.log(`${passed} PostgreSQL/RLS runtime checks passed. Single connection only; concurrent load was not tested.`);

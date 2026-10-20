@@ -32,6 +32,12 @@ async function fixture({ playerCount = 4, userId = teacherId, status = "lobby", 
       requests.push({ operation: "rpc", name, args });
       if (missingBattleRpc) return { error: { code: "PGRST202", message: "Function not found in schema cache" } };
       const serverTime = () => Date.now() + serverSkew;
+      if (name === "battle_room_snapshot") return { data: structuredClone({
+        room: tables.battle_rooms.find((r) => r.id === args.target_room_id),
+        players: tables.battle_players.filter((p) => p.room_id === args.target_room_id),
+        events: tables.battle_events.filter((e) => e.room_id === args.target_room_id),
+        server_now: new Date(serverTime()).toISOString()
+      }) };
       if (name === "battle_server_time") return { data: new Date(serverTime()).toISOString() };
       if (name === "join_battle_room") {
         const room = tables.battle_rooms.find((r) => r.room_code === args.room_code_input);
@@ -49,7 +55,7 @@ async function fixture({ playerCount = 4, userId = teacherId, status = "lobby", 
         const room = tables.battle_rooms.find((r) => r.id === args.target_room_id);
         if (room?.teacher_id !== activeSession.user.id) return { error: { message: "Only owning teacher may start" } };
         const players = tables.battle_players.filter((p) => p.room_id === room.id);
-        if (players.length > 40 || players.length < 2 || players.length % 2) return { error: { message: "人数必须为2–40偶数" } };
+        if (players.length > 40 || players.length < 2) return { error: { message: "人数必须为2–40" } };
         if (room.status === "lobby") Object.assign(room, { status: "battle", tournament_version: 2, started_at: new Date(serverTime() + 8000).toISOString() });
         else if (room.status !== "battle" || room.tournament_version !== 2) return { error: { message: "房间无法开赛" } };
         return { data: { started_at: room.started_at, players: structuredClone(players) } };
@@ -178,10 +184,10 @@ const checks = [
     await assert.rejects(cloud.joinBattleRoom("123456"), /Student access/);
     assert.equal(tables.battle_players.length, 4);
   }],
-  ["oversized or odd rosters cannot start a new bracket", async () => {
-    for (const playerCount of [1, 3, 41, 42]) {
+  ["oversized or undersized rosters cannot start a new bracket", async () => {
+    for (const playerCount of [1, 41, 42]) {
       const { cloud, tables, requests } = await fixture({ playerCount });
-      await assert.rejects(cloud.startBattleRoom(roomId), /40|even number/);
+      await assert.rejects(cloud.startBattleRoom(roomId), /40|two players/);
       assert.equal(tables.battle_events.length, 0);
       assert.equal(requests.filter((r) => r.name === "prepare_battle_room_start").length, 0);
       assert.equal(tables.battle_rooms[0].status, "lobby");
@@ -189,12 +195,9 @@ const checks = [
   }],
   ["missing database upgrade is explicit; reads survive without inventing calibrated time", async () => {
     const { cloud, tables } = await fixture({ missingBattleRpc: true });
-    const data = await cloud.loadBattleRoom(roomId);
-    assert.equal(data.players.length, 4);
-    assert.equal(data.clockSynchronized, false);
-    assert.equal(data.serverNow, null);
+    await assert.rejects(cloud.loadBattleRoom(roomId), /Function not found/);
     await assert.rejects(cloud.joinBattleRoom("123456"), /upgrade_battle_40_players/);
-    await assert.rejects(cloud.startBattleRoom(roomId), /upgrade_battle_40_players/);
+    await assert.rejects(cloud.startBattleRoom(roomId), /Function not found/);
     await assert.rejects(cloud.createBattleRoom(), /upgrade_battle_40_players/);
     assert.equal(tables.battle_events.length, 0);
     assert.equal(tables.battle_rooms.length, 1);
@@ -247,13 +250,13 @@ const checks = [
     }
   })],
   ["34 and 40 students all play first round and retain every round's score/HP after reload", async () => withClock(async (setClock) => {
-    for (const playerCount of [34, 40]) {
+    for (const playerCount of [3, 5, 33, 34, 39, 40]) {
       const { cloud } = await fixture({ playerCount });
       let data = await cloud.startBattleRoom(roomId);
       let state = readTournament(data.events);
       assert.equal(state.version, 2);
-      assert.equal(state.matches.length, playerCount / 2);
-      assert.ok(state.matches.every((match) => match.playerIds.length === 2));
+      assert.equal(state.matches.length, Math.ceil(playerCount / 2));
+      assert.equal(state.matches.filter((match) => match.playerIds.length === 1).length, playerCount % 2);
       assert.equal(new Set(state.matches.flatMap((m) => m.playerIds)).size, playerCount);
       while (state.status !== "finished") {
         assert.ok(state.stageIndex < 8, "tournament must make progress");
@@ -265,7 +268,7 @@ const checks = [
       assert.equal(state.standings.length, playerCount);
       assert.deepEqual(state.standings.filter((s) => s.place >= 1 && s.place <= 3).map((s) => s.place).sort(), [1, 2, 3]);
       assert.ok(state.history.every((round) => round.matches.filter((m) => m.players.length === 1).length <= 1));
-      assert.ok(state.history[0].matches.every((m) => m.stats[0].score === 100 && m.stats[1].hp === 0));
+      assert.ok(state.history[0].matches.filter((m)=>m.players.length===2).every((m) => m.stats[0].score === 100 && m.stats[1].hp === 0));
       assert.equal(state.history[0].matches.flatMap((m) => m.players).length, playerCount);
     }
   })],
@@ -280,11 +283,8 @@ const checks = [
     assert.equal(data.players.length, 1002);
     assert.equal(data.events.length, 1205);
     assert.equal(data.events.at(-1).round, 1204);
-    for (const table of ["battle_players", "battle_events"]) {
-      const reads = requests.filter((request) => request.table === table);
-      assert.deepEqual(reads.map((request) => request.first), [0, 500, 1000]);
-      assert.ok(reads.every((request) => request.orders.at(-1)[0] === "id"));
-    }
+    assert.equal(requests.filter((r) => r.name === "battle_room_snapshot").length, 1);
+    assert.equal(requests.filter((r) => ["battle_players", "battle_events"].includes(r.table)).length, 0);
   }],
   ["only the room's teacher can start a tournament", async () => {
     const { cloud, tables } = await fixture({ userId: randomUUID() });

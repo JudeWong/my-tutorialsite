@@ -33,8 +33,8 @@ test("creation shuffles once without mutating the roster and validates entrants"
   assert.notDeepEqual(state.roster.map((player) => player.id), players.map((player) => player.id));
   assert.equal(new Set(state.roster.map((player) => player.id)).size, 8);
   assert.equal(state.version, 2);
-  assert.throws(() => create(1), /偶数/);
-  assert.throws(() => create(3), /偶数/);
+  assert.throws(() => create(1), /两名/);
+  assert.equal(create(3).matches.filter((m) => m.playerIds.length === 1).length, 1);
   assert.equal(MAX_BATTLE_PLAYERS, 40);
   assert.equal(create(40).roster.length, 40);
   assert.throws(() => create(42), /40/);
@@ -115,8 +115,8 @@ test("six players all play first, then a three-player semifinal awards a real th
   assert.deepEqual(buildTournamentView(JSON.parse(JSON.stringify(state)), [], at(state, 4000)).standings, state.standings);
 });
 
-test("every even roster from 2 through 40 plays round one and completes with unique correct medals and scores", () => {
-  for (let count = 2; count <= MAX_BATTLE_PLAYERS; count += 2) {
+test("every roster from 2 through 40 completes with at most one bye, unique medals and scores", () => {
+  for (let count = 2; count <= MAX_BATTLE_PLAYERS; count += 1) {
     for (const winnerOffset of [0, 1]) {
       let state = create(count);
       const events = [];
@@ -126,13 +126,13 @@ test("every even roster from 2 through 40 plays round one and completes with uni
       let previousByes = new Set();
       let expectedEntrants = new Set(state.roster.map((player) => player.id));
       let stages = 0;
-      assert.equal(state.matches.length, count / 2);
+      assert.equal(state.matches.length, Math.ceil(count / 2));
       while (state.status !== "finished") {
         const ids = state.matches.flatMap((match) => match.playerIds);
         assert.equal(new Set(ids).size, ids.length, `no duplicate entrant: ${count}, stage ${stages}`);
         assert.deepEqual(new Set(ids), expectedEntrants, `no skipped or revived entrant: ${count}, stage ${stages}`);
         const byes = state.matches.filter((match) => match.playerIds.length === 1);
-        assert.equal(byes.length, stages === 0 ? 0 : ids.length % 2);
+        assert.equal(byes.length, ids.length % 2);
         if (byes.length) {
           const eligible = [...ids].sort((a, b) => byeCounts.get(a) - byeCounts.get(b)
             || Number(previousByes.has(a)) - Number(previousByes.has(b))

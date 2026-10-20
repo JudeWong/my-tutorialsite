@@ -175,6 +175,9 @@ let cloudChatThreadId = "";
 let lastCloudSyncErrorAt = 0;
 let lastCloudSyncError = null;
 let cloudSyncQueue = Promise.resolve();
+let cloudWriteRevision = 0;
+let cloudWritesPending = 0;
+let materialSaveInProgress = false;
 let quizStartedAt = "";
 let quizCloudProgressTimer = null;
 let stopProgressRealtime = null;
@@ -699,12 +702,15 @@ function getClasses() {
 
 function savePapers() {
   localStorage.setItem(PAPERS_KEY, JSON.stringify(papers));
-  syncCloud(() => Cloud.upsertPapers(papers), "learning materials");
+  const snapshot = structuredClone(papers);
+  syncCloud(() => Cloud.upsertPapers(snapshot), "learning materials");
 }
 
 function saveAssignments() {
   localStorage.setItem(ASSIGNMENTS_KEY, JSON.stringify(assignments));
-  syncCloud(() => Cloud.upsertAssignments(assignments), "assignments");
+  const snapshot = structuredClone(assignments);
+  // Students persist their own submission, never the teacher's allocation.
+  if (cloudProfile?.role === "teacher") syncCloud(() => Cloud.upsertAssignments(snapshot), "assignments");
 }
 
 function saveQuestions() {
@@ -715,7 +721,8 @@ function saveQuestions() {
     positions.set(group, question.position + 1);
   });
   localStorage.setItem(QUESTIONS_KEY, JSON.stringify(questionBank));
-  syncCloud(() => Cloud.upsertQuestions(questionBank), "questions");
+  const snapshot = structuredClone(questionBank);
+  syncCloud(() => Cloud.upsertQuestions(snapshot), "questions");
 }
 
 function saveTeacherNotes() {
@@ -799,6 +806,8 @@ function saveClasses(classes) {
 
 function syncCloud(action, label) {
   if (!Cloud?.enabled || !cloudProfile) return;
+  cloudWriteRevision += 1;
+  cloudWritesPending += 1;
   cloudSyncQueue = cloudSyncQueue.then(action).catch((error) => {
     lastCloudSyncError = { error, label };
     console.error(`Unable to sync ${label} to Supabase`, error);
@@ -806,7 +815,7 @@ function syncCloud(action, label) {
       lastCloudSyncErrorAt = Date.now();
       showToast(localized("Cloud sync failed. Check the Supabase schema and connection.", "云端同步失败，请检查 Supabase 资料表与连接。"));
     }
-  });
+  }).finally(() => { cloudWritesPending -= 1; });
 }
 
 async function flushCloudSync({ throwOnError = false } = {}) {
@@ -1278,10 +1287,13 @@ function renderClassPerformance() {
 }
 
 async function refreshTeacherProgress() {
-  if (!Cloud?.enabled || !cloudProfile || cloudProfile.role !== "teacher" || progressRefreshInFlight) return;
+  if (!Cloud?.enabled || !cloudProfile || cloudProfile.role !== "teacher" || progressRefreshInFlight
+      || cloudWritesPending || materialSaveInProgress) return;
+  const revision = cloudWriteRevision;
   progressRefreshInFlight = true;
   try {
     const snapshot = await Cloud.loadSnapshot(cloudProfile);
+    if (revision !== cloudWriteRevision || cloudWritesPending || materialSaveInProgress) return;
     applyCloudSnapshot(snapshot);
     renderPapers(activePaperFilter);
     renderAssignments();
@@ -3853,7 +3865,10 @@ function getAssignableClasses() {
 
 function getAssignmentTargetKey(assignment) {
   if (assignment?.classId) return `id:${assignment.classId}`;
-  if (assignment?.className) return `name:${assignment.className}`;
+  if (assignment?.className) {
+    const resolved = cloudClasses.find((item) => item.name.trim() === assignment.className.trim());
+    return resolved?.id ? `id:${resolved.id}` : `name:${assignment.className}`;
+  }
   return "all";
 }
 
@@ -5398,7 +5413,10 @@ $("#edit-paper-form").addEventListener("submit", async (event) => {
   const submitButton = event.currentTarget.querySelector("button[type='submit']");
   submitButton.disabled = true;
   lastCloudSyncError = null;
+  materialSaveInProgress = true;
+  cloudWriteRevision += 1;
   try {
+    await flushCloudSync({ throwOnError: true });
     await updatePaperClassAssignments(paper, classTargets);
     savePapers();
     saveQuestions();
@@ -5415,6 +5433,7 @@ $("#edit-paper-form").addEventListener("submit", async (event) => {
     console.error("Unable to save material class assignments", error);
     $("#edit-paper-error").textContent = error?.message || localized("Class assignments could not be saved.", "无法储存班级分配，请稍后再试。 ");
   } finally {
+    materialSaveInProgress = false;
     submitButton.disabled = false;
   }
 });

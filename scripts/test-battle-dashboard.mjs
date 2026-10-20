@@ -152,4 +152,26 @@ test("capacity guard, calibrated clock and pending-bracket gate are wired in the
   assert.match(source, /onClick: startRoom, disabled: busy[\s\S]*?重试生成赛程/);
 });
 
+test("history labels derive from actual round entrants, not stale saved labels", () => {
+  let state=make(32);
+  let events=[];
+  for (let stage=0;stage<3;stage++) {
+    events.push(...wins(state));
+    state=advanceTournament(state,events,at(state,3000));
+  }
+  state.history.forEach((stage)=>stage.label="32 强赛");
+  const view=buildTournamentView(state,events,at(state,1000));
+  assert.equal(projectTeacherStandings(state,view,"1").title,"16 强赛");
+  assert.equal(projectTeacherStandings(state,view,"2").title,"8 强赛");
+  assert.equal(projectTeacherStandings(state,view).title,"半决赛");
+});
+test("countdown is not counted as an active match; odd roster shows one bye", () => {
+  selectedRound="live";
+  const state=make(5);
+  const view=buildTournamentView(state,[],BASE-1000);
+  const tree=render(state,view);
+  const ongoing=nodes(tree,(node)=>node.tag==="article" && text(node).includes("正在进行"))[0];
+  assert.match(text(ongoing),/正在进行 0/);
+  assert.match(text(tree),/4 人参战 · 1 人轮空/);
+});
 console.log(`${checks} teacher scoreboard regressions passed.`);
