@@ -2935,9 +2935,19 @@ function normalizeGeneratedQuestion(item, index, paperId, topic) {
   };
 }
 
-function diversifyGeneratedQuestions(questions) {
+function hasPositionDependentChoices(question) {
+  // Never move choices if prose refers to their labels/relative positions.
+  // Roman statements (I/II/III/IV), CPU and code are not option labels.
+  const text = [question.title, question.titleEn, ...(question.options || []),
+    ...(question.optionsEn || []), question.explanation, question.explanationEn,
+    question.mistake, question.mistakeEn].filter(Boolean).join("\n");
+  return /(?<![A-Za-z0-9_])[A-F](?![A-Za-z0-9_])|以上|上述选项|前[两三四234]项|all of the above|none of the above|both of the above/iu.test(text);
+}
+
+function diversifyGeneratedQuestions(questions, options = {}, random = Math.random) {
   const items = Array.isArray(questions) ? questions.map((question) => ({ ...question })) : [];
-  if (!items.length) return items;
+  // Original papers must never have their choices or answer distribution rewritten.
+  if (!items.length || options.materialType !== "teaching-material") return items;
 
   // Keep the AI's difficulty labels when they are already varied. If a model
   // collapses every item into one level, restore a predictable Basic /
@@ -2948,31 +2958,58 @@ function diversifyGeneratedQuestions(questions) {
   const presentLevels = new Set(items.map((question) => question.level).filter((level) => levels.includes(level)));
   if (items.length >= 3 && presentLevels.size < 3) {
     items.forEach((question, index) => {
+      if (question.type !== "mcq") return;
       question.level = levels[index % levels.length];
     });
   }
 
-  // Four choices are the standard UEC-style presentation. Reorder complete
-  // answer options (never their text independently) so correct answers are
-  // distributed A, B, C, D, A, B, C, D across the generated set. This keeps
-  // the answer key valid while preventing a predictable correct-letter bias.
-  let eligibleIndex = 0;
-  items.forEach((question) => {
-    if (question.type !== "mcq" || !Array.isArray(question.options) || question.options.length < 4) return;
-    const current = Number(question.correct);
-    if (!Number.isInteger(current) || current < 0 || current >= question.options.length) return;
-    const desired = eligibleIndex % 4;
-    eligibleIndex += 1;
-    if (current === desired) {
-      question.correct = desired;
-      return;
+  const shuffle = (values) => {
+    for (let index = values.length - 1; index > 0; index -= 1) {
+      const other = Math.floor(random() * (index + 1));
+      [values[index], values[other]] = [values[other], values[index]];
     }
-    const options = [...question.options];
-    [options[current], options[desired]] = [options[desired], options[current]];
-    question.options = options;
-    question.optionsEn = [...options];
-    question.correct = desired;
-  });
+    return values;
+  };
+  // Balance the final set, not each request/batch. Build quotas, then shuffle
+  // the entire target list so neither ABCD cycles nor four-question blocks leak answers.
+  // Nonstandard option counts are balanced separately, never forced into A-D.
+  const groups = new Map();
+  for (const question of items) {
+    const count = question.options?.length;
+    const current = Number(question.correct);
+    if (question.type !== "mcq" || !Array.isArray(question.options) || count < 2
+      || !Number.isInteger(current) || current < 0 || current >= count) continue;
+    if (!groups.has(count)) groups.set(count, []);
+    groups.get(count).push(question);
+  }
+  for (const [count, group] of groups) {
+    const totals = Array(count).fill(0);
+    const movable = [];
+    for (const question of group) {
+      if (hasPositionDependentChoices(question)) totals[Number(question.correct)] += 1;
+      else movable.push(question);
+    }
+    const targets = [];
+    for (let index = 0; index < movable.length; index += 1) {
+      const lowest = Math.min(...totals);
+      const candidates = totals.flatMap((total, position) => total === lowest ? [position] : []);
+      const desired = candidates[Math.floor(random() * candidates.length)];
+      targets.push(desired);
+      totals[desired] += 1;
+    }
+    shuffle(targets);
+    movable.forEach((question, index) => {
+      const current = Number(question.correct);
+      const desired = targets[index];
+      const order = Array.from({ length: count }, (_, position) => position);
+      [order[current], order[desired]] = [order[desired], order[current]];
+      question.options = order.map((position) => question.options[position]);
+      if (Array.isArray(question.optionsEn) && question.optionsEn.length === count) {
+        question.optionsEn = order.map((position) => question.optionsEn[position]);
+      }
+      question.correct = desired;
+    });
+  }
   return items;
 }
 
@@ -3053,12 +3090,19 @@ function buildQuestionResponseSchema(options = {}, { compact = false } = {}) {
 function buildQuestionGenerationPrompt(text, fileName, topic, options = {}) {
   const { materialType, requestedCount } = getQuestionGenerationLimits(options);
   const generationTarget = getQuestionGenerationTarget(options);
-  const generationTask = materialType === "past-paper"
+  const generationTask = materialType === "past-paper" && options.recoverMissingQuestions
+    ? `This is a past-year examination paper recovery pass. Recover the omitted source questions and separately numbered sub-parts, in source order. At least ${options.recoverMissingQuestions} additional items are needed, but never invent questions or duplicate existing ones to meet that count. Preserve original choices and answer keys.`
+    : materialType === "past-paper"
     ? `This is a past-year examination paper. Generate AT LEAST ${generationTarget} complete questions so that at least ${requestedCount} remain after validation. Identify EVERY top-level question AND EVERY separately numbered sub-question or part (such as 1(a), 1(b), 1(c), Section A items, table/diagram items) visible in the supplied document. Return one output item for each source question or sub-question, in exactly the original order. Never return only the first few top-level questions. If there are fewer than ${requestedCount} top-level numbers, expand all visible sub-parts into separate items until at least ${generationTarget}; do not invent facts outside the document. Preserve the original meaning and choices when they exist; if an item is not already multiple-choice, convert it into one logically equivalent single-best-answer question without losing the tested concept.`
     : `This is a handout or teaching resource. Create exactly ${requestedCount} distinct single-best-answer multiple-choice questions that cover the material broadly and proportionally.`;
   return `You are an experienced Malaysian Independent Chinese Secondary School computer science teacher and UEC examination setter. Read and understand the supplied learning material before writing any question.
 
 ${generationTask}
+
+Answer-position policy:
+${materialType === "past-paper"
+    ? "Preserve the source A/B/C/D option order and the source answer-key distribution exactly, even when many answers share one letter. Never balance, shuffle, or cycle answers in a past-year paper. Apply this rule to recovered/missing source questions too."
+    : "Use a random, approximately balanced distribution of correct answer positions across the complete set. Never use a repeating A/B/C/D cycle or a fixed four-question pattern. Options must be self-contained: do not refer to option letters or use all/none of the above. Explanations and common mistakes must identify choices by their content, not letters, so options can safely be reordered. Roman statement labels I, II, III, IV may be used."}
 
 Strict quality rules:
 1. Every correct answer must be directly supported by the supplied material. Do not invent facts, definitions, numbers, program output, or technical requirements.
@@ -3353,11 +3397,11 @@ async function requestQuestionsFromGemini(apiKey, model, prompt, paperId, topic,
 
 function buildQuestionSupplementPrompt(text, fileName, topic, options, existingQuestions, missingCount) {
   const titles = existingQuestions.map((question, index) => `${index + 1}. ${question.title}`).join("\n");
-  const supplementOptions = { ...options, materialType: "teaching-material", questionCount: Math.max(10, Math.min(50, missingCount + 5)) };
+  const supplementOptions = { ...options, recoverMissingQuestions: missingCount };
   return `${buildQuestionGenerationPrompt(text, fileName, topic, supplementOptions)}
 
 IMPORTANT SUPPLEMENT TASK:
-The first pass produced ${existingQuestions.length} valid questions, but at least ${missingCount} more are required. Create NEW questions only. Do not repeat, paraphrase, or copy any question in this existing list:
+The first pass produced ${existingQuestions.length} valid questions, but at least ${missingCount} more are required. Return only source questions or sub-parts omitted in the first pass. Do not invent additional questions to reach a quota. Preserve each source question's option order and source answer key. Do not repeat any question in this existing list:
 ${titles.slice(0, 12000)}
 Return enough additional valid questions so the combined result reaches the required count. Keep every question a single-best-answer multiple-choice question in Simplified Chinese.`;
 }
@@ -3429,8 +3473,15 @@ async function requestAIQuestions(text, fileName, paperId, topic, options) {
         ));
       }
     }
-    const diversified = diversifyGeneratedQuestions(questions);
-    return maxItems ? diversified.slice(0, maxItems) : diversified;
+    const finalQuestions = maxItems ? questions.slice(0, maxItems) : questions;
+    const diversified = diversifyGeneratedQuestions(finalQuestions, options);
+    if (materialType === "teaching-material" && finalQuestions.some(hasPositionDependentChoices)) {
+      showToast(localized(
+        "Some questions refer to option letters or positions. Their order was preserved for accuracy; please review the answer distribution.",
+        "部分题目引用了选项字母或位置，已保留其顺序以免改变题意；请检查答案分布。"
+      ));
+    }
+    return diversified;
   } catch (error) {
     if (generationTimedOut || error?.name === "AbortError" || error?.name === "TimeoutError") {
       const timeoutError = new Error(localized(
