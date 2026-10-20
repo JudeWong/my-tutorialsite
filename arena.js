@@ -33,7 +33,8 @@ function LazyArenaScene(props) {
   );
 }
 
-const h = React.createElement;
+const h = (type, props, ...children) => React.createElement(type, props, ...children.map((child) =>
+  typeof child === "string" ? (globalThis.personalAITranslateText?.(child) ?? child) : child));
 const ROOM_STORAGE_KEY = "personal-ai-battle-room";
 const ROUND_SECONDS = 10;
 const COMBAT_ACTION_MS = 1800;
@@ -402,6 +403,7 @@ function ArenaApp() {
   const [assignmentId, setAssignmentId] = useState(context.assignments?.[0]?.id || "");
   const [roomData, setRoomData] = useState(null);
   const [recentRooms, setRecentRooms] = useState([]);
+  const [openingRoom, setOpeningRoom] = useState(false);
   const [error, setError] = useState("");
   const [syncError, setSyncError] = useState("");
   const [syncing, setSyncing] = useState(false);
@@ -623,17 +625,17 @@ function ArenaApp() {
   );
   const roomPicker = context.role === "teacher" && recentRooms.length
     ? h("label", { className: "arena-form-card" }, "查看已有房间（不会重新开赛）",
-      h("select", { value: room?.id || "", disabled: busy || syncing, onChange: async (event) => {
+      h("select", { value: room?.id || "", disabled: busy || syncing || openingRoom, onChange: async (event) => {
         const id = event.target.value;
         if (!id) return;
-        setBusy(true); setError("");
+        setOpeningRoom(true); setError("");
         try {
           const data = await cloud.loadBattleRoom(id);
           if (!data?.room) throw new Error("找不到房间或没有读取权限。");
           activeRoomId.current = id;
           acceptRoomData(data); setLocalEvents([]); setSyncError("");
           localStorage.setItem(ROOM_STORAGE_KEY, id);
-        } catch (err) { setError(err.message); } finally { setBusy(false); }
+        } catch (err) { setError(err.message); } finally { setOpeningRoom(false); }
       } }, h("option", { value: "" }, "选择最近的房间"),
       recentRooms.map((item) => h("option", { key: item.id, value: item.id },
         `${item.code} · ${item.className || "所有班级"} · ${({lobby:"等待学生",battle:"进行中",finished:"已结束",cancelled:"已取消"})[item.status] || item.status}`))))

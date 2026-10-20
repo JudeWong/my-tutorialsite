@@ -602,6 +602,10 @@ const UI_EN = Object.freeze({
   ,"学生作答明细": "Student progress details"
 });
 
+// React owns arena text nodes. Translate during rendering, never rewrite them
+// using the vanilla page's cached first value (which freezes scores/counts).
+globalThis.personalAITranslateText = (value) => currentLanguage === "en" ? UI_EN[value] || value : value;
+
 function applyLanguage(language = "zh", { persist = true } = {}) {
   currentLanguage = language === "en" ? "en" : "zh";
   document.documentElement.lang = currentLanguage === "en" ? "en" : "zh-Hans";
@@ -611,7 +615,7 @@ function applyLanguage(language = "zh", { persist = true } = {}) {
   const walker = document.createTreeWalker(document.body, NodeFilter.SHOW_TEXT);
   let node;
   while ((node = walker.nextNode())) {
-    if (node.parentElement?.closest("script, style")) continue;
+    if (node.parentElement?.closest("script, style, #arena-root, .arena-victory-backdrop")) continue;
     if (!originalTextNodes.has(node)) {
       const value = node.nodeValue || "";
       const trimmed = value.trim();
@@ -627,6 +631,7 @@ function applyLanguage(language = "zh", { persist = true } = {}) {
   }
 
   $$('[placeholder]').forEach((element) => {
+    if (element.closest("#arena-root, .arena-victory-backdrop")) return;
     if (!element.dataset.placeholderZh) element.dataset.placeholderZh = element.getAttribute("placeholder") || "";
     const source = element.dataset.placeholderZh;
     element.setAttribute("placeholder", currentLanguage === "en" ? UI_EN[source] || source : source);

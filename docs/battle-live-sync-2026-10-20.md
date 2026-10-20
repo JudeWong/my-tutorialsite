@@ -6,13 +6,20 @@ Existing installations from the 40-player release:
 
 1. Run supabase/upgrade_battle_odd_rosters.sql.
 2. Run supabase/upgrade_battle_live_and_assignments.sql.
-3. Deploy the web bundle (cache version v85).
+3. Deploy the web bundle (cache version v86).
 
 Fresh installations can use the updated cloud_schema.sql.
 No existing students, submissions, room rosters or brackets are migrated/deleted.
 New RPCs are SECURITY INVOKER and retain the existing room/class RLS boundary.
 
 ## Changes
+
+Production UI verification exposed the central teacher display bug: the
+vanilla translation pass cached a text node's first value and reapplied it
+on background refresh. React's live room/count/round/score/timer text was
+thus overwritten with stale values despite correct server data.
+Arena nodes and the victory portal are now excluded from that DOM walker;
+their labels are translated during React rendering instead.
 
 - 2–40 entrants, odd counts permitted; at most one bye each round.
 - Read the room, all participants and all events in one consistent snapshot.

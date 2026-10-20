@@ -82,3 +82,24 @@ vm.runInContext(cloudSource.slice(first,end),paging);
 assert.equal((await paging.readSnapshotRows("assignment_questions")).data.length,235);
 assert.deepEqual(pages,[0,100,200]);
 console.log("PASS class/question snapshots handle server row caps smaller than the requested page size");
+
+const arenaText={nodeValue:"36 / 40",parentElement:{closest:(selector)=>selector.includes("#arena-root")?{}:null}};
+const vanillaText={nodeValue:"已完成",parentElement:{closest:()=>null}};
+const translation={
+  currentLanguage:"en",LANGUAGE_KEY:"language",localStorage:{setItem(){}},NodeFilter:{SHOW_TEXT:4},
+  originalTextNodes:new WeakMap(),UI_EN:{"已完成":"Completed"},$$:()=>[],updateAIChatResizeControl(){},
+  document:{body:{},documentElement:{},createTreeWalker(){let i=0;return{nextNode:()=>[arenaText,vanillaText][i++]};}}
+};
+translation.originalTextNodes.set(arenaText,{source:"0 / 40",leading:"",trailing:""});
+vm.createContext(translation);
+vm.runInContext(extract("applyLanguage"),translation);
+translation.applyLanguage("en");
+assert.equal(arenaText.nodeValue,"36 / 40","translation must not reset the React room count to its cached initial value");
+assert.equal(vanillaText.nodeValue,"Completed","ordinary UI remains translated");
+arenaText.nodeValue="750";
+translation.applyLanguage("en");
+assert.equal(arenaText.nodeValue,"750","subsequent background language refresh must not freeze live scores");
+translation.applyLanguage("zh");
+assert.equal(arenaText.nodeValue,"750");
+assert.equal(vanillaText.nodeValue,"已完成");
+console.log("PASS English/Chinese DOM translation cannot overwrite React room counts, scores or timers");
